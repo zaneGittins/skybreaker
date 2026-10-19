@@ -305,7 +305,8 @@ details.earlier .row-list { margin-top: 4px; }
 .sc-blue { --sc: #4C9BE8; } .sc-purple { --sc: #9A7BEA; } .sc-pink { --sc: #DB6E9C; } .sc-teal { --sc: #2FA89A; }
 .chat-page[class*="sc-"] .chat-bar { box-shadow: inset 0 -2px 0 var(--sc); }
 .chat-page[class*="sc-"] .chat-title .title::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%; background: var(--sc); vertical-align: 1px; }
-.chat-page[class*="sc-"] .composer { border-color: color-mix(in srgb, var(--sc) 55%, var(--border-strong)); }
+/* 2px, with 1px less padding, so the box keeps its size. */
+.chat-page[class*="sc-"] .composer { border: 2px solid color-mix(in srgb, var(--sc) 70%, var(--border-strong)); padding: 5px; }
 .chat-page[class*="sc-"] .composer:focus-within { border-color: var(--sc); }
 .srow[class*="sc-"] { box-shadow: inset 3px 0 0 var(--sc); }
 .chat-goal { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px 8px 14px; background: var(--bg-2); border-bottom: 1px solid var(--border); font-size: 13.5px; color: var(--text-2); flex-shrink: 0; }
