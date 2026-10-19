@@ -894,3 +894,19 @@ func TestDiffOverTheOutputLimit(t *testing.T) {
 		t.Fatalf("Diff: %d bytes, %v", len(out), err)
 	}
 }
+
+func TestAgentsWorking(t *testing.T) {
+	f := newFixture(t)
+	if f.app.AgentsWorking() {
+		t.Fatal("working with no chats")
+	}
+	f.app.store.CreateSession(store.Session{ID: "c1", Project: "orbit", Mode: store.ModeChat, Status: store.StatusRunning, State: store.ChatIdle})
+	f.app.store.CreateSession(store.Session{ID: "t1", Project: "orbit", Status: store.StatusRunning}) // a terminal survives a restart
+	if f.app.AgentsWorking() {
+		t.Fatal("an idle chat and a terminal count as working")
+	}
+	f.app.store.CreateSession(store.Session{ID: "c2", Project: "orbit", Mode: store.ModeChat, Status: store.StatusRunning, State: store.ChatWaiting})
+	if !f.app.AgentsWorking() {
+		t.Fatal("a chat waiting on you doesn't count")
+	}
+}

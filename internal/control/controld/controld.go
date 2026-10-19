@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zaneGittins/skybreaker/internal/board"
@@ -201,9 +202,32 @@ func Run(ctx context.Context, o Options) error {
 		OnUpdate: func(r store.Run) { a.Publish(app.Event{Type: "run", Project: r.Project, Data: r}) },
 	})
 
+	// A project created in the app lands on a restart, once no agent is
+	// working; the first second lets the answer reach the browser.
+	restart := make(chan struct{}, 1)
+	var restartOnce sync.Once
+	requestRestart := func() {
+		restartOnce.Do(func() {
+			go func() {
+				for wait := time.Second; ; wait = 3 * time.Second {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(wait):
+					}
+					if !a.AgentsWorking() {
+						restart <- struct{}{}
+						return
+					}
+				}
+			}()
+		})
+	}
+
 	apiHandler, err := api.New(api.Deps{
 		Config: cfg, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews,
-		Static: web.Skybreaker(), Version: o.Version,
+		Projects: &adder{configPath: o.ConfigPath, app: a, broker: brk, restart: requestRestart},
+		Static:   web.Skybreaker(), Version: o.Version,
 		Upgrade: func(w http.ResponseWriter, r *http.Request) (terminal.Conn, error) { return wsock.Accept(w, r) },
 		Bridge: func(ctx context.Context, c terminal.Conn, argv []string) error {
 			return terminal.Bridge(ctx, c, terminal.StartPTY, argv)
@@ -301,10 +325,14 @@ func Run(ctx context.Context, o Options) error {
 	if o.Ready != nil {
 		o.Ready(ul.Addr(), hl.Addr(), pl.Addr())
 	}
+	var result error
 	select {
 	case <-ctx.Done():
 	case err := <-errs:
 		return err
+	case <-restart:
+		log.Printf("skybreaker: restarting to add a project")
+		result = ErrRestart
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -312,16 +340,18 @@ func Run(ctx context.Context, o Options) error {
 		s.Shutdown(shutdown)
 	}
 	sched.Wait()
-	return nil
+	return result
 }
 
-// Nftables renders the ruleset that pins every sandbox to the broker.
+// Nftables renders the ruleset that pins every sandbox to the broker. It
+// covers the whole sandbox range, where every project's subnet must lie, so
+// adding a project needs no new rules (and no root).
 func Nftables(configPath string) (string, error) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		return "", err
 	}
-	return netrules.Generate(netrules.Input{Sandboxes: cfg.Subnets(), ProxyPort: cfg.Broker.Port, HookPort: cfg.Sandbox.HookPort})
+	return netrules.Generate(netrules.Input{Sandboxes: []netip.Prefix{cfg.SubnetBase()}, ProxyPort: cfg.Broker.Port, HookPort: cfg.Sandbox.HookPort})
 }
 
 // loadOrCreateKey keeps the hook-token key across restarts, so sandboxes'

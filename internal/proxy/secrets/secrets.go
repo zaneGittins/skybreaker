@@ -10,9 +10,11 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -67,6 +69,7 @@ type secret struct {
 	hostLs []string
 	value  string                                                 // static, file, env
 	mint   func(ctx context.Context, scope Scope) (string, error) // github_app, k8s_tokenrequest
+	app    *githubapp.App                                         // github_app
 }
 
 type Store struct {
@@ -129,11 +132,11 @@ func (s *Store) build(sp Spec, httpClient *http.Client) (*secret, error) {
 			return nil, fmt.Errorf("environment variable %q is empty", sp.Env)
 		}
 	case "github_app":
-		mint, err := githubAppMinter(sp.GitHubApp, httpClient)
+		app, mint, err := githubAppMinter(sp.GitHubApp, httpClient)
 		if err != nil {
 			return nil, err
 		}
-		sec.mint = mint
+		sec.mint, sec.app = mint, app
 	case "k8s_tokenrequest":
 		mint, bearer, err := tokenRequestMinter(sp.TokenRequest, httpClient)
 		if err != nil {
@@ -153,25 +156,35 @@ func (s *Store) build(sp Spec, httpClient *http.Client) (*secret, error) {
 	return sec, nil
 }
 
-func githubAppMinter(g *GitHubAppSpec, httpClient *http.Client) (func(context.Context, Scope) (string, error), error) {
+func githubAppMinter(g *GitHubAppSpec, httpClient *http.Client) (*githubapp.App, func(context.Context, Scope) (string, error), error) {
 	if g == nil || g.AppID == "" || g.KeyFile == "" {
-		return nil, errors.New("github_app needs app_id and key_file")
+		return nil, nil, errors.New("github_app needs app_id and key_file")
 	}
 	pemBytes, err := os.ReadFile(g.KeyFile)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	key, err := githubapp.ParseKey(pemBytes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	app := &githubapp.App{AppID: g.AppID, Key: key, InstallationID: g.InstallationID, APIBase: g.APIBase, Permissions: g.Permissions, HTTP: httpClient}
-	return func(ctx context.Context, scope Scope) (string, error) {
+	return app, func(ctx context.Context, scope Scope) (string, error) {
 		if scope.Repo == "" {
 			return "", errors.New("github_app needs a repo scope")
 		}
 		return app.Token(ctx, scope.Repo)
 	}, nil
+}
+
+// GitHubApp is the App of the first github_app secret, by name, or nil.
+func (s *Store) GitHubApp() *githubapp.App {
+	for _, name := range slices.Sorted(maps.Keys(s.secrets)) {
+		if a := s.secrets[name].app; a != nil {
+			return a
+		}
+	}
+	return nil
 }
 
 func tokenRequestMinter(k *TokenRequestSpec, httpClient *http.Client) (func(context.Context, Scope) (string, error), string, error) {

@@ -49,6 +49,7 @@ type Config struct {
 
 	base    netip.Prefix
 	subnets map[string]netip.Prefix
+	added   map[string]bool // projects created in the app (projects.json)
 }
 
 type Tailscale struct {
@@ -133,9 +134,19 @@ var (
 	branchRe  = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$`)
 )
 
-func Load(path string) (*Config, error) {
+// Load reads the config file and the projects created in the app beside it.
+func Load(path string) (*Config, error) { return loadWith(path, ProjectsPath(path)) }
+
+func loadWith(path, projectsPath string) (*Config, error) {
 	var c Config
 	if err := configfile.Load(path, &c); err != nil {
+		return nil, err
+	}
+	f, err := readAdded(projectsPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.merge(f, projectsPath); err != nil {
 		return nil, err
 	}
 	if err := c.init(); err != nil {
@@ -143,6 +154,9 @@ func Load(path string) (*Config, error) {
 	}
 	return &c, nil
 }
+
+// SubnetBase is the range every sandbox network is in.
+func (c *Config) SubnetBase() netip.Prefix { return c.base }
 
 func (c *Config) init() error {
 	c.defaults()

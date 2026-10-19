@@ -20,6 +20,8 @@ Each project runs in its own gVisor (`runsc`) sandbox, holding the repo, toolcha
 
 **The single-host trade-off.** The broker shares a host with the sandboxes, so a sandbox escape reaches its secrets. For most setups the simpler deployment is worth it: the realistic threats (misuse of allowed access, a malicious pull request) are the same either way. If you give the broker production credentials, use the narrowest tokens available, make writes `ask`, or keep production on a separate machine.
 
+Projects can be created in the app as well as in the config file. The app writes them to `projects.json` beside the config, and can set only a project's repo, agents and board key and which of the config's capability bundles it gets. Hosts, rules, secrets and env stay in the file you edit, so nothing done through the app can let a sandbox reach further than the bundles you wrote. Sandboxes can reach neither the app nor `/etc/skybreaker`.
+
 ## The broker
 
 Sandboxes reach the outside only through `HTTPS_PROXY=http://<project>:<token>@broker:8080`.

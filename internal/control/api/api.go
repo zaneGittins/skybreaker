@@ -109,6 +109,7 @@ type Deps struct {
 	Store      *store.Store
 	Push       Push              // nil when web push is off
 	Previews   *preview.Registry // nil when previews are off
+	Projects   ProjectAdder      // nil when projects can't be created here
 	Identifier tsauth.Identifier
 	Static     fs.FS
 	Version    string
@@ -135,6 +136,8 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("GET /api/meta", s.meta)
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("GET /api/projects", s.projects)
+	m.HandleFunc("POST /api/projects", s.createProject)
+	m.HandleFunc("GET /api/capabilities", s.capabilities)
 	m.HandleFunc("GET /api/projects/{p}", s.project)
 	m.HandleFunc("POST /api/projects/{p}/sandbox", s.sandbox)
 	m.HandleFunc("POST /api/projects/{p}/sessions", s.newSession)

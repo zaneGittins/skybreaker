@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -39,7 +40,18 @@ func main() {
 	case "serve":
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		if err := controld.Run(ctx, controld.Options{ConfigPath: *cfg, Version: Version, Tailnet: tailnet}); err != nil {
+		err := controld.Run(ctx, controld.Options{ConfigPath: *cfg, Version: Version, Tailnet: tailnet})
+		if errors.Is(err, controld.ErrRestart) {
+			// Start again in place, with the new project: same binary,
+			// arguments and environment.
+			stop()
+			exe, xerr := os.Executable()
+			if xerr == nil {
+				xerr = syscall.Exec(exe, os.Args, os.Environ())
+			}
+			log.Fatalf("skybreaker: couldn't restart: %v", xerr)
+		}
+		if err != nil {
 			log.Fatal(err)
 		}
 	case "check":

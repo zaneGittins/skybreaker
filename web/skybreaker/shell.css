@@ -271,3 +271,28 @@ details.earlier .row-list { margin-top: 4px; }
 .pv-card-body { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; }
 .pv-card-addr { font: 500 12.5px var(--mono); color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
 .pv-card-open { text-decoration: none; }
+
+/* ---- new project ---- */
+.np-tile { display: flex; align-items: center; justify-content: center; gap: 8px; border: 1.5px dashed var(--border-strong); background: transparent; color: var(--muted); font: 650 14px var(--font); cursor: pointer; }
+.side-new { width: 100%; border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; text-align: left; }
+.side-new svg { width: 16px; height: 16px; }
+.np-form { display: grid; gap: 14px; padding: 0 4px 4px; }
+.np-field { display: grid; gap: 6px; }
+.np-label, .np-group legend { font: 700 12px var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.np-input { height: 42px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: 500 15px var(--mono); }
+.np-input:focus { outline: none; border-color: var(--text-2); }
+.np-hint { margin: 0; font-size: 12.5px; color: var(--muted); }
+.np-group { display: grid; gap: 4px; margin: 0; padding: 0; border: 0; }
+.np-group legend { padding: 0; margin-bottom: 6px; }
+.np-check { display: flex; align-items: flex-start; gap: 10px; padding: 8px 4px; border-radius: 10px; cursor: pointer; }
+.np-check input { margin-top: 3px; accent-color: var(--sun); width: 16px; height: 16px; }
+.np-check-text { display: grid; min-width: 0; }
+.np-check-text span { font-size: 13px; color: var(--muted); }
+.np-check-text .np-reach { font: 500 12.5px var(--mono); overflow-wrap: anywhere; }
+.np-error { margin: 0; color: var(--danger); font-size: 13.5px; }
+.np-done { display: grid; gap: 12px; padding: 0 4px 8px; }
+.np-done p { margin: 0; }
+.np-status, .np-ok { display: flex; align-items: center; gap: 8px; color: var(--text-2); }
+.np-ok svg, .np-status svg { width: 16px; height: 16px; color: var(--live, #3FB37A); }
+.np-warn { color: var(--text-2); padding: 10px 12px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--sun) 40%, var(--border)); }
+.np-warn a { color: var(--sun); }

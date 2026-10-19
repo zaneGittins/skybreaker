@@ -64,7 +64,7 @@ A preview page loads only from its own server, so fonts or scripts from CDNs don
 
 ## Configuration
 
-Everything lives in `/etc/skybreaker/skybreaker.yaml` (projects, policy, users) and `secrets.yaml`. Each project lists what its sandbox may reach in `allow` and `capabilities`; anything else is denied. Restart `skybreaker` after editing, and `skybreaker-nftables` too after adding a project. [deploy/skybreaker.example.yaml](../deploy/skybreaker.example.yaml) is a commented example.
+Everything lives in `/etc/skybreaker/skybreaker.yaml` (projects, policy, users) and `secrets.yaml`. Each project lists what its sandbox may reach in `allow` and `capabilities`; anything else is denied. Restart `skybreaker` after editing. Projects can also be created in the app (**New project** on the home page), from the capability bundles this file defines; those are kept in `projects.json` next to it. [deploy/skybreaker.example.yaml](../deploy/skybreaker.example.yaml) is a commented example.
 
 ## Updating
 

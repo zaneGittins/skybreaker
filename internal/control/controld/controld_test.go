@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"io"
 	"net"
 	"net/http"
@@ -160,8 +161,14 @@ func TestNftables(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "tcp dport { 7701, 8080 } accept") {
+	if !strings.Contains(out, "tcp dport { 7701, 8080 } accept") || !strings.Contains(out, "10.89.0.0/16") {
 		t.Fatalf("ruleset:\n%s", out)
+	}
+	// The ruleset covers the whole sandbox range, so a project added later
+	// (in the app, by a service that isn't root) needs no new rules.
+	os.WriteFile(p, []byte(strings.Replace(cfg, `"bifract": {}`, `"bifract": {}, "comet": {}`, 1)), 0o600)
+	if more, _ := Nftables(p); more != out {
+		t.Fatalf("adding a project changed the ruleset:\n%s\n%s", out, more)
 	}
 }
 
@@ -185,4 +192,55 @@ type runcOnly struct{}
 
 func (runcOnly) Run(context.Context, string, ...string) ([]byte, error) {
 	return []byte(`{"runc":{"path":"runc"}}`), nil
+}
+
+// Creating a project in the app writes projects.json and restarts the
+// server (once no agent is working) so the new project runs.
+func TestCreateProjectRestarts(t *testing.T) {
+	dir := t.TempDir()
+	cfg := fmt.Sprintf(`{
+	  "data_dir": %q, "users": ["zane@example.com"],
+	  "tailscale": {"disabled": true, "dev_listen": "127.0.0.1:0"},
+	  "broker": {"listen": "127.0.0.1:0"},
+	  "sandbox": {"image": "skybreaker-sandbox:test", "hook_listen": "127.0.0.1:0"},
+	  "projects": {"orbit": {"repo": "zaneGittins/orbit", "harnesses": ["claude"]}}
+	}`, filepath.Join(dir, "data"))
+	cfgPath := filepath.Join(dir, "skybreaker.json")
+	os.WriteFile(cfgPath, []byte(cfg), 0o600)
+	ready := make(chan net.Addr, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(context.Background(), Options{ConfigPath: cfgPath, Version: "test", Runner: &fakeDocker{}, Ready: func(ui, _, _ net.Addr) { ready <- ui }})
+	}()
+	var ui net.Addr
+	select {
+	case ui = <-ready:
+	case err := <-done:
+		t.Fatalf("Run: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("not ready")
+	}
+	req, _ := http.NewRequest("POST", "http://"+ui.String()+"/api/projects", strings.NewReader(`{"name":"comet","repo":"zaneGittins/comet","harnesses":["claude"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(body), `"restart":"now"`) {
+		t.Fatalf("create: %d %s", resp.StatusCode, body)
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrRestart) {
+			t.Fatalf("Run returned %v, want a restart", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no restart")
+	}
+	c, err := config.Load(cfgPath)
+	if err != nil || c.Projects["comet"] == nil || !c.Added("comet") {
+		t.Fatalf("after restart: %v %+v", err, c)
+	}
 }

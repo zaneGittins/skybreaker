@@ -20,6 +20,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/proxy/ca"
 	"github.com/zaneGittins/skybreaker/internal/proxy/config"
 	"github.com/zaneGittins/skybreaker/internal/proxy/netguard"
+	"github.com/zaneGittins/skybreaker/internal/proxy/secrets"
 	"github.com/zaneGittins/skybreaker/internal/proxy/server"
 	"github.com/zaneGittins/skybreaker/internal/proxy/session"
 )
@@ -51,6 +52,7 @@ type Broker struct {
 	auditPath string
 	ca        *ca.Authority
 	srv       *server.Server
+	secrets   *secrets.Store
 }
 
 // Open starts the broker. It fails if any injected secret is missing or
@@ -86,7 +88,7 @@ func Open(o Options) (*Broker, error) {
 	}
 	b := &Broker{
 		approvals: approval.New(approval.Options{PendingTTL: o.PendingTTL, ApprovedTTL: o.ApprovedTTL}),
-		sessions:  sessions, audit: auditLog, auditPath: auditPath, ca: authority,
+		sessions:  sessions, audit: auditLog, auditPath: auditPath, ca: authority, secrets: store,
 	}
 	b.srv, err = server.New(server.Deps{
 		Config: o.Policy, Sandbox: o.Sandbox, Sessions: sessions, Secrets: store, CA: authority,
@@ -148,6 +150,23 @@ func (b *Broker) RevokeProject(_ context.Context, project string) error {
 
 // CA is the public half of the broker's CA, which sandboxes trust.
 func (b *Broker) CA(context.Context) ([]byte, error) { return b.ca.CertPEM(), nil }
+
+// ErrNoGitHubApp means no github_app secret is configured.
+var ErrNoGitHubApp = errors.New("no GitHub App is configured")
+
+// GitHubAccess reports whether the GitHub App is installed on repo, and
+// where to install it.
+func (b *Broker) GitHubAccess(ctx context.Context, repo string) (installed bool, installURL string, err error) {
+	app := b.secrets.GitHubApp()
+	if app == nil {
+		return false, "", ErrNoGitHubApp
+	}
+	if installed, err = app.Installed(ctx, repo); err != nil {
+		return false, "", err
+	}
+	installURL, _ = app.InstallURL(ctx)
+	return installed, installURL, nil
+}
 
 // --- for the UI -------------------------------------------------------------
 

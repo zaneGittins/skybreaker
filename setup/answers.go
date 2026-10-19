@@ -222,7 +222,7 @@ var funcs = template.FuncMap{"q": q}
 
 var configTmpl = template.Must(template.New("config").Funcs(funcs).Parse(`# Skybreaker's config, written by skybreaker-setup. After an edit:
 #   sudo skybreaker check && sudo systemctl restart skybreaker
-# and after adding a project, restart skybreaker-nftables too.
+# Projects can also be added in the app, which keeps them in projects.json.
 # deploy/skybreaker.example.yaml in the repository shows every option.
 # Secrets live in secrets.yaml next to it; this file names them, never holds them.
 

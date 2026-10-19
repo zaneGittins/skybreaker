@@ -774,3 +774,15 @@ func (a *App) Listening(ctx context.Context, project string) ([]preview.Listenin
 	}
 	return preview.ParseListening(out), nil
 }
+
+// AgentsWorking reports whether any chat is mid-turn or waiting on you:
+// what restarting Skybreaker would cut short. Terminals live in tmux and
+// survive it.
+func (a *App) AgentsWorking() bool {
+	for _, s := range a.store.ListSessions("") {
+		if s.Status == store.StatusRunning && s.Mode == store.ModeChat && (s.State == store.ChatWorking || s.State == store.ChatWaiting) {
+			return true
+		}
+	}
+	return false
+}

@@ -159,6 +159,41 @@ func (e *repoEntry) mint(ctx context.Context, a *App, installation int64, repo s
 	return tok, nil
 }
 
+// StatusError is GitHub answering with a status other than the one wanted.
+type StatusError struct {
+	Method, Path string
+	Status       int
+	Message      string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("githubapp: %s %s: status %d: %s", e.Method, e.Path, e.Status, e.Message)
+}
+
+// Installed reports whether the App is installed on repo ("owner/name").
+func (a *App) Installed(ctx context.Context, repo string) (bool, error) {
+	_, err := a.lookupInstallation(ctx, repo)
+	var se *StatusError
+	if errors.As(err, &se) && se.Status == http.StatusNotFound {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// InstallURL is where to install the App on more repositories.
+func (a *App) InstallURL(ctx context.Context) (string, error) {
+	var out struct {
+		HTMLURL string `json:"html_url"`
+	}
+	if err := a.call(ctx, http.MethodGet, "/app", nil, http.StatusOK, &out); err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(out.HTMLURL, "https://") {
+		return "", errors.New("githubapp: GitHub didn't give the App's address")
+	}
+	return strings.TrimSuffix(out.HTMLURL, "/") + "/installations/new", nil
+}
+
 func (a *App) lookupInstallation(ctx context.Context, repo string) (int64, error) {
 	var out struct {
 		ID int64 `json:"id"`
@@ -236,7 +271,7 @@ func (a *App) call(ctx context.Context, method, path string, in any, want int, o
 			Message string `json:"message"`
 		}
 		json.Unmarshal(b, &e)
-		return fmt.Errorf("githubapp: %s %s: status %d: %s", method, path, resp.StatusCode, e.Message)
+		return &StatusError{Method: method, Path: path, Status: resp.StatusCode, Message: e.Message}
 	}
 	if err := json.Unmarshal(b, out); err != nil {
 		return fmt.Errorf("githubapp: %s %s: %w", method, path, err)

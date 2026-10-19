@@ -49,6 +49,10 @@ The server uses the standard library except for two adapters: `tsauth/tsnetsrv` 
 4. **Credentials.** The token is checked again (it may have been revoked while held), then the broker strips placeholders and adds the secret, only if the secret lists the upstream host. Revoking a token also cancels its requests still in flight.
 5. **Connect.** Resolved addresses are checked against loopback, link-local, metadata, private and tailnet ranges. Tailnet upstreams a route allows are dialled through Skybreaker's own Tailscale node.
 
+## Projects
+
+Projects come from the config file and from `projects.json` beside it, which the app writes when you create one (`config.AddProject`): a repo, agents, a board key and capability names, validated with the whole configuration before it's saved. The project list fans out into the broker's compiled policy, sandbox networks, boards and previews, so Skybreaker restarts itself to add one (`controld.ErrRestart`, re-executed by `main`), once no chat is working. The nftables ruleset covers the whole sandbox range, so a new project needs no new rules.
+
 ## Sandboxes
 
 Each project gets a long-lived `runsc` container, `skybreaker-<project>`, on its own bridge network. Its environment points `HTTPS_PROXY` at the broker on the bridge gateway, with no DNS and the broker's CA mounted. Starting a sandbox mints its token and revokes earlier ones.

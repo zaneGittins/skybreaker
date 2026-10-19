@@ -122,7 +122,8 @@ async function renderHome(seq) {
     g.working.length ? el('section.list-sec', null, secHead('Working', g.working.length), el('div.row-list', null, g.working.map(row))) : null,
     !d.sessions.some(s => s.status === 'running') ? el('button.empty-add', { type: 'button', onclick: () => newSessionSheet(d.projects) }, svg(ICON.plus), 'Start a chat') : null,
     el('section.list-sec.phone-only', null, secHead('Projects'),
-      el('div.tiles', null, d.projects.map(p => projectTile(p, review)))),
+      el('div.tiles', null, d.projects.map(p => projectTile(p, review)),
+        el('button.tile.np-tile', { type: 'button', onclick: newProjectSheet }, svg(ICON.plus), el('span', null, 'New project')))),
     earlier.length ? el('details.earlier', { open: prefs.get('earlierOpen') === '1', ontoggle: e => prefs.set('earlierOpen', e.target.open ? '1' : '0') },
       el('summary', null, el('span', null, 'Earlier'), el('span.n', null, String(earlier.length)), svg(ICON.chevron, 'chev')),
       el('div.row-list', null, earlier.slice(0, 40).map(row))) : null);
@@ -487,6 +488,96 @@ async function previewSheet(p) {
         el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Close')));
   };
   draw();
+}
+
+// --- new project ----------------------------------------------------------------
+
+// projectNameFrom suggests a project name from a repo: "acme/Web.App" → "web-app".
+function projectNameFrom(repo) {
+  const n = String(repo).split('/').pop().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  return n.slice(0, 40);
+}
+
+// newProjectSheet creates a project from the capability bundles the config
+// defines. Skybreaker restarts to run it, once no agent is working.
+async function newProjectSheet() {
+  let caps;
+  try { caps = await api('GET', '/api/capabilities') } catch (e) { toast(e.message, 'error'); return }
+  const agents = (state.meta?.harnesses || ['claude', 'codex']).filter(h => h !== 'shell');
+  const field = (label, input, hint) => el('label.np-field', null, el('span.np-label', null, label), input, hint ? el('span.np-hint', null, hint) : null);
+  const repo = el('input.np-input', { type: 'text', placeholder: 'owner/name', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', required: true });
+  const name = el('input.np-input', { type: 'text', placeholder: 'project-name', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', required: true, pattern: '[a-z0-9][a-z0-9-]{0,39}' });
+  let named = false;
+  name.addEventListener('input', () => { named = name.value !== '' });
+  repo.addEventListener('input', () => { if (!named) name.value = projectNameFrom(repo.value) });
+  const box = (value, checked, label, sub, reach) => el('label.np-check', null,
+    el('input', { type: 'checkbox', value, checked: checked || null }),
+    el('span.np-check-text', null, el('b', null, label), sub ? el(reach ? 'span.np-reach' : 'span', null, sub) : null));
+  const agentBoxes = agents.map(h => box(h, h === 'claude' || h === 'codex', harnessLabel(h), HARNESS_INFO[h] || ''));
+  const wanted = ['github', ...(agents.includes('claude') ? ['claude-login'] : []), ...(agents.includes('codex') ? ['codex-login'] : [])];
+  const capBoxes = caps.map(c => box(c.name, wanted.includes(c.name), c.name, c.reaches.join(', '), true));
+  const error = el('p.np-error', { role: 'alert', hidden: true });
+  const create = el('button.btn.primary', { type: 'submit' }, 'Create project');
+  const checked = boxes => boxes.map(b => b.querySelector('input')).filter(i => i.checked).map(i => i.value);
+  const form = el('form.np-form', {
+    onsubmit: async e => {
+      e.preventDefault();
+      error.hidden = true;
+      create.disabled = true;
+      try {
+        const out = await api('POST', '/api/projects', { name: name.value.trim(), repo: repo.value.trim(), harnesses: checked(agentBoxes), capabilities: checked(capBoxes) });
+        created(out, repo.value.trim());
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+        create.disabled = false;
+      }
+    },
+  },
+    field('Repository', repo, 'On GitHub. The agents clone it and open pull requests to it.'),
+    field('Name', name, 'Lowercase letters, digits and dashes.'),
+    el('fieldset.np-group', null, el('legend', null, 'Agents'), agentBoxes),
+    el('fieldset.np-group', null, el('legend', null, 'Access'), capBoxes.length ? capBoxes : el('p.np-hint', null, 'Your config defines no capability bundles yet.'),
+      el('p.np-hint', null, 'What the sandbox may reach, from the bundles in your config. Anything else is denied.')),
+    error, create);
+  const sheet = (...body) => $('#sheet-root').replaceChildren(
+    el('div.backdrop', { onclick: closeSheet }),
+    el('div.picker.np-sheet', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New project' },
+      el('div.picker-grip'), el('div.pv-head', null, el('b', null, 'New project')), ...body,
+      el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Close')));
+  sheet(form);
+  repo.focus();
+
+  // created says what happens next, then waits for Skybreaker to come back
+  // with the project.
+  function created(out, repoName) {
+    const g = out.github;
+    const github = !g ? null
+      : g.installed ? el('p.np-ok', null, svg(ICON.check), `The GitHub App can reach ${repoName}.`)
+        : g.install_url && /^https:\/\/github\.com\//.test(g.install_url)
+          ? el('p.np-warn', null, `The GitHub App isn't installed on ${repoName} yet, so agents can't clone or push. `,
+            el('a', { href: g.install_url, target: '_blank', rel: 'noopener noreferrer' }, 'Install it'), '.')
+          : el('p.np-warn', null, `Couldn't check GitHub access to ${repoName}: ${g.error || 'unknown error'}.`);
+    const status = el('p.np-status', null, el('span.spinner'), out.restart === 'now'
+      ? 'Skybreaker is restarting to add it. This takes a few seconds.'
+      : 'It\'s added once no agent is working, so chats in progress carry on.');
+    const open = el('button.btn.primary', { type: 'button', disabled: true, onclick: () => { closeSheet(); navigate(projectPath(out.name)) } }, 'Open ' + out.name);
+    sheet(el('div.np-done', null, el('p', null, el('b', null, out.name), ' is saved.'), status, github, open));
+    const started = Date.now();
+    const poll = async () => {
+      if (!document.body.contains(open)) return;
+      try {
+        const ps = await api('GET', '/api/projects');
+        if (ps.some(p => p.name === out.name)) {
+          status.replaceChildren(svg(ICON.check), 'Ready.');
+          open.disabled = false;
+          return;
+        }
+      } catch { /* restarting */ }
+      if (Date.now() - started < 15 * 60 * 1000) setTimeout(poll, 1500);
+    };
+    setTimeout(poll, 1500);
+  }
 }
 
 const HARNESS_INFO = {
@@ -1060,7 +1151,8 @@ function sidebar(d) {
   $('#side-user').textContent = state.meta?.user || '';
   $('#side-projects').replaceChildren(...d.projects.map(p => el('a.side-link.side-project.tint-' + p.tint, { href: '/p/' + encodeURIComponent(p.name), 'data-link': true, 'data-project': p.name },
     el('span.pdot'), el('span', null, p.name),
-    p.running ? el('span.side-live', { title: p.live ? plural(p.live, 'live chat') : 'Sandbox running' }, el('span.dot'), p.live ? String(p.live) : '') : null)));
+    p.running ? el('span.side-live', { title: p.live ? plural(p.live, 'live chat') : 'Sandbox running' }, el('span.dot'), p.live ? String(p.live) : '') : null)),
+    el('button.side-link.side-new', { type: 'button', onclick: newProjectSheet }, svg(ICON.plus), el('span', null, 'New project')));
   markSidebar();
 }
 

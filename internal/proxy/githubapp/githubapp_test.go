@@ -142,6 +142,11 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("iss %v", c["iss"])
 	}
 	switch {
+	case r.Method == "GET" && r.URL.Path == "/repos/zaneGittins/nope/installation":
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"message":"Not Found"}`)
+	case r.Method == "GET" && r.URL.Path == "/app":
+		fmt.Fprint(w, `{"slug":"skybreaker-test","html_url":"https://github.com/apps/skybreaker-test"}`)
 	case r.Method == "GET" && r.URL.Path == "/repos/zaneGittins/orbit/installation":
 		f.lookups.Add(1)
 		fmt.Fprintf(w, `{"id": %d}`, f.installation())
@@ -317,5 +322,20 @@ func TestTokenRejectsEmptyOrExpiredResponse(t *testing.T) {
 	a := &App{AppID: "1", Key: testKey, InstallationID: 1, APIBase: srv.URL, HTTP: srv.Client(), Now: func() time.Time { return now }}
 	if _, err := a.Token(context.Background(), "o/r"); err == nil {
 		t.Error("accepted an empty token")
+	}
+}
+
+func TestInstalledAndInstallURL(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	a := newApp(t, &fakeGitHub{t: t, expires: now.Add(time.Hour)}, &now)
+	ctx := context.Background()
+	if ok, err := a.Installed(ctx, "zaneGittins/orbit"); !ok || err != nil {
+		t.Fatalf("installed repo: %v %v", ok, err)
+	}
+	if ok, err := a.Installed(ctx, "zaneGittins/nope"); ok || err != nil {
+		t.Fatalf("repo without the App: %v %v", ok, err)
+	}
+	if u, err := a.InstallURL(ctx); err != nil || u != "https://github.com/apps/skybreaker-test/installations/new" {
+		t.Fatalf("install url %q %v", u, err)
 	}
 }
