@@ -136,33 +136,25 @@ function diffView(diff, { open = 3, limit = 400 } = {}) {
 
 // --- the page -----------------------------------------------------------------
 
-// sunMark is the logo's broken sun as a coin, the working indicator: while
-// the agent works it turns over, showing the sun's other side (its halves'
-// colours swapped), and back. Two faces, a rim of stacked rings between
-// them, and light that falls off as a face turns away make it read as a
-// solid thing turning, not a picture squashing.
+// sunMark is the working indicator, the halo: a small sun inside a ring
+// broken into three arcs, yellow, orange and pale gold, that chase round at
+// different speeds, stretching and shrinking, so the ring keeps breaking
+// and nearly closing.
 function sunMark() {
   const ns = 'http://www.w3.org/2000/svg';
-  const halves = ['M17.6 20.3a4.6 4.6 0 0 1 7.9-5.4z', 'M19.4 22.4a4.6 4.6 0 0 0 7.9-5.4z'];
-  const face = (side, fills) => {
-    const s = document.createElementNS(ns, 'svg');
-    s.setAttribute('viewBox', '16.5 12.5 12 12');
-    s.setAttribute('class', 'face ' + side);
-    // The back is drawn mirrored, so once turned it shows the sun the right
-    // way round.
-    const g = document.createElementNS(ns, 'g');
-    if (side === 'back') g.setAttribute('transform', 'translate(45 0) scale(-1 1)');
-    halves.forEach((d, i) => {
-      const p = document.createElementNS(ns, 'path');
-      p.setAttribute('d', d);
-      p.setAttribute('class', fills[i]);
-      g.append(p);
-    });
-    s.append(g);
-    return s;
-  };
-  const coin = el('span.coin', null, ...[1, 2, 3, 4, 5].map(() => el('span.rim')), face('front', ['a', 'b']), face('back', ['b', 'a']));
-  return el('span.sunwork', { 'aria-hidden': 'true' }, coin);
+  const s = document.createElementNS(ns, 'svg');
+  s.setAttribute('viewBox', '16.5 12.5 12 12');
+  s.setAttribute('class', 'sunwork');
+  s.setAttribute('aria-hidden', 'true');
+  for (const [r, cls] of [[2, 'core'], [5, 'arc y'], [5, 'arc o'], [5, 'arc g']]) {
+    const c = document.createElementNS(ns, 'circle');
+    c.setAttribute('cx', '22.5');
+    c.setAttribute('cy', '18.5');
+    c.setAttribute('r', String(r));
+    c.setAttribute('class', cls);
+    s.append(c);
+  }
+  return s;
 }
 
 async function renderChat(seq, d) {
