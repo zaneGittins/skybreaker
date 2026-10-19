@@ -167,6 +167,10 @@ func replace(exe string, bin []byte) error {
 		tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil { // on disk before it takes the old one's place
+		tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}

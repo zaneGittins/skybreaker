@@ -102,7 +102,7 @@ func Render(es []Entry, sel, width int) []string {
 			if title == "" {
 				title = "(untitled)"
 			}
-			state, colour := s.State, dim
+			state, colour := Visible(s.State), dim
 			switch {
 			case !s.Chat():
 				state = "terminal"

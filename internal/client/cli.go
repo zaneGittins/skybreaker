@@ -20,7 +20,8 @@ const Usage = `skybreaker: your coding agents, from your terminal
   skybreaker update                   update this client
   skybreaker version
 
-In a session, Ctrl-b d detaches and brings you back. Settings live in
+In a session, Ctrl-b d detaches and brings you back; ~. at the start of a
+line leaves from this side if the session won't let go. Settings live in
 ~/.skybreaker/config.json; $SKYBREAKER_URL overrides them.
 
 On the Skybreaker host:
@@ -50,9 +51,12 @@ func connected(ctx context.Context) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	u, err := Resolve(ctx, path, os.Getenv("SKYBREAKER_URL"), ExecRunner)
+	u, found, err := Resolve(ctx, path, os.Getenv("SKYBREAKER_URL"), ExecRunner)
 	if err != nil {
 		return nil, err
+	}
+	if found {
+		fmt.Fprintf(os.Stderr, "Found Skybreaker at %s (saved in %s; `skybreaker connect <address>` changes it).\n", u, path)
 	}
 	return New(u)
 }
@@ -104,7 +108,7 @@ func command(ctx context.Context, cmd string, args []string, version string, out
 				if !s.Chat() {
 					state = "terminal"
 				}
-				fmt.Fprintf(out, "%-12s  %-14s  %-8s  %-9s  %s\n", Visible(s.ID), Visible(s.Project), Visible(s.Harness), state, Visible(s.Title))
+				fmt.Fprintf(out, "%-12s  %-14s  %-8s  %-9s  %s\n", Visible(s.ID), Visible(s.Project), Visible(s.Harness), Visible(state), Visible(s.Title))
 				n++
 			}
 		}

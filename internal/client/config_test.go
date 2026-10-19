@@ -51,6 +51,7 @@ func TestConfigRoundTrip(t *testing.T) {
 const status = `{"MagicDNSSuffix":"tail1234.ts.net",
  "Self":{"HostName":"laptop","DNSName":"laptop.tail1234.ts.net."},
  "Peer":{
+  "0":{"HostName":"skybreaker","DNSName":"skybreaker.evil-tailnet.ts.net.","Online":true},
   "a":{"HostName":"skybreaker-host","DNSName":"skybreaker-host.tail1234.ts.net.","Online":true},
   "b":{"HostName":"skybreaker","DNSName":"skybreaker.tail1234.ts.net.","Online":true}}}`
 
@@ -67,9 +68,14 @@ func TestDiscover(t *testing.T) {
 	if u, err := Discover(ctx, run(status, nil)); err != nil || u != "https://skybreaker.tail1234.ts.net" {
 		t.Fatalf("discover: %q %v", u, err)
 	}
-	none := `{"MagicDNSSuffix":"tail1234.ts.net","Peer":{"a":{"HostName":"skybreaker-host","DNSName":"skybreaker-host.tail1234.ts.net."}}}`
+	// A machine named skybreaker shared in from another tailnet sorts first
+	// above and must never be picked; with only it, there is no match.
+	none := `{"MagicDNSSuffix":"tail1234.ts.net","Peer":{"a":{"HostName":"skybreaker","DNSName":"skybreaker.evil-tailnet.ts.net."}}}`
 	if _, err := Discover(ctx, run(none, nil)); err == nil || !strings.Contains(err.Error(), "skybreaker connect") {
 		t.Fatalf("no machine: %v", err)
+	}
+	if _, err := Discover(ctx, run(`{"Peer":{"b":{"DNSName":"skybreaker.tail1234.ts.net."}}}`, nil)); err == nil {
+		t.Fatal("matched without knowing the tailnet")
 	}
 	if _, err := Discover(ctx, run("", errors.New("not found"))); err == nil || !strings.Contains(err.Error(), "skybreaker connect") {
 		t.Fatalf("no tailscale: %v", err)
@@ -81,20 +87,20 @@ func TestResolveOrder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	disc := func(ctx context.Context, name string, args ...string) ([]byte, error) { return []byte(status), nil }
 
-	// Nothing saved: discovered, then remembered.
-	u, err := Resolve(ctx, path, "", disc)
-	if err != nil || u != "https://skybreaker.tail1234.ts.net" {
-		t.Fatalf("discovered %q %v", u, err)
+	// Nothing saved: discovered, then remembered, and said so.
+	u, found, err := Resolve(ctx, path, "", disc)
+	if err != nil || u != "https://skybreaker.tail1234.ts.net" || !found {
+		t.Fatalf("discovered %q %v %v", u, found, err)
 	}
 	if c, _ := LoadConfig(path); c.URL != u {
 		t.Fatalf("not saved: %+v", c)
 	}
 	// Saved beats discovery; the environment beats both.
 	SaveConfig(path, Config{URL: "https://other.tail1234.ts.net"})
-	if u, _ := Resolve(ctx, path, "", disc); u != "https://other.tail1234.ts.net" {
+	if u, found, _ := Resolve(ctx, path, "", disc); u != "https://other.tail1234.ts.net" || found {
 		t.Fatalf("saved: %q", u)
 	}
-	if u, _ := Resolve(ctx, path, "box.example.ts.net", disc); u != "https://box.example.ts.net" {
+	if u, _, _ := Resolve(ctx, path, "box.example.ts.net", disc); u != "https://box.example.ts.net" {
 		t.Fatalf("env: %q", u)
 	}
 }

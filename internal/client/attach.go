@@ -19,6 +19,35 @@ type AttachIO struct {
 	Resize <-chan struct{} // the size changed
 }
 
+// escaper watches what you type for ~. at the start of a line, ssh's way
+// out: tmux's detach key belongs to the sandbox, which can rebind it, so
+// this one is kept on your side. ~~ sends a single ~.
+type escaper struct{ midLine, tilde bool }
+
+func (e *escaper) feed(in []byte) (out []byte, detach bool) {
+	for _, b := range in {
+		if e.tilde {
+			e.tilde = false
+			switch b {
+			case '.':
+				return out, true
+			case '~':
+				out = append(out, '~')
+				e.midLine = true
+				continue
+			}
+			out = append(out, '~')
+		}
+		if b == '~' && !e.midLine {
+			e.tilde = true
+			continue
+		}
+		out = append(out, b)
+		e.midLine = b != '\r' && b != '\n'
+	}
+	return out, false
+}
+
 // pingEvery keeps the server's idle timer from dropping a quiet viewer.
 var pingEvery = 25 * time.Second
 
@@ -67,6 +96,7 @@ func (c *Client) Attach(ctx context.Context, id string, t AttachIO) error {
 
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
+	var way escaper
 	for {
 		select {
 		case err := <-done:
@@ -78,8 +108,14 @@ func (c *Client) Attach(ctx context.Context, id string, t AttachIO) error {
 			if !ok {
 				return nil
 			}
-			if err := ws.Write(ctx, true, b); err != nil {
-				return err
+			b, leave := way.feed(b)
+			if len(b) > 0 {
+				if err := ws.Write(ctx, true, b); err != nil {
+					return err
+				}
+			}
+			if leave {
+				return nil
 			}
 		case <-t.Resize:
 			if err := resize(); err != nil {

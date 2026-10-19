@@ -371,9 +371,13 @@ func Dial(ctx context.Context, rawURL string, header http.Header, tc *tls.Config
 		conn.Close()
 		return nil, fmt.Errorf("websocket: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
-	if !hasToken(resp.Header, "Upgrade", "websocket") || resp.Header.Get("Sec-WebSocket-Accept") != acceptKey(key) {
+	// RFC 6455 4.1: the upgrade must be confirmed, and nothing we didn't
+	// ask for (an extension, a subprotocol) negotiated.
+	if !hasToken(resp.Header, "Upgrade", "websocket") || !hasToken(resp.Header, "Connection", "upgrade") ||
+		resp.Header.Get("Sec-WebSocket-Accept") != acceptKey(key) ||
+		resp.Header.Get("Sec-WebSocket-Extensions") != "" || resp.Header.Get("Sec-WebSocket-Protocol") != "" {
 		conn.Close()
-		return nil, errors.New("websocket: the server's accept key or upgrade doesn't match")
+		return nil, errors.New("websocket: the server's handshake doesn't match the request")
 	}
 	conn.SetDeadline(time.Time{})
 	return &Conn{conn: conn, br: br, client: true}, nil

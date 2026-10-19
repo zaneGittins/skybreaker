@@ -110,8 +110,9 @@ func tailscaleCLIs() []string {
 
 const connectHint = "run `skybreaker connect <address>` with its address, such as skybreaker.your-tailnet.ts.net"
 
-// Discover asks the local Tailscale for the tailnet machine named
-// skybreaker and returns its address.
+// Discover asks the local Tailscale for the machine named skybreaker in your
+// own tailnet and returns its address. A machine of that name shared in from
+// another tailnet is never it: your keystrokes would go to its owner.
 func Discover(ctx context.Context, run Runner) (string, error) {
 	var out []byte
 	var err error
@@ -124,38 +125,47 @@ func Discover(ctx context.Context, run Runner) (string, error) {
 		return "", fmt.Errorf("couldn't ask Tailscale where Skybreaker is (%v); %s", err, connectHint)
 	}
 	var st struct {
-		Peer map[string]struct {
-			DNSName string
+		MagicDNSSuffix string
+		Peer           map[string]struct {
+			DNSName    string
+			ShareeNode bool // shared in from another tailnet
 		}
 	}
 	if err := json.Unmarshal(out, &st); err != nil {
 		return "", fmt.Errorf("couldn't read `tailscale status`: %v; %s", err, connectHint)
 	}
+	suffix := strings.Trim(st.MagicDNSSuffix, ".")
+	if suffix == "" {
+		return "", errors.New("Tailscale didn't say which tailnet this is (is MagicDNS on?); " + connectHint)
+	}
+	want := "skybreaker." + suffix
 	for _, k := range slices.Sorted(maps.Keys(st.Peer)) {
-		name := strings.TrimSuffix(st.Peer[k].DNSName, ".")
-		if first, _, _ := strings.Cut(name, "."); first == "skybreaker" && strings.Contains(name, ".") {
-			return "https://" + name, nil
+		p := st.Peer[k]
+		if !p.ShareeNode && strings.EqualFold(strings.TrimSuffix(p.DNSName, "."), want) {
+			return "https://" + want, nil
 		}
 	}
 	return "", errors.New("no machine named skybreaker on your tailnet; " + connectHint)
 }
 
 // Resolve finds the server: $SKYBREAKER_URL (env), then the saved config,
-// then discovery, which is saved for next time.
-func Resolve(ctx context.Context, path, env string, run Runner) (string, error) {
+// then discovery, which is saved for next time; found reports that, so the
+// caller can say where it went.
+func Resolve(ctx context.Context, path, env string, run Runner) (u string, found bool, err error) {
 	if env != "" {
-		return NormalizeURL(env)
+		u, err = NormalizeURL(env)
+		return u, false, err
 	}
 	c, err := LoadConfig(path)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if c.URL != "" {
-		return NormalizeURL(c.URL)
+		u, err = NormalizeURL(c.URL)
+		return u, false, err
 	}
-	u, err := Discover(ctx, run)
-	if err != nil {
-		return "", err
+	if u, err = Discover(ctx, run); err != nil {
+		return "", false, err
 	}
-	return u, SaveConfig(path, Config{URL: u})
+	return u, true, SaveConfig(path, Config{URL: u})
 }

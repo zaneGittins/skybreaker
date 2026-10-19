@@ -203,3 +203,62 @@ func TestAttachEndsWithContext(t *testing.T) {
 		t.Fatal("attach outlived its context")
 	}
 }
+
+func TestEscaper(t *testing.T) {
+	for _, c := range []struct {
+		chunks []string
+		out    string
+		detach bool
+	}{
+		{[]string{"~."}, "", true},
+		{[]string{"ls\r~."}, "ls\r", true},
+		{[]string{"ls\r", "~", "."}, "ls\r", true},
+		{[]string{"a~."}, "a~.", false},
+		{[]string{"~~"}, "~", false},
+		{[]string{"~x"}, "~x", false},
+		{[]string{"\n~."}, "\n", true},
+		{[]string{"vim ~/.bashrc\r"}, "vim ~/.bashrc\r", false},
+	} {
+		var e escaper
+		var out []byte
+		detach := false
+		for _, ch := range c.chunks {
+			o, d := e.feed([]byte(ch))
+			out = append(out, o...)
+			if d {
+				detach = true
+				break
+			}
+		}
+		if string(out) != c.out || detach != c.detach {
+			t.Errorf("%q: sent %q detach=%v, want %q %v", c.chunks, out, detach, c.out, c.detach)
+		}
+	}
+}
+
+func TestAttachLeavesOnTildeDot(t *testing.T) {
+	// A sandbox can rebind tmux's detach key; ~. leaves from this side.
+	f, c := newFake(t)
+	f.attachK = func(ws *wsock.Conn) {
+		for {
+			if _, _, err := ws.Read(context.Background()); err != nil {
+				return
+			}
+		}
+	}
+	in := make(chan []byte, 2)
+	in <- []byte("\r")
+	in <- []byte("~.")
+	done := make(chan error, 1)
+	go func() {
+		done <- c.Attach(context.Background(), "s3", AttachIO{In: in, Out: &bytes.Buffer{}, Size: func() (int, int) { return 24, 80 }})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("~. didn't leave the session")
+	}
+}

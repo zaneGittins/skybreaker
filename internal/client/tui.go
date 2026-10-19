@@ -65,10 +65,32 @@ func (t *terminal) close() {
 
 func (t *terminal) size() (int, int) { return termSize(int(os.Stdout.Fd())) }
 
-// attach relays a session in the main screen and reports how it went.
+// resetModes undoes what a session may have left on: mouse and focus
+// reporting, bracketed paste, the kitty keyboard protocol, charsets,
+// scrolling margins, keypad modes, colours and the alternate screen.
+const resetModes = "\x1b[0m\x1b(B\x1b[r\x1b[?1l\x1b>\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
+	"\x1b[?1004l\x1b[?2004l\x1b[<99u\x1b[>4;0m\x1b[?1049l\x1b[?25h"
+
+// attach relays a session in the main screen, then puts your terminal back
+// as it was, whatever the session switched on.
 func (t *terminal) attach(ctx context.Context, c *Client, id string) error {
 	fmt.Fprint(t.out, "\x1b[?25h\x1b[2J\x1b[H")
-	return c.Attach(ctx, id, AttachIO{In: t.keys, Out: t.out, Size: t.size, Resize: t.resize})
+	err := c.Attach(ctx, id, AttachIO{In: t.keys, Out: t.out, Size: t.size, Resize: t.resize})
+	fmt.Fprint(t.out, resetModes)
+	return err
+}
+
+// drain drops keys typed as a session ended: they were meant for it, and
+// mustn't pick something in the list.
+func (t *terminal) drain(d time.Duration) {
+	stop := time.After(d)
+	for {
+		select {
+		case <-t.keys:
+		case <-stop:
+			return
+		}
+	}
 }
 
 // target is the session ID to attach to for an entry, starting a session
@@ -112,18 +134,23 @@ func pick(ctx context.Context, c *Client, t *terminal, user string) error {
 		}
 		// Keep the selection on the same line across a refresh.
 		var was string
-		if sel < len(entries) {
+		if sel >= 0 && sel < len(entries) {
 			was = label(entries[sel])
 			if s := entries[sel].Session; s != nil {
 				was = s.ID
 			}
 		}
 		entries = Entries(in)
-		sel = min(sel, max(len(entries)-1, 0))
+		// The selection stays on the same entry, or on none: never moved
+		// onto another one a stray Enter would open.
+		found := was == ""
 		for i, e := range entries {
 			if (e.Session != nil && e.Session.ID == was) || (e.Session == nil && label(e) == was) {
-				sel = i
+				sel, found = i, true
 			}
+		}
+		if !found || sel >= len(entries) {
+			sel = -1
 		}
 	}
 	draw := func() {
@@ -143,7 +170,7 @@ func pick(ctx context.Context, c *Client, t *terminal, user string) error {
 		for i := start; i < len(lines) && i < start+room; i++ {
 			b.WriteString(" " + lines[i] + "\r\n")
 		}
-		fmt.Fprintf(&b, "\x1b[%d;1H %s\r\n %s↑↓ select · enter attach · r refresh · q quit · in a session, Ctrl-b d comes back%s", rows-1, status, dim, reset)
+		fmt.Fprintf(&b, "\x1b[%d;1H %s\r\n %s↑↓ select · enter attach · r refresh · q quit · in a session, Ctrl-b d comes back (or ~. if it won't)%s", rows-1, status, dim, reset)
 		io.WriteString(t.out, b.String())
 	}
 	load()
@@ -166,12 +193,15 @@ func pick(ctx context.Context, c *Client, t *terminal, user string) error {
 				sel = max(sel-1, 0)
 			case KeyDown:
 				sel = min(sel+1, max(len(entries)-1, 0))
+				if sel < 0 {
+					sel = 0
+				}
 			case KeyRefresh:
 				load()
 			case KeyQuit:
 				return nil
 			case KeyEnter:
-				if sel >= len(entries) {
+				if sel < 0 || sel >= len(entries) {
 					break
 				}
 				e := entries[sel]
@@ -182,6 +212,7 @@ func pick(ctx context.Context, c *Client, t *terminal, user string) error {
 				}
 				leave()
 				err = t.attach(ctx, c, id)
+				t.drain(400 * time.Millisecond)
 				enter()
 				if err != nil {
 					status = yellow + Visible(err.Error()) + reset

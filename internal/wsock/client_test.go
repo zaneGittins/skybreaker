@@ -88,7 +88,7 @@ func TestDialRefusals(t *testing.T) {
 		rw.Flush()
 	}))
 	defer wrong.Close()
-	if _, err := Dial(ctx, wrong.URL, nil, nil); err == nil || !strings.Contains(err.Error(), "accept") {
+	if _, err := Dial(ctx, wrong.URL, nil, nil); err == nil || !strings.Contains(err.Error(), "handshake") {
 		t.Fatalf("wrong accept key: %v", err)
 	}
 
@@ -152,4 +152,45 @@ func TestClientFramesAreMasked(t *testing.T) {
 	if b := <-got; b&0x80 == 0 {
 		t.Fatal("client frame sent unmasked")
 	}
+}
+
+func TestDialRequiresAProperUpgrade(t *testing.T) {
+	// RFC 6455 4.1: a 101 without Connection: Upgrade, or with an extension
+	// or subprotocol we never asked for, is a failed handshake.
+	for name, extra := range map[string]string{
+		"no Connection":       "Upgrade: websocket\r\n",
+		"unasked extension":   "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Extensions: permessage-deflate\r\n",
+		"unasked subprotocol": "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: chat\r\n",
+	} {
+		u := rawServerHandshake(t, extra)
+		if c, err := Dial(context.Background(), u, nil, nil); err == nil {
+			c.Close(1000, "")
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// rawServerHandshake answers the handshake with a correct accept key and
+// the given header lines.
+func rawServerHandshake(t *testing.T, headers string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		req, err := http.ReadRequest(bufio.NewReader(conn))
+		if err != nil {
+			return
+		}
+		io.WriteString(conn, "HTTP/1.1 101 Switching Protocols\r\n"+headers+"Sec-WebSocket-Accept: "+acceptKey(req.Header.Get("Sec-WebSocket-Key"))+"\r\n\r\n")
+		time.Sleep(500 * time.Millisecond)
+	}()
+	return "ws://" + ln.Addr().String() + "/"
 }

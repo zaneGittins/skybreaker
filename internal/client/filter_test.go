@@ -3,6 +3,7 @@ package client
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // run feeds the filter src in chunks of every size, so a sequence split
@@ -98,4 +99,65 @@ func TestVisible(t *testing.T) {
 	if !strings.Contains(Visible("\x1b"), "<U+001B>") {
 		t.Fatal("ESC not revealed")
 	}
+}
+
+// Terminals that decode 8-bit controls (a Latin-1 locale, PuTTY, the Linux
+// console after ESC % @) act on raw C1 bytes; overlong UTF-8 can smuggle
+// them past a lazy decoder. Only well-formed UTF-8 passes, C1 never.
+func TestFilterStrictUTF8(t *testing.T) {
+	const rep = "�"
+	for name, c := range map[string]struct{ in, want string }{
+		"raw OSC and ST":          {"a\x9d52;c;aGk=\x9cb", "a" + rep + "52;c;aGk=" + rep + "b"},
+		"raw DCS and APC":         {"\x90+q544e\x9c\x9f_G\x9c", rep + "+q544e" + rep + rep + "_G" + rep},
+		"leave UTF-8 first":       {"\x1b%@\x9d0;owned\x07", rep + "0;owned\x07"},
+		"select UTF-8 too":        {"\x1b%Gx", "x"},
+		"overlong C1":             {"a\xe0\x82\x9db", "a" + rep + "b"},
+		"overlong ESC":            {"a\xc0\x9b[2Jb", "a" + rep + rep + "[2Jb"},
+		"surrogate":               {"a\xed\xa0\x80b", "a" + rep + "b"},
+		"truncated sequence":      {"a\xe6\x97b", "a" + rep + "b"},
+		"lone continuation":       {"a\x80b", "a" + rep + "b"},
+		"valid text kept":         {"日本語 ünï \U0001F600 �", "日本語 ünï \U0001F600 �"},
+		"private ESC k title":     {"\x1bkevil title\x07ok", "evil title\x07ok"},
+		"Terminology ESC }":       {"\x1b}bt;evil\x00ok", "bt;evilok"},
+		"NUL dropped":             {"a\x00b", "ab"},
+		"RIS not passed":          {"a\x1bcb", "ab"},
+		"C1 ST ends a string too": {"\x1b]0;x\x9cafter", "after"},
+	} {
+		if got := run(t, c.in); got != c.want {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
+		}
+	}
+}
+
+func FuzzFilter(f *testing.F) {
+	for _, s := range []string{"\x1b]52;c;aGk=\x07", "\x1bPtmux;\x1b\x1b]0;x\x07\x1b\\", "\xc2\x9d0;x\xc2\x9c", "\x9d\x1b%@\xe0\x82\x9d", "a\x1b[31mb"} {
+		f.Add([]byte(s), 3)
+	}
+	f.Fuzz(func(t *testing.T, in []byte, split int) {
+		var whole Filter
+		out := whole.Write(nil, in)
+		if !utf8.Valid(out) {
+			t.Fatalf("invalid UTF-8 out: %q", out)
+		}
+		for i, r := range string(out) {
+			if r >= 0x80 && r <= 0x9f || r == 0 {
+				t.Fatalf("control %U out at %d: %q", r, i, out)
+			}
+		}
+		for i := 0; i+1 < len(out); i++ {
+			if out[i] == 0x1b && strings.IndexByte("]P_^X%", out[i+1]) >= 0 {
+				t.Fatalf("string or charset sequence out: %q", out)
+			}
+		}
+		if split = max(split, 1)%16 + 1; split < len(in) {
+			var f2 Filter
+			var parts []byte
+			for i := 0; i < len(in); i += split {
+				parts = f2.Write(parts, in[i:min(i+split, len(in))])
+			}
+			if string(parts) != string(out) {
+				t.Fatalf("chunked %q, whole %q", parts, out)
+			}
+		}
+	})
 }
