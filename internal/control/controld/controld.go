@@ -177,10 +177,17 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	boards.OnChange = func(project, ref string) { a.Publish(app.Event{Type: "board", Project: project, Data: ref}) }
-	// One MCP server for agents and for you: the board, and showing files
-	// and images in a chat.
-	tools := &mcp.Server{Name: "skybreaker", Version: o.Version, Instructions: board.Instructions,
-		Tools: []func(mcp.Caller) []mcp.Tool{board.Tools(boards), show.Tools(a)}}
+	previews, previewLns, previewHandlers := openPreviews(cfg, st, uiNet)
+	defer func() {
+		for _, ln := range previewLns {
+			ln.Close()
+		}
+	}()
+
+	// One MCP server for agents and for you: the board, showing files and
+	// images in a chat, and previews of a sandbox's web server.
+	tools := &mcp.Server{Name: "skybreaker", Version: o.Version, Instructions: board.Instructions + "\n\n" + preview.Instructions,
+		Tools: []func(mcp.Caller) []mcp.Tool{board.Tools(boards), show.Tools(a), preview.Tools(previews, a)}}
 
 	hk := hooks.New(a.CheckHookToken, a.HookEvent)
 	// Chats answer their harness's prompts in the conversation.
@@ -193,13 +200,6 @@ func Run(ctx context.Context, o Options) error {
 		Config: cfg, Store: st, Backend: a, Notify: n, UIURL: cfg.UIURL,
 		OnUpdate: func(r store.Run) { a.Publish(app.Event{Type: "run", Project: r.Project, Data: r}) },
 	})
-
-	previews, previewLns, previewHandlers := openPreviews(cfg, st, uiNet)
-	defer func() {
-		for _, ln := range previewLns {
-			ln.Close()
-		}
-	}()
 
 	apiHandler, err := api.New(api.Deps{
 		Config: cfg, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews,

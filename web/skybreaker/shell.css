@@ -268,3 +268,6 @@ details.earlier .row-list { margin-top: 4px; }
 .pv-form { display: flex; gap: 8px; padding: 12px 4px 4px; }
 .pv-port { flex: 1; min-width: 0; height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: 500 15px var(--mono); }
 .pv-port:focus { outline: none; border-color: var(--text-2); }
+.pv-card-body { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; }
+.pv-card-addr { font: 500 12.5px var(--mono); color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
+.pv-card-open { text-decoration: none; }

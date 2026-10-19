@@ -151,6 +151,12 @@ function list(lines, i, out) {
   return i;
 }
 
+// previewURL accepts a preview's address only as a bare http(s) origin:
+// Skybreaker sets it, and nothing else becomes the card's link.
+function previewURL(u) {
+  return typeof u === 'string' && /^https?:\/\/[A-Za-z0-9.-]+(:\d{1,5})?$/.test(u) ? u : null;
+}
+
 // safeHref allows web and mail links only.
 function safeHref(u) {
   const s = String(u ?? '').trim();
@@ -359,6 +365,8 @@ function foldChat(c, e) {
     case 'show':
       // The same file can be shown twice, so the item's ID isn't the file's.
       return add({ type: 'show', id: auto(), file: e.id, show: e.show || {} });
+    case 'preview':
+      return add({ type: 'preview', id: auto(), preview: e.preview || {} });
     case 'info':
       c.info = { ...c.info, ...e.info };
       return { changed: null };
@@ -467,4 +475,4 @@ function activityLabel(c) {
   return 'Working';
 }
 
-if (typeof module !== 'undefined') module.exports = { mdBlocks, mdInline, safeHref, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel };
+if (typeof module !== 'undefined') module.exports = { mdBlocks, mdInline, safeHref, previewURL, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel };

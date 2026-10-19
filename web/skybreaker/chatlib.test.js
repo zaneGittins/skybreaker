@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -245,4 +245,20 @@ test('activityLabel: what the agent is doing right now', () => {
   // Long commands are cut, and only the first line shows.
   tool(11, 'c2', { kind: 'command', title: 'go test ./... -run TestSomethingExtremelyLongNamed -count=1 -v\nsecond' });
   assert.ok(activityLabel(c).length <= 48 && !activityLabel(c).includes('second'));
+});
+
+test('foldChat: a preview is its own item', () => {
+  const c = newChat();
+  const r = foldChat(c, { seq: 1, kind: 'preview', preview: { port: 5173, url: 'https://sky.example.ts.net:8401', title: 'Settings' } });
+  assert.equal(r.added.type, 'preview');
+  assert.equal(r.added.preview.port, 5173);
+});
+
+test('previewURL: only a bare http(s) origin becomes a link', () => {
+  assert.equal(previewURL('https://sky.example.ts.net:8401'), 'https://sky.example.ts.net:8401');
+  assert.equal(previewURL('http://127.0.0.1:8402'), 'http://127.0.0.1:8402');
+  for (const bad of ['javascript:alert(1)', 'https://sky.example.ts.net:8401/x', 'https://u:p@sky.example.ts.net:8401',
+    'data:text/html,x', '//evil.example', 'https://evil.example:8401?x', ' https://a.b:1', '', null, 42]) {
+    assert.equal(previewURL(bad), null, String(bad));
+  }
 });

@@ -28,22 +28,24 @@ const (
 	KindLogin    = "login"    // the harness needs signing in: Login
 	KindNotice   = "notice"   // a note from Skybreaker, like a restart: Text
 	KindShow     = "show"     // a file the agent showed the user: ID (its kept copy), Show
+	KindPreview  = "preview"  // a web page in the sandbox, ready to open: Preview
 )
 
 // Event is one entry in a session's log. Seq orders stored events; deltas
 // have none.
 type Event struct {
-	Seq   int64     `json:"seq,omitempty"`
-	Time  time.Time `json:"time"`
-	Kind  string    `json:"kind"`
-	ID    string    `json:"id,omitempty"`
-	Text  string    `json:"text,omitempty"`
-	Tool  *Tool     `json:"tool,omitempty"`
-	Ask   *Ask      `json:"ask,omitempty"`
-	Turn  *Turn     `json:"turn,omitempty"`
-	Info  *Info     `json:"info,omitempty"`
-	Login *Login    `json:"login,omitempty"`
-	Show  *Show     `json:"show,omitempty"`
+	Seq     int64     `json:"seq,omitempty"`
+	Time    time.Time `json:"time"`
+	Kind    string    `json:"kind"`
+	ID      string    `json:"id,omitempty"`
+	Text    string    `json:"text,omitempty"`
+	Tool    *Tool     `json:"tool,omitempty"`
+	Ask     *Ask      `json:"ask,omitempty"`
+	Turn    *Turn     `json:"turn,omitempty"`
+	Info    *Info     `json:"info,omitempty"`
+	Login   *Login    `json:"login,omitempty"`
+	Show    *Show     `json:"show,omitempty"`
+	Preview *Preview  `json:"preview,omitempty"`
 }
 
 // Tool kinds, for the card's icon and its one-line summary.
@@ -174,6 +176,15 @@ type Show struct {
 	Start     int  `json:"start,omitempty"`
 	End       int  `json:"end,omitempty"`
 	Truncated bool `json:"truncated,omitempty"`
+}
+
+// Preview is a web server in the sandbox the agent put in front of the
+// user. URL is the project's preview origin, Skybreaker's own; the agent
+// chose only the port and the caption.
+type Preview struct {
+	Port  int    `json:"port"`
+	URL   string `json:"url"`
+	Title string `json:"title,omitempty"`
 }
 
 // Login is a harness asking to be signed in. With a URL and code it is a

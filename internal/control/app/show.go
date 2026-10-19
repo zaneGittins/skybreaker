@@ -71,6 +71,11 @@ func (a *App) ChatShow(session string, sh chat.Show, data []byte, ext string) er
 	return a.chat.Show(session, sh, data, ext)
 }
 
+// ChatPreview puts a preview link in front of the user in a chat.
+func (a *App) ChatPreview(session string, p chat.Preview) error {
+	return a.chat.Preview(session, p)
+}
+
 // ChatShown returns the kept copy of a file shown in a chat.
 func (a *App) ChatShown(id, name string) ([]byte, error) {
 	if _, err := a.chatSession(id); err != nil {

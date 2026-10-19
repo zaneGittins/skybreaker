@@ -627,6 +627,18 @@ func (m *Manager) Show(id string, sh Show, data []byte, ext string) error {
 	return nil
 }
 
+// Preview adds a preview card to the chat.
+func (m *Manager) Preview(id string, p Preview) error {
+	if _, err := m.chat(id); err != nil {
+		return err
+	}
+	r := m.run(id)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	m.emit(r, Event{Kind: KindPreview, Preview: &p})
+	return nil
+}
+
 // Shown returns the kept copy of a file shown in a chat.
 func (m *Manager) Shown(id, name string) ([]byte, error) {
 	return m.c.Log.Kept(id, name)

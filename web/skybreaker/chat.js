@@ -254,6 +254,7 @@ async function renderChat(seq, d) {
       case 'error': return errorCard(it);
       case 'notice': return el('div.notice', null, it.text);
       case 'show': return showCard(it);
+      case 'preview': return previewCard(it);
     }
     return el('div');
   };
@@ -542,6 +543,20 @@ async function renderChat(seq, d) {
       })
       .catch(() => body.replaceChildren(el('div.show-note', null, "Couldn't load this file.")));
     return el('div.show-card', null, head, caption, body, note);
+  }
+
+  // previewCard is a web page in the sandbox the agent put up: a link to
+  // the project's preview address, which Skybreaker set.
+  function previewCard(it) {
+    const p = it.preview;
+    const url = previewURL(p.url);
+    const head = el('div.show-head', null,
+      el('span.ticon', null, svg(ICON.window)),
+      el('span.show-path', null, 'Preview · port ' + Number(p.port)),
+      url ? el('a.icon-btn.bare', { href: url, target: '_blank', rel: 'noopener noreferrer', title: 'Open', 'aria-label': 'Open' }, svg(ICON.external)) : null);
+    const caption = p.title ? el('div.show-title', null, reveal(p.title)) : null;
+    const open = url ? el('a.btn.sm.pv-card-open', { href: url, target: '_blank', rel: 'noopener noreferrer' }, svg(ICON.external), 'Open preview') : null;
+    return el('div.show-card.pv-card', null, head, caption, el('div.pv-card-body', null, open, el('span.pv-card-addr', null, url ? url.replace(/^https?:\/\//, '') : 'No address')));
   }
 
   function askLine(it) {
