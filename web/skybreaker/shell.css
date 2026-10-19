@@ -35,7 +35,7 @@ details.earlier .row-list { margin-top: 4px; }
 .home-main { display: flex; flex-direction: column; gap: 12px; }
 .home-main > .page-head { margin-bottom: 8px; }
 .home-main > .empty-add { margin-top: 4px; }
-.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 10px; }
 .tile { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 14px; border-radius: 18px; background: var(--pbg); color: var(--pink); }
 .tile-name { display: flex; align-items: center; gap: 7px; font: 700 16px var(--font); overflow: hidden; }
 .tile-name .pdot { width: 9px; height: 9px; }
@@ -273,7 +273,10 @@ details.earlier .row-list { margin-top: 4px; }
 .pv-card-open { text-decoration: none; }
 
 /* ---- new project ---- */
-.np-tile { display: flex; align-items: center; justify-content: center; gap: 8px; border: 1.5px dashed var(--border-strong); background: transparent; color: var(--muted); font: 650 14px var(--font); cursor: pointer; }
+/* Shaped like a project tile (name line, sub line), drawn as a dashed outline. */
+.np-tile { border: 1.5px dashed var(--border-strong); background: transparent; color: var(--text-2); font: inherit; text-align: left; cursor: pointer; }
+.np-tile .tile-name svg { width: 16px; height: 16px; color: var(--sun); }
+.np-tile .tile-sub { color: var(--muted); }
 .side-new { width: 100%; border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; text-align: left; }
 .side-new svg { width: 16px; height: 16px; }
 .np-form { display: grid; gap: 14px; padding: 0 4px 4px; }

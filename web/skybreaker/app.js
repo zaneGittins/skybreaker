@@ -123,7 +123,8 @@ async function renderHome(seq) {
     !d.sessions.some(s => s.status === 'running') ? el('button.empty-add', { type: 'button', onclick: () => newSessionSheet(d.projects) }, svg(ICON.plus), 'Start a chat') : null,
     el('section.list-sec.phone-only', null, secHead('Projects'),
       el('div.tiles', null, d.projects.map(p => projectTile(p, review)),
-        el('button.tile.np-tile', { type: 'button', onclick: newProjectSheet }, svg(ICON.plus), el('span', null, 'New project')))),
+        el('button.tile.np-tile', { type: 'button', onclick: newProjectSheet },
+          el('span.tile-name', null, svg(ICON.plus), 'New project'), el('span.tile-sub', null, 'From a GitHub repo')))),
     earlier.length ? el('details.earlier', { open: prefs.get('earlierOpen') === '1', ontoggle: e => prefs.set('earlierOpen', e.target.open ? '1' : '0') },
       el('summary', null, el('span', null, 'Earlier'), el('span.n', null, String(earlier.length)), svg(ICON.chevron, 'chev')),
       el('div.row-list', null, earlier.slice(0, 40).map(row))) : null);
