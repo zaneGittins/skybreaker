@@ -73,3 +73,33 @@ func TestRevokeCutsOpenRouteStream(t *testing.T) {
 		t.Fatal("the watch kept streaming after its token was revoked")
 	}
 }
+
+func TestRevokeCutsPlainHTTPTunnelStream(t *testing.T) {
+	w := newWorld(t)
+	c := w.orbit()
+	c.Timeout = 15 * time.Second
+	resp, err := c.Get("http://plain.test/x?watch=stream")
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("stream: %v %v", resp, err)
+	}
+	defer resp.Body.Close()
+	br := bufio.NewReader(resp.Body)
+	if line, err := br.ReadString('\n'); err != nil || !strings.HasPrefix(line, "event") {
+		t.Fatalf("first event: %q %v", line, err)
+	}
+	w.sessions.RevokeAll()
+	done := make(chan struct{})
+	go func() {
+		for {
+			if _, err := br.ReadString('\n'); err != nil {
+				close(done)
+				return
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the download kept flowing after its token was revoked")
+	}
+}

@@ -93,3 +93,19 @@ func TestK8sProxySubresourceRefused(t *testing.T) {
 		t.Fatalf("%d proxy requests reached the cluster", n)
 	}
 }
+
+func TestTwoContentTypesRefused(t *testing.T) {
+	// The card shows one content type; an upstream reading the other would
+	// act on something the approver never saw.
+	w := newWorld(t)
+	req, _ := http.NewRequest("PUT", "https://api.github.test/repos/zaneGittins/orbit/pulls/6/merge", strings.NewReader("{}"))
+	req.Header["Content-Type"] = []string{"application/json", "application/merge-patch+json"}
+	resp, err := w.orbit().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest || resp.Header.Get("X-Skybreaker-Approval") != "" || len(w.approvals.List()) != 0 {
+		t.Fatalf("two content types: %d", resp.StatusCode)
+	}
+}

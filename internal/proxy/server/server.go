@@ -212,20 +212,31 @@ func (s *Server) reap(ctx context.Context) {
 			return
 		case <-t.C:
 		}
+		// Decide under the lock; close outside it. Closing a TLS conn can
+		// block on a peer that has stopped reading, and every request takes
+		// this lock.
+		var conns []net.Conn
+		var reqs []*inFlight
 		s.connMu.Lock()
 		for c, token := range s.conns {
 			if _, live := s.sessions.Lookup(token); !live {
-				c.Close()
+				conns = append(conns, c)
 				delete(s.conns, c)
 			}
 		}
 		for f, token := range s.reqs {
 			if _, live := s.sessions.Lookup(token); !live {
-				f.cancel()
+				reqs = append(reqs, f)
 				delete(s.reqs, f)
 			}
 		}
 		s.connMu.Unlock()
+		for _, f := range reqs {
+			f.cancel()
+		}
+		for _, c := range conns {
+			go c.Close()
+		}
 	}
 }
 

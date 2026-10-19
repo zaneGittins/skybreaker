@@ -134,6 +134,12 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 		s.deny(w, e, http.StatusForbidden, reason)
 		return
 	}
+	// The card shows one content type; an upstream that read another would
+	// act on something the approver never saw.
+	if len(r.Header.Values("Content-Type")) > 1 {
+		s.deny(w, e, http.StatusBadRequest, "more than one Content-Type")
+		return
+	}
 	if isUpgrade(r) {
 		s.deny(w, e, http.StatusNotImplemented, upgradeRefused)
 		return
@@ -342,6 +348,12 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 	}
 	upReq.Header = out
 	upReq.ContentLength = length
+	// Resolving the credential may have taken a round trip (an App token);
+	// the session may have ended meanwhile.
+	if !s.live(t.token, t.pp.Name) {
+		s.deny(w, e, http.StatusProxyAuthRequired, "session revoked or expired")
+		return
+	}
 	resp, err := s.transport(t.guard, t.roots, t.transport).RoundTrip(upReq)
 	if err != nil {
 		status, reason := dialStatus(err)
@@ -596,7 +608,11 @@ func (s *Server) plain(w http.ResponseWriter, r *http.Request, peer sender) {
 		return
 	}
 	// A tunnel host over plain HTTP: no rules and no injection, like a tunnel.
-	out := r.Clone(r.Context())
+	// Revoking the token ends it, as it ends a tunnel's connection.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	defer s.trackRequest(token, cancel)()
+	out := r.Clone(ctx)
 	out.RequestURI = ""
 	out.URL.Host = hostPort(host, port, "http")
 	stripHop(out.Header)
