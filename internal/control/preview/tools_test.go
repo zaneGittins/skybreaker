@@ -16,8 +16,10 @@ type fakeBackend struct {
 	shown     []chat.Preview
 }
 
-func (f *fakeBackend) Listening(context.Context, string) ([]Listening, error) { return f.listening, nil }
-func (f *fakeBackend) ChatIn(project, session string) bool                { return f.chats[session] == project }
+func (f *fakeBackend) Listening(context.Context, string) ([]Listening, error) {
+	return f.listening, nil
+}
+func (f *fakeBackend) ChatIn(project, session string) bool { return f.chats[session] == project }
 func (f *fakeBackend) ChatPreview(session string, p chat.Preview) error {
 	f.shown = append(f.shown, p)
 	return nil
