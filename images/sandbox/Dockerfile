@@ -34,8 +34,14 @@ RUN curl -fsSL -o /tmp/go.tgz https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.
     && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz
 ENV PATH=/usr/local/go/bin:/root/go/bin:$PATH
 
-# Harness CLIs, from the builtin harness manifests' install lines.
-RUN npm install -g @anthropic-ai/claude-code @openai/codex @qwen-code/qwen-code opencode-ai @earendil-works/pi-coding-agent \
+# Harness CLIs, from the builtin harness manifests' install lines. Retried:
+# a CLI can resolve a dependency version (an AWS SDK package, say) while its
+# publisher is still uploading it, and npm reports that as ETARGET.
+RUN for try in 1 2 3; do \
+      npm install -g @anthropic-ai/claude-code @openai/codex @qwen-code/qwen-code opencode-ai @earendil-works/pi-coding-agent && break; \
+      [ "$try" = 3 ] && exit 1; \
+      echo "npm install failed; retrying in 60s"; sleep 60; \
+    done \
     && npm cache clean --force
 
 RUN if [ "$PLAYWRIGHT" = "1" ]; then npx -y playwright install --with-deps chromium; fi
