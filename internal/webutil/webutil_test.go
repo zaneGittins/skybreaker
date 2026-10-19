@@ -253,3 +253,26 @@ func TestNewServerLimits(t *testing.T) {
 		t.Error("requests don't inherit the daemon's context")
 	}
 }
+
+// A preview page sets cookies on Skybreaker's host, which the browser then
+// sends to the app too. Even a flood of them must not lock you out.
+func TestServerTakesABrowsersWorthOfCookies(t *testing.T) {
+	srv := httptest.NewUnstartedServer(nil)
+	srv.Config = NewServer(context.Background(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Start()
+	defer srv.Close()
+	req, _ := http.NewRequest("GET", srv.URL, nil)
+	req.Header.Set("Cookie", "c="+strings.Repeat("x", 200<<10))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("200 KiB of cookies: %v %v", resp, err)
+	}
+}
+
+func TestHardenSetsOpenerPolicy(t *testing.T) {
+	w := httptest.NewRecorder()
+	Harden(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if w.Header().Get("Cross-Origin-Opener-Policy") != "same-origin" {
+		t.Fatal("no opener policy: a page the app opened could steer it")
+	}
+}

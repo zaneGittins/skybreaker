@@ -3,21 +3,35 @@
 // Skybreaker's tailnet name that no other project ever gets.
 //
 // What the page runs is the sandbox's to choose, so it must gain nothing
-// from your browser's trust. The origin isolates it from the app; on top of
-// that, Handler answers only its own origin's requests and navigations (so
-// another project's page can't read it, whatever CORS headers the dev
-// server sends), keeps cookies to this project (browsers share cookies
-// across ports), refuses to be framed and leaves the app no opener.
+// from your browser's trust or position. The origin isolates it from the
+// app. On top of that, Handler:
+//   - answers only its own host, and only its own origin's requests and
+//     navigations, so another project's page can't read it whatever CORS
+//     headers the dev server sends;
+//   - sends a Content-Security-Policy that keeps the page loading from and
+//     connecting to its own server only: your browser isn't behind the
+//     broker, and the page must not use it as a way out;
+//   - passes only an allowlist of response headers, no early hints and no
+//     trailers;
+//   - signs this project's cookies and caps them (browsers share cookies
+//     across ports, so other pages could plant them, and a flood would
+//     reach the app too), forces them HttpOnly, drops everyone else's;
+//   - refuses to be framed and leaves the app no opener.
 package preview
 
 import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"html"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -40,9 +54,38 @@ type Handler struct {
 
 	once  sync.Once
 	proxy *httputil.ReverseProxy
+	host  string // the origin's host:port, the only one this answers to
+	key   []byte // signs this project's cookies; new each run
 }
 
+// policy keeps the page to its own server: it may run inline and eval'd
+// script (dev servers do), but loads, connects, posts and frames only its
+// own origin. 'self' covers the dev server's ws:// and wss:// sockets.
+const policy = "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; " +
+	"frame-src 'self'; frame-ancestors 'self'; form-action 'self'; base-uri 'self'; object-src 'none'"
+
+// passed are the response headers a dev server's page needs; anything else
+// it sends (its own CSP and report endpoints, Alt-Svc, HSTS,
+// Clear-Site-Data, Refresh, Link preloads) is dropped.
+var passed = map[string]bool{
+	"Content-Type": true, "Content-Length": true, "Content-Encoding": true, "Content-Language": true, "Content-Disposition": true,
+	"Content-Range": true, "Accept-Ranges": true, "Cache-Control": true, "Expires": true, "Pragma": true, "Etag": true,
+	"Last-Modified": true, "Vary": true, "Date": true, "Age": true, "Location": true, "Retry-After": true, "Www-Authenticate": true,
+	"Upgrade": true, "Connection": true, "Sec-Websocket-Accept": true, "Sec-Websocket-Protocol": true, "Sec-Websocket-Extensions": true,
+}
+
+const (
+	maxCookies     = 16   // set per response
+	maxCookieBytes = 1024 // per cookie, as sent
+)
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.once.Do(h.init)
+	if !strings.EqualFold(r.Host, h.host) {
+		http.Error(w, "this preview answers only its own address", http.StatusMisdirectedRequest)
+		return
+	}
 	if !h.allowed(r) {
 		http.Error(w, "this preview answers only its own pages", http.StatusForbidden)
 		return
@@ -53,9 +96,44 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"Pick a port for "+h.Project+" in Skybreaker, on the project's page under Preview.")
 		return
 	}
-	h.once.Do(h.init)
 	r = r.WithContext(context.WithValue(r.Context(), targetKey{}, ap))
-	h.proxy.ServeHTTP(w, r)
+	h.proxy.ServeHTTP(noInfo{w}, r)
+}
+
+// noInfo drops informational responses (103 Early Hints): they carry
+// headers that ModifyResponse never sees. Switching protocols still goes.
+type noInfo struct{ http.ResponseWriter }
+
+func (w noInfo) WriteHeader(code int) {
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		return
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w noInfo) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// noTrailers drops a response's trailers, which the transport fills in as
+// the body ends, before the proxy would pass them on.
+type noTrailers struct {
+	io.ReadCloser
+	resp *http.Response
+}
+
+func (b noTrailers) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.resp.Trailer = nil
+	}
+	return n, err
+}
+
+// sign is a cookie's signature: only this run of Skybreaker can make one,
+// so a cookie planted by script on another port never verifies.
+func (h *Handler) sign(name, value string) string {
+	m := hmac.New(sha256.New, h.key)
+	m.Write([]byte(h.Project + "\x00" + name + "\x00" + value))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))[:22]
 }
 
 type targetKey struct{}
@@ -80,6 +158,11 @@ func (h *Handler) allowed(r *http.Request) bool {
 }
 
 func (h *Handler) init() {
+	if u, err := url.Parse(h.Origin); err == nil {
+		h.host = u.Host
+	}
+	h.key = make([]byte, 32)
+	rand.Read(h.key)
 	cookiePrefix := "sbp_" + h.Project + "_"
 	h.proxy = &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -97,8 +180,10 @@ func (h *Handler) init() {
 			}
 			var mine []string
 			for _, c := range pr.In.Cookies() {
-				if name, ok := strings.CutPrefix(c.Name, cookiePrefix); ok && name != "" {
-					mine = append(mine, (&http.Cookie{Name: name, Value: c.Value}).String())
+				name, ok := strings.CutPrefix(c.Name, cookiePrefix)
+				sig, value, signed := strings.Cut(c.Value, ".")
+				if ok && name != "" && signed && hmac.Equal([]byte(sig), []byte(h.sign(name, value))) {
+					mine = append(mine, (&http.Cookie{Name: name, Value: value}).String())
 				}
 			}
 			pr.Out.Header.Del("Cookie")
@@ -107,24 +192,24 @@ func (h *Handler) init() {
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
-			hd := resp.Header
-			for k := range hd {
-				if strings.HasPrefix(k, "Access-Control-") {
-					hd.Del(k)
-				}
-			}
 			var cookies []string
-			for _, v := range hd.Values("Set-Cookie") {
+			for _, v := range resp.Header.Values("Set-Cookie") {
 				c, err := http.ParseSetCookie(v)
-				if err != nil {
+				if err != nil || len(cookies) == maxCookies {
 					continue
 				}
+				c.Value = h.sign(c.Name, c.Value) + "." + c.Value
 				c.Name, c.Domain, c.HttpOnly = cookiePrefix+c.Name, "", true
-				if s := c.String(); s != "" {
+				if s := c.String(); s != "" && len(s) <= maxCookieBytes {
 					cookies = append(cookies, s)
 				}
 			}
-			hd.Del("Set-Cookie")
+			hd := http.Header{}
+			for k, v := range resp.Header {
+				if passed[k] {
+					hd[k] = v
+				}
+			}
 			for _, c := range cookies {
 				hd.Add("Set-Cookie", c)
 			}
@@ -132,17 +217,25 @@ func (h *Handler) init() {
 				ap := resp.Request.Context().Value(targetKey{}).(netip.AddrPort)
 				hd.Set("Location", h.localToOrigin(loc, ap.Port()))
 			}
-			hd.Add("Content-Security-Policy", "frame-ancestors 'self'")
+			hd.Set("Content-Security-Policy", policy)
 			hd.Set("Cross-Origin-Opener-Policy", "same-origin")
+			hd.Set("Cross-Origin-Resource-Policy", "same-origin")
 			hd.Set("Referrer-Policy", "same-origin")
+			hd.Set("X-Dns-Prefetch-Control", "off")
+			resp.Header = hd
+			resp.Trailer = nil
+			if resp.StatusCode != http.StatusSwitchingProtocols { // a socket's body must stay writable
+				resp.Body = noTrailers{resp.Body, resp}
+			}
 			return nil
 		},
 		Transport: &http.Transport{
-			Proxy:                 nil, // straight to the sandbox, never through a proxy
-			DialContext:           (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
-			ResponseHeaderTimeout: 2 * time.Minute, // a dev server's first compile
-			MaxIdleConnsPerHost:   16,
-			IdleConnTimeout:       90 * time.Second,
+			Proxy:                  nil, // straight to the sandbox, never through a proxy
+			DialContext:            (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+			ResponseHeaderTimeout:  2 * time.Minute, // a dev server's first compile
+			MaxResponseHeaderBytes: 1 << 20,
+			MaxIdleConnsPerHost:    16,
+			IdleConnTimeout:        90 * time.Second,
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			ap := r.Context().Value(targetKey{}).(netip.AddrPort)

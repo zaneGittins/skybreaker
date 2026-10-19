@@ -38,8 +38,10 @@ func NewServer(ctx context.Context, h http.Handler) *http.Server {
 		Handler:           h,
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       2 * time.Minute,
-		MaxHeaderBytes:    64 << 10,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
+		// Above the most cookies a browser keeps for a host: a preview page
+		// can set them on Skybreaker's name, and the app must still answer.
+		MaxHeaderBytes: 1 << 20,
+		BaseContext:    func(net.Listener) context.Context { return ctx },
 	}
 }
 
@@ -68,6 +70,8 @@ func HardenWith(csp string, next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
+		// No page the app opens (a preview, a sign-in) can steer it back.
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		inner.ServeHTTP(w, r)
 	})
 }

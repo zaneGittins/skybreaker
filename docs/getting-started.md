@@ -58,7 +58,9 @@ skybreaker              # pick a session and attach; Ctrl-b d brings you back
 
 ## Previews
 
-To see what an agent is building, open the project's menu (or **Preview** on a desktop) and pick a port the sandbox is listening on. The page opens on its own address, `https://skybreaker.<your-tailnet>.ts.net:84xx`, apart from Skybreaker. Dev servers must listen on `0.0.0.0` rather than `localhost` (`vite --host 0.0.0.0`, `next dev -H 0.0.0.0`). If you use Tailscale ACLs, allow your login ports 8401-8499 on the `skybreaker` machine as well as 443.
+To see what an agent is building, open the project's menu (or **Preview** on a desktop) and pick a port the sandbox is listening on. The page opens on its own address, `https://skybreaker.<your-tailnet>.ts.net:84xx`, apart from Skybreaker. Dev servers must listen on `0.0.0.0` rather than `localhost` (`vite --host 0.0.0.0`, `next dev -H 0.0.0.0`). If you use Tailscale ACLs, allow your login ports 8401-8499 on the `skybreaker` machine as well as 443. Agents can open a preview themselves with Skybreaker's `preview` tool, which puts a link in the chat.
+
+A preview page loads only from its own server, so fonts or scripts from CDNs don't load there. Its cookies are `HttpOnly`, so frameworks that read a CSRF cookie from script (Django's `csrftoken`, `XSRF-TOKEN`) need it sent another way while previewed.
 
 ## Configuration
 

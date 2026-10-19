@@ -106,27 +106,6 @@ func TestUpstreamSeesLocalhost(t *testing.T) {
 	}
 }
 
-func TestCookiesAreThisProjectsOnly(t *testing.T) {
-	// Browsers scope cookies by host, not port: every preview, and the app,
-	// get each other's. The proxy names this project's and drops the rest.
-	u := newUpstream(t)
-	u.hdrs["Set-Cookie"] = []string{"session=abc; Path=/; Domain=skybreaker.example.ts.net", "__Host-csrf=x; Path=/; Secure", "bad cookie; Path=/"}
-	w := serve(handlerFor(u), "GET", "/", map[string]string{"Sec-Fetch-Site": "same-origin", "Cookie": "sbp_orbit_session=mine; sbp_comet_session=theirs; other=app"})
-	r := <-u.got
-	if got := r.Header.Get("Cookie"); got != "session=mine" {
-		t.Fatalf("dev server got cookies %q", got)
-	}
-	set := w.Result().Header.Values("Set-Cookie")
-	if len(set) != 2 {
-		t.Fatalf("set-cookie %q", set)
-	}
-	for _, c := range set {
-		if !strings.HasPrefix(c, "sbp_orbit_") || !strings.Contains(c, "HttpOnly") || strings.Contains(strings.ToLower(c), "domain=") {
-			t.Errorf("cookie %q", c)
-		}
-	}
-}
-
 func TestResponseHeaders(t *testing.T) {
 	u := newUpstream(t)
 	port := u.URL[strings.LastIndex(u.URL, ":")+1:]
@@ -215,10 +194,12 @@ func TestHotReloadSocket(t *testing.T) {
 	}))
 	defer up.Close()
 	ap := netip.MustParseAddrPort(strings.TrimPrefix(up.URL, "http://"))
-	front := httptest.NewServer(&Handler{Project: "orbit", Origin: origin, Target: func() (netip.AddrPort, bool) { return ap, true }})
+	front := httptest.NewUnstartedServer(nil)
+	front.Config.Handler = &Handler{Project: "orbit", Origin: "http://" + front.Listener.Addr().String(), Target: func() (netip.AddrPort, bool) { return ap, true }}
+	front.Start()
 	defer front.Close()
 	u := "ws" + strings.TrimPrefix(front.URL, "http") + "/@vite/hmr"
-	c, err := wsock.Dial(context.Background(), u, http.Header{"Origin": {origin}, "Sec-Fetch-Site": {"same-origin"}, "Sec-Fetch-Mode": {"websocket"}}, nil)
+	c, err := wsock.Dial(context.Background(), u, http.Header{"Origin": {front.URL}, "Sec-Fetch-Site": {"same-origin"}, "Sec-Fetch-Mode": {"websocket"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

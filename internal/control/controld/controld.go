@@ -244,7 +244,12 @@ func Run(ctx context.Context, o Options) error {
 	errs := make(chan error, len(listeners))
 	for i, ln := range listeners {
 		go func() {
-			if err := servers[i].Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+			err := servers[i].Serve(ln)
+			switch {
+			case errors.Is(err, http.ErrServerClosed):
+			case i >= 3: // a preview: the rest of Skybreaker carries on
+				log.Printf("skybreaker: preview listener %s stopped: %v", ln.Addr(), err)
+			default:
 				errs <- err
 			}
 		}()

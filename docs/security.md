@@ -37,10 +37,12 @@ Sandboxes reach the outside only through `HTTPS_PROXY=http://<project>:<token>@b
 
 A preview shows you a web server running in a sandbox. Its page is written by the agent, so it runs in your browser on an origin of its own: another port of Skybreaker's tailnet name (8401 and up), one per project, never reused for another project. On that origin it can't read or drive the app: the app refuses writes from other origins and checks a terminal's exact origin. The preview itself:
 
-- answers only listed users, like the app, and only its own origin's requests and plain navigations, so another project's page can't read it with your identity, whatever CORS headers the dev server sends;
-- keeps cookies to its project, renamed and `HttpOnly`, because browsers share cookies across ports;
+- answers only listed users, like the app, and only its own host, origin's requests and plain navigations, so another project's page can't read it with your identity, whatever CORS headers the dev server sends;
+- sends a Content-Security-Policy that lets the page load from and connect to its own server only. Your browser isn't behind the broker, so a page that could fetch anywhere would be a way out of the sandbox and into your tailnet;
+- passes only an allowlist of the dev server's response headers (no CSP or report endpoints of its own, no Alt-Svc, HSTS or Clear-Site-Data), and no early hints or trailers;
+- signs its project's cookies with a key only Skybreaker holds, caps them, and makes them `HttpOnly`: browsers share cookies across ports, so other pages could plant them, read them or flood them onto the app;
 - refuses to be framed by other origins and leaves the app no opener;
-- connects only to its own sandbox's address, on the port you chose in the app.
+- connects only to its own sandbox's address, on the port you or the agent chose.
 
 ## Approvals
 
@@ -66,6 +68,7 @@ Agents reach their project's board through Skybreaker's MCP server, identified b
 
 - **Allowed channels can leak data.** An agent can put data in a pushed branch, a PR body or a model prompt. Keep allow lists tight and review branches before merging.
 - **Harness logins live in the sandbox.** A hostile agent can read Claude and ChatGPT subscription tokens. Where that matters, use broker-injected API keys (the `llm-anthropic` capability).
+- **An open preview can still leave by navigating.** The policy stops a preview page's fetches, sockets, forms and resources from reaching anywhere but its own server, but a page can still navigate the tab or open a window to another site with data in the URL, and WebRTC isn't covered by CSP. Close a preview you don't trust.
 - **`auto` rules are trusted.** Anything a rule auto-approves, a hostile agent can do. Make destructive actions `ask` or `deny`.
 
 ## Response and testing
