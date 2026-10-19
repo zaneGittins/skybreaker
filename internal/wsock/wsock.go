@@ -1,14 +1,16 @@
-// Package wsock is a small RFC 6455 WebSocket server: enough for the
-// terminal relay, and nothing more. No extensions or subprotocols are
-// negotiated; client frames must be masked; messages are capped at
-// MaxMessage. Callers authenticate the request and check its Origin before
-// calling Accept.
+// Package wsock is a small RFC 6455 WebSocket server and client: enough for
+// the terminal relay, and nothing more. No extensions or subprotocols are
+// negotiated; client frames must be masked and server frames must not be;
+// messages are capped at MaxMessage. Callers authenticate the request and
+// check its Origin before calling Accept.
 package wsock
 
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -16,6 +18,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -55,8 +58,9 @@ func hasToken(h http.Header, name, token string) bool {
 }
 
 type Conn struct {
-	conn net.Conn
-	br   *bufio.Reader
+	conn   net.Conn
+	br     *bufio.Reader
+	client bool // this end dialled: it masks what it sends, and nothing it reads is masked
 
 	wmu       sync.Mutex
 	closeOnce sync.Once
@@ -175,7 +179,11 @@ func (c *Conn) readFrame() (fin bool, op byte, payload []byte, err error) {
 	if h[0]&0x70 != 0 {
 		return false, 0, nil, fmt.Errorf("%w: reserved bits set", ErrProtocol)
 	}
-	if h[1]&0x80 == 0 {
+	masked := h[1]&0x80 != 0
+	if c.client && masked {
+		return false, 0, nil, fmt.Errorf("%w: server frame masked", ErrProtocol)
+	}
+	if !c.client && !masked {
 		return false, 0, nil, fmt.Errorf("%w: client frame not masked", ErrProtocol)
 	}
 	n := uint64(h[1] & 0x7f)
@@ -200,15 +208,19 @@ func (c *Conn) readFrame() (fin bool, op byte, payload []byte, err error) {
 		return false, 0, nil, fmt.Errorf("%w: frame too large", ErrProtocol)
 	}
 	var mask [4]byte
-	if _, err := io.ReadFull(c.br, mask[:]); err != nil {
-		return false, 0, nil, err
+	if masked {
+		if _, err := io.ReadFull(c.br, mask[:]); err != nil {
+			return false, 0, nil, err
+		}
 	}
 	payload = make([]byte, n)
 	if _, err := io.ReadFull(c.br, payload); err != nil {
 		return false, 0, nil, err
 	}
-	for i := range payload {
-		payload[i] ^= mask[i%4]
+	if masked {
+		for i := range payload {
+			payload[i] ^= mask[i%4]
+		}
 	}
 	return fin, op, payload, nil
 }
@@ -222,17 +234,31 @@ func (c *Conn) writeFrame(op byte, payload []byte, deadline time.Time) error {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
 	c.conn.SetWriteDeadline(deadline)
-	hdr := make([]byte, 0, 10)
+	hdr := make([]byte, 0, 14)
 	hdr = append(hdr, 0x80|op)
+	var maskBit byte
+	if c.client {
+		maskBit = 0x80
+	}
 	switch n := len(payload); {
 	case n < 126:
-		hdr = append(hdr, byte(n))
+		hdr = append(hdr, maskBit|byte(n))
 	case n < 1<<16:
-		hdr = append(hdr, 126)
+		hdr = append(hdr, maskBit|126)
 		hdr = binary.BigEndian.AppendUint16(hdr, uint16(n))
 	default:
-		hdr = append(hdr, 127)
+		hdr = append(hdr, maskBit|127)
 		hdr = binary.BigEndian.AppendUint64(hdr, uint64(n))
+	}
+	if c.client {
+		var mask [4]byte
+		rand.Read(mask[:])
+		hdr = append(hdr, mask[:]...)
+		masked := make([]byte, len(payload))
+		for i, b := range payload {
+			masked[i] = b ^ mask[i%4]
+		}
+		payload = masked
 	}
 	if _, err := c.conn.Write(hdr); err != nil {
 		return err
@@ -270,4 +296,85 @@ func (c *Conn) Close(code int, reason string) error {
 		err = c.conn.Close()
 	})
 	return err
+}
+
+// Dial opens a WebSocket to a ws, wss, http or https URL, sending header
+// (an Origin, say) with the handshake. tc, if set, configures TLS.
+func Dial(ctx context.Context, rawURL string, header http.Header, tc *tls.Config) (*Conn, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	secure := false
+	switch u.Scheme {
+	case "wss", "https":
+		secure = true
+	case "ws", "http":
+	default:
+		return nil, fmt.Errorf("websocket: unsupported scheme %q", u.Scheme)
+	}
+	addr := u.Host
+	if u.Port() == "" {
+		addr = net.JoinHostPort(u.Hostname(), map[bool]string{true: "443", false: "80"}[secure])
+	}
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	// The handshake gets the dial's deadline; the connection, none.
+	if dl, ok := ctx.Deadline(); ok {
+		conn.SetDeadline(dl)
+	}
+	if secure {
+		cfg := &tls.Config{}
+		if tc != nil {
+			cfg = tc.Clone()
+		}
+		if cfg.ServerName == "" {
+			cfg.ServerName = u.Hostname()
+		}
+		tconn := tls.Client(conn, cfg)
+		if err := tconn.HandshakeContext(ctx); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		conn = tconn
+	}
+	keyBytes := make([]byte, 16)
+	rand.Read(keyBytes)
+	key := base64.StdEncoding.EncodeToString(keyBytes)
+	req := &http.Request{Method: http.MethodGet, URL: &url.URL{Path: u.Path, RawPath: u.RawPath, RawQuery: u.RawQuery}, Host: u.Host,
+		Header: http.Header{}, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1}
+	if req.URL.Path == "" {
+		req.URL.Path = "/"
+	}
+	for k, v := range header {
+		req.Header[k] = v
+	}
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Sec-WebSocket-Key", key)
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	if err := req.Write(conn); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, req)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+		conn.Close()
+		return nil, fmt.Errorf("websocket: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	if !hasToken(resp.Header, "Upgrade", "websocket") || resp.Header.Get("Sec-WebSocket-Accept") != acceptKey(key) {
+		conn.Close()
+		return nil, errors.New("websocket: the server's accept key or upgrade doesn't match")
+	}
+	conn.SetDeadline(time.Time{})
+	return &Conn{conn: conn, br: br, client: true}, nil
 }

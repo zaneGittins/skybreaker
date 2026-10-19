@@ -45,6 +45,17 @@ Open `https://skybreaker.<your-tailnet>.ts.net`, tap **+** and pick Claude or Co
   claude mcp add --transport http --scope user skybreaker https://skybreaker.<your-tailnet>.ts.net/mcp
   ```
 
+## From your terminal
+
+The same `skybreaker` binary is a terminal client for your own Linux or Mac. It reaches Skybreaker over your tailnet as you, so there's nothing to sign in to.
+
+```sh
+curl -fsSL https://github.com/zaneGittins/skybreaker/releases/latest/download/install-cli.sh | sh
+skybreaker              # pick a session and attach; Ctrl-b d brings you back
+```
+
+`skybreaker new <project> [harness]` starts a session, `skybreaker ls` lists them, and `skybreaker update` (or the same one-liner) updates the client. Picking a chat continues it in the harness's own terminal UI; your next message from the phone resumes the chat. The client finds the machine named `skybreaker` on your tailnet and remembers it in `~/.skybreaker/config.json`; `skybreaker connect <address>` sets another.
+
 ## Configuration
 
 Everything lives in `/etc/skybreaker/skybreaker.yaml` (projects, policy, users) and `secrets.yaml`. Each project lists what its sandbox may reach in `allow` and `capabilities`; anything else is denied. Restart `skybreaker` after editing, and `skybreaker-nftables` too after adding a project. [deploy/skybreaker.example.yaml](../deploy/skybreaker.example.yaml) is a commented example.

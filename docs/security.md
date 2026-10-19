@@ -16,6 +16,7 @@ Each project runs in its own gVisor (`runsc`) sandbox, holding the repo, toolcha
 - **gVisor** implements the Linux kernel in user space, so an escape requires a gVisor bug and then a host-kernel bug. Skybreaker refuses to start without `runsc` and never runs a sandbox under another runtime.
 - **Network.** Sandboxes have no DNS, and nftables lets them reach only two ports on their bridge gateway: the broker and the hook listener. Nothing is forwarded, and those ports refuse non-sandbox sources.
 - **Inner containers** (builds, `docker compose`) follow the same rules: no DNS, the broker as their only way out, seen by it as the sandbox.
+- **Your terminal.** The terminal client writes a sandbox's output to your real terminal emulator, so it strips escape strings first (OSC, DCS, APC, PM, SOS and C1 controls): an agent can't write your clipboard, plant links or reach emulator features through tmux passthrough. Session titles are shown with hidden characters revealed.
 
 **The single-host trade-off.** The broker shares a host with the sandboxes, so a sandbox escape reaches its secrets. For most setups the simpler deployment is worth it: the realistic threats (misuse of allowed access, a malicious pull request) are the same either way. If you give the broker production credentials, use the narrowest tokens available, make writes `ask`, or keep production on a separate machine.
 

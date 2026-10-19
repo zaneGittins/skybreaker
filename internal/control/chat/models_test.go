@@ -201,7 +201,7 @@ func TestValidModel(t *testing.T) {
 			t.Errorf("%q: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", "-x", "--model", "a b", "a\nb", "a\x00", "a‮b", strings.Repeat("m", 200)} {
+	for _, bad := range []string{"", "-x", "--model", "a b", "a\nb", "a\x00", "a\u202eb", strings.Repeat("m", 200)} {
 		if validModel(bad) == nil {
 			t.Errorf("%q was valid", bad)
 		}

@@ -26,6 +26,7 @@ Skybreaker is one Go binary, `skybreaker`, running on one Linux host. It serves 
 | `internal/proxy/policy`, `gitproto`, `k8s` | Rule matching, git push ref checks, Kubernetes attributes. |
 | `internal/proxy/approval`, `secrets`, `netguard`, `audit` | Approvals, host-bound secrets, connect-time address checks, audit log. |
 | `internal/tsauth` | Tailnet identity; `tsnetsrv` is the Tailscale adapter. |
+| `internal/client` | The terminal client: session picker, attach, self-update. |
 | `web/` | The UI: plain JavaScript and CSS, embedded, no build step. |
 | `setup/` | `skybreaker-setup`, the installer, in its own module. |
 | `images/sandbox`, `deploy/` | The sandbox image, systemd units and example configs. |
@@ -58,6 +59,10 @@ The host never reads sandbox-writable paths directly: workspaces, homes and inne
 ## Chats
 
 A chat runs the harness's structured mode (`claude -p --output-format stream-json`, `codex app-server`) through `docker exec -i`. A `chat.Driver` translates each protocol into `chat.Event`s; the `Manager` stores them in a per-chat log and streams them to the UI over server-sent events. "Open in terminal" resumes the same conversation in tmux. Drivers never name models and ignore what they don't recognise; a weekly image rebuild promotes new CLI versions only if they still speak the protocols the drivers use.
+
+## Terminal client
+
+Run without a server command, `skybreaker` is a client for your own machine. It finds the server through the local Tailscale and is known to it by your tailnet login, like the browser. It lists sessions from the inbox and attaches over the same WebSocket as the browser's terminal, switching a chat to its terminal first. A sandbox's bytes reach a real terminal emulator here, not xterm.js, so `client.Filter` drops every OSC, DCS, APC, PM and SOS string and C1 control before writing them.
 
 ## Boards and MCP
 

@@ -1,6 +1,7 @@
-// Command skybreaker is the whole of Skybreaker: gVisor sandboxes, the
-// credential broker they reach the world through, chats and terminals,
-// approvals, the scheduler and the UI.
+// Command skybreaker is the whole of Skybreaker. On the host, `serve` runs
+// it: gVisor sandboxes, the credential broker they reach the world through,
+// chats and terminals, approvals, the scheduler and the UI. On your own
+// machine, the same binary is the terminal client (package client).
 package main
 
 import (
@@ -10,28 +11,21 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 
+	"github.com/zaneGittins/skybreaker/internal/client"
 	"github.com/zaneGittins/skybreaker/internal/control/controld"
 )
 
 var Version = "0.0.1"
 
-const usage = `skybreaker: a self-hosted host for coding agents
-
-Usage:
-  skybreaker serve    [-config path]   run Skybreaker
-  skybreaker check    [-config path]   validate the config and its secrets without starting
-  skybreaker nftables [-config path]   print the nftables ruleset pinning sandboxes to the broker
-  skybreaker version
-
-The config path defaults to $SKYBREAKER_CONFIG, then /etc/skybreaker/skybreaker.yaml.
-`
-
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(2)
+	if len(os.Args) < 2 || slices.Contains(client.Commands, os.Args[1]) {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		code := client.Main(ctx, os.Args[1:], Version)
+		stop()
+		os.Exit(code)
 	}
 	fs := flag.NewFlagSet(os.Args[1], flag.ExitOnError)
 	def := os.Getenv("SKYBREAKER_CONFIG")
@@ -62,7 +56,7 @@ func main() {
 	case "version", "--version", "-v":
 		fmt.Println("skybreaker", Version)
 	default:
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(os.Stderr, client.Usage)
 		os.Exit(2)
 	}
 }

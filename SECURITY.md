@@ -17,6 +17,7 @@ The [security model](docs/security.md) describes what Skybreaker defends. In sco
 - reaching the host, the broker's secrets or another project from inside a sandbox;
 - getting a request past the broker's policy, or a credential sent to a host it isn't bound to;
 - approving, replaying or disguising a request without a listed user's approval;
-- using the app or its API without being a listed user, or injecting script into it.
+- using the app or its API without being a listed user, or injecting script into it;
+- getting escape sequences from a sandbox past the terminal client's filter.
 
 Out of scope are the limits that document already lists (data leaving through allowed channels, harness logins inside the sandbox, actions an `auto` rule permits), and bugs in gVisor, Docker or Tailscale themselves, which should go to those projects.

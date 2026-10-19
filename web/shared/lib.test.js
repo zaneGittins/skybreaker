@@ -125,7 +125,7 @@ test('auditRow', () => {
   assert.deepEqual(auditRow({ decision: 'revoke', reason: 'kill switch: 2 sessions' }), { tone: 'bad', verb: 'Revoked', target: 'kill switch: 2 sessions' });
   assert.equal(auditRow({ decision: 'mystery' }).verb, 'mystery');
   // Hidden characters in a path are shown, not obeyed.
-  assert.equal(auditRow({ decision: 'allow', method: 'GET', host: 'h', path: '/a‮b' }).target, 'GET h/a<U+202E>b');
+  assert.equal(auditRow({ decision: 'allow', method: 'GET', host: 'h', path: '/a\u202eb' }).target, 'GET h/a<U+202E>b');
 });
 
 test('board route', () => {
