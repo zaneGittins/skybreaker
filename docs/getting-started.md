@@ -57,6 +57,17 @@ skybreaker              # pick a session and attach; Ctrl-b d brings you back
 
 `skybreaker new <project> [harness]` starts a session, `skybreaker ls` lists them, and `skybreaker update` (or the same one-liner) updates the client. Picking a chat continues it in the harness's own terminal UI; your next message from the phone resumes the chat. The client finds the machine named `skybreaker` on your tailnet and remembers it in `~/.skybreaker/config.json`; `skybreaker connect <address>` sets another.
 
+## VS Code
+
+Desktop VS Code can work in a sandbox over SSH, with no Microsoft tunnel. Install the terminal client and VS Code's **Remote - SSH** extension, then on each computer:
+
+```sh
+skybreaker vscode setup     # once: makes this computer a key, adds it, writes ~/.ssh/config
+skybreaker code <project>   # or Open in VS Code in the project's menu
+```
+
+The project is in `/workspace`. A VS Code window is one more shell in the sandbox: it reaches only what the project's policy allows, through the broker. The sandbox can't download VS Code's server itself, so Remote - SSH downloads it on your computer and copies it over; set `"remote.downloadExtensionsLocally": true` in VS Code to install extensions the same way. Remove a computer's key in the same menu; its open windows disconnect.
+
 ## Previews
 
 To see what an agent is building, open the project's menu (or **Preview** on a desktop) and pick a port the sandbox is listening on. The page opens on its own address, `https://skybreaker.<your-tailnet>.ts.net:84xx`, apart from Skybreaker. Dev servers must listen on `0.0.0.0` rather than `localhost` (`vite --host 0.0.0.0`, `next dev -H 0.0.0.0`). If you use Tailscale ACLs, allow your login ports 8401-8499 on the `skybreaker` machine as well as 443. Agents can open a preview themselves with Skybreaker's `preview` tool, which puts a link in the chat.

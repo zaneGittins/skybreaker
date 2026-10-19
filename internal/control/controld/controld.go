@@ -32,6 +32,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
 	"github.com/zaneGittins/skybreaker/internal/control/scheduler"
 	"github.com/zaneGittins/skybreaker/internal/control/show"
+	"github.com/zaneGittins/skybreaker/internal/control/sshkeys"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 	"github.com/zaneGittins/skybreaker/internal/control/terminal"
 	"github.com/zaneGittins/skybreaker/internal/notify"
@@ -165,6 +166,15 @@ func Run(ctx context.Context, o Options) error {
 	defer a.CloseChats()
 	a.RecoverChats()
 
+	// SSH keys for editors (VS Code Remote-SSH) on your machines.
+	sshKeys, err := sshkeys.Open(filepath.Join(cfg.DataDir, "ssh-keys.json"))
+	if err != nil {
+		return err
+	}
+	if err := a.SetAuthorizedKeys(sshKeys.AuthorizedKeys()); err != nil {
+		log.Printf("skybreaker: SSH keys: %v", err)
+	}
+
 	// Every project has a board; the UI redraws when one changes.
 	boards, err := board.Open(filepath.Join(cfg.DataDir, "board.json"))
 	if err != nil {
@@ -225,7 +235,7 @@ func Run(ctx context.Context, o Options) error {
 	}
 
 	apiHandler, err := api.New(api.Deps{
-		Config: cfg, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews,
+		Config: cfg, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews, SSHKeys: sshKeys,
 		Projects: &adder{configPath: o.ConfigPath, app: a, broker: brk, restart: requestRestart},
 		Static:   web.Skybreaker(), Version: o.Version,
 		Upgrade: func(w http.ResponseWriter, r *http.Request) (terminal.Conn, error) { return wsock.Accept(w, r) },

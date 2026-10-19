@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"log"
 	"maps"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -28,6 +29,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/preview"
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
 	"github.com/zaneGittins/skybreaker/internal/control/scheduler"
+	"github.com/zaneGittins/skybreaker/internal/control/sshkeys"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 	"github.com/zaneGittins/skybreaker/internal/control/terminal"
 	"github.com/zaneGittins/skybreaker/internal/notify/webpush"
@@ -68,6 +70,10 @@ type Backend interface {
 	Review(ctx context.Context, project string) (app.Review, error)
 	Listening(ctx context.Context, project string) ([]preview.Listening, error)
 	EditSession(id string, e app.SessionEdit) (store.Session, error)
+	// SetAuthorizedKeys gives every sandbox's sshd these keys.
+	SetAuthorizedKeys(keys []byte) error
+	// SSHConn connects to the project's sandbox sshd, starting the sandbox.
+	SSHConn(ctx context.Context, project string) (net.Conn, error)
 }
 
 // Approvals are harness approvals: may an agent in a terminal run this tool
@@ -111,6 +117,7 @@ type Deps struct {
 	Push       Push              // nil when web push is off
 	Previews   *preview.Registry // nil when previews are off
 	Projects   ProjectAdder      // nil when projects can't be created here
+	SSHKeys    *sshkeys.Store    // nil when SSH into sandboxes is off
 	Identifier tsauth.Identifier
 	Static     fs.FS
 	Version    string
@@ -122,6 +129,7 @@ type Deps struct {
 type server struct {
 	Deps
 	tints map[string]int
+	ssh   relays
 }
 
 func New(d Deps) (http.Handler, error) {
@@ -139,6 +147,10 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("GET /api/projects", s.projects)
 	m.HandleFunc("POST /api/projects", s.createProject)
 	m.HandleFunc("GET /api/capabilities", s.capabilities)
+	m.HandleFunc("GET /api/ssh-keys", s.sshKeys)
+	m.HandleFunc("POST /api/ssh-keys", s.addSSHKey)
+	m.HandleFunc("DELETE /api/ssh-keys/{id}", s.deleteSSHKey)
+	m.HandleFunc("GET /api/projects/{p}/ssh", s.sshRelay)
 	m.HandleFunc("GET /api/projects/{p}", s.project)
 	m.HandleFunc("POST /api/projects/{p}/sandbox", s.sandbox)
 	m.HandleFunc("POST /api/projects/{p}/sessions", s.newSession)

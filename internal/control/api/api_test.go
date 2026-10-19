@@ -30,12 +30,13 @@ import (
 )
 
 type fakeBackend struct {
-	mu       sync.Mutex
-	running  map[string]bool
-	sessions []store.Session
-	killed   []string
-	events   chan app.Event
-	chat     *fakeChat
+	mu         sync.Mutex
+	running    map[string]bool
+	sessions   []store.Session
+	killed     []string
+	events     chan app.Event
+	chat       *fakeChat
+	authorized string // what SetAuthorizedKeys last got
 }
 
 func (b *fakeBackend) SandboxState(_ context.Context, p string) (sandbox.State, error) {

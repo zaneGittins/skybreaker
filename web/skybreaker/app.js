@@ -369,6 +369,7 @@ async function renderProject(seq, name, tab = 'chats') {
       el('button.btn.sm.ghost.desk-only', { type: 'button', onclick: () => openReview(p.name) }, svg(ICON.diff), 'Changes'),
       el('button.btn.sm.ghost.desk-only', { type: 'button', onclick: () => openShell(p) }, svg(ICON.term), 'Terminal'),
       el('button.btn.sm.ghost.desk-only', { type: 'button', onclick: () => previewSheet(p) }, svg(ICON.window), 'Preview'),
+      el('button.btn.sm.ghost.desk-only', { type: 'button', onclick: () => vscodeSheet(p) }, svg(ICON.code), 'VS Code'),
       el('button.icon-btn.p-more', { type: 'button', onclick: () => sandboxSheet(p, live.length), 'aria-label': 'Sandbox and project actions', title: 'Sandbox and project actions' }, svg(ICON.more))));
   const tabBar = el('nav.p-tabs', { 'aria-label': 'Project' }, tabs.map(([k, label, n]) =>
     el('a.p-tab' + (k === tab ? '.on' : ''), { href: projectPath(p.name, k), 'data-link': true, 'aria-current': k === tab ? 'page' : null },
@@ -435,6 +436,7 @@ function sandboxSheet(p, live) {
         act(ICON.diff, 'Review changes', () => { closeSheet(); openReview(p.name) }),
         act(ICON.term, 'Open a terminal', () => openShell(p)),
         act(ICON.window, 'Preview a web page', () => previewSheet(p), { sub: 'A dev server in the sandbox' }),
+        act(ICON.code, 'Open in VS Code', () => vscodeSheet(p), { sub: 'Remote - SSH, from your computer' }),
         act(ICON.clock, 'Schedules', go(projectPath(p.name, 'runs'))),
         p.running
           ? act(ICON.stop, 'Stop sandbox', () => { closeSheet(); if (!live || confirm(`Stop ${p.name}'s sandbox? ${plural(live, 'chat')} pause and resume later.`)) sandboxAction(p.name, 'stop') },
@@ -489,6 +491,55 @@ async function previewSheet(p) {
         form,
         el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Close')));
   };
+  draw();
+}
+
+// --- VS Code ------------------------------------------------------------------
+
+Object.assign(ICON, {
+  code: ['M8 7l-5 5 5 5', 'M16 7l5 5-5 5'],
+  ssh: ['M15 7a4 4 0 1 1-3.5 6L5 19.5V22H2v-3l6.5-6.5A4 4 0 0 1 15 7z'],
+});
+
+// vscodeSheet opens the project's sandbox in desktop VS Code over SSH:
+// `skybreaker vscode setup` on your computer adds its key and the ssh
+// config, then a vscode:// link opens Remote-SSH on <project>.skybreaker.
+// The keys added so far are listed here, to remove a lost machine's.
+async function vscodeSheet(p) {
+  let keys;
+  try { keys = await api('GET', '/api/ssh-keys') } catch (e) { toast(e.message, 'error'); return }
+  const remove = async k => {
+    if (!confirm(`Remove ${k.name}'s key? Its open VS Code windows disconnect.`)) return;
+    try {
+      await api('DELETE', '/api/ssh-keys/' + encodeURIComponent(k.id));
+      keys = keys.filter(x => x.id !== k.id);
+      draw();
+    } catch (e) { toast(e.message, 'error') }
+  };
+  const setup = 'skybreaker vscode setup';
+  const href = 'vscode://vscode-remote/ssh-remote+' + encodeURIComponent(p.name) + '.skybreaker/workspace';
+  const draw = () => $('#sheet-root').replaceChildren(
+    el('div.backdrop', { onclick: closeSheet }),
+    el('div.picker.vscode-sheet', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'VS Code' },
+      el('div.picker-grip'),
+      el('div.pv-head', null, el('b', null, 'VS Code'),
+        el('span', null, `Desktop VS Code with Remote - SSH, in ${p.name}'s sandbox. It's another shell there: same network, same broker.`)),
+      el('div.vs-step', null,
+        el('span.vs-n', null, '1'),
+        el('div', null, el('span', null, keys.length ? 'On a new computer, run' : 'On your computer, run'),
+          el('div.vs-cmd', null, el('code', null, setup),
+            el('button.icon-btn.bare', { type: 'button', onclick: () => copyText(setup), 'aria-label': 'Copy' }, svg(ICON.copy))))),
+      el('div.vs-step', null,
+        el('span.vs-n', null, '2'),
+        el('div', null, el('span', null, 'Then open the project'),
+          el('a.btn.sm.vs-open', { href, onclick: closeSheet }, svg(ICON.code), 'Open in VS Code'))),
+      keys.length ? el('div.vs-keys', null,
+        el('span.vs-label', null, 'Computers with access'),
+        keys.map(k => el('div.vs-key', null, svg(ICON.ssh),
+          el('span.sa-text', null, el('span', null, k.name),
+            el('span.sa-sub', null, k.fingerprint.slice(0, 19) + '…', ' · ', ago(k.added))),
+          el('button.btn.sm.ghost', { type: 'button', onclick: () => remove(k), 'aria-label': 'Remove ' + k.name + "'s key" }, 'Remove')))) : null,
+      el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Close')));
   draw();
 }
 

@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"time"
+
+	"github.com/zaneGittins/skybreaker/internal/names"
 )
 
 const Usage = `skybreaker: your coding agents, from your terminal
@@ -16,6 +20,8 @@ const Usage = `skybreaker: your coding agents, from your terminal
   skybreaker ls                       list running sessions
   skybreaker attach <id>              attach to a session
   skybreaker new <project> [harness]  start a session and attach to it
+  skybreaker code <project>           open the project's sandbox in VS Code
+  skybreaker vscode setup             let VS Code (Remote - SSH) on this machine into sandboxes
   skybreaker connect [address]        find or set your Skybreaker, and check you can reach it
   skybreaker update                   update this client
   skybreaker version
@@ -29,7 +35,7 @@ On the Skybreaker host:
 `
 
 // Commands are the client's commands, for the main package's dispatch.
-var Commands = []string{"ls", "attach", "new", "connect", "update", "help", "-h", "--help"}
+var Commands = []string{"ls", "attach", "new", "code", "vscode", "ssh-proxy", "connect", "update", "help", "-h", "--help"}
 
 // Main runs a client command (no command is the picker) and returns the
 // exit status.
@@ -150,8 +156,64 @@ func command(ctx context.Context, cmd string, args []string, version string, out
 			e.Harness = hs[0]
 		}
 		return attachOne(ctx, c, e)
+	case "ssh-proxy": // ssh's ProxyCommand, from `vscode setup`
+		if len(args) != 1 {
+			return errors.New("usage: skybreaker ssh-proxy <project>.skybreaker (ssh runs this; see `skybreaker vscode setup`)")
+		}
+		p, err := HostProject(args[0])
+		if err != nil {
+			return err
+		}
+		// Sandbox bytes reach a terminal only through a Filter; these are
+		// SSH's, for ssh's pipe alone.
+		if isTerminal(int(os.Stdout.Fd())) {
+			return errors.New("ssh-proxy is for ssh's ProxyCommand, not a terminal; `skybreaker vscode setup` sets it up")
+		}
+		return c.SSHProxy(ctx, p, os.Stdin, os.Stdout)
+	case "vscode":
+		if len(args) != 1 || args[0] != "setup" {
+			return errors.New("usage: skybreaker vscode setup")
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		exe, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		if real, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = real
+		}
+		host, _ := os.Hostname()
+		if host == "" {
+			host = "this machine"
+		}
+		return setupVSCode(ctx, c, vscodeEnv{home: home, exe: exe, host: host, run: ExecRunner}, out)
+	case "code":
+		if len(args) != 1 {
+			return errors.New("usage: skybreaker code <project>")
+		}
+		in, err := c.Inbox(ctx)
+		if err != nil {
+			return err
+		}
+		if !names.Project(args[0]) || !slices.ContainsFunc(in.Projects, func(p Project) bool { return p.Name == args[0] }) {
+			return fmt.Errorf("no project %q", args[0])
+		}
+		return runCode("--remote", "ssh-remote+"+args[0]+sshSuffix, "/workspace")
 	}
 	return fmt.Errorf("unknown command %q; `skybreaker help` lists them", cmd)
+}
+
+// runCode runs VS Code's command-line launcher.
+var runCode = func(args ...string) error {
+	cmd := exec.Command("code", args...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("code: %w (in VS Code, run \"Shell Command: Install 'code' command in PATH\"; `skybreaker vscode setup` comes first)", err)
+	}
+	return nil
 }
 
 func attachOne(ctx context.Context, c *Client, e Entry) error {

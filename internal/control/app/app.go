@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -96,6 +97,10 @@ type App struct {
 	sweptMu sync.Mutex
 	swept   map[string]bool // projects whose inner containers were stopped this quiet spell
 	spawn   Spawn
+
+	sshMu   sync.Mutex
+	sshKeys []byte // authorized_keys for every sandbox's sshd
+	dial    func(ctx context.Context, addr string) (net.Conn, error)
 }
 
 const (
@@ -125,6 +130,9 @@ func New(d Deps) (*App, error) {
 		cfg: d.Config, store: d.Store, sandbox: d.Sandbox, broker: d.Broker, hookKey: d.HookKey,
 		notify: d.Notify, uiURL: strings.TrimSuffix(d.UIURL, "/"), now: time.Now, readyPoll: time.Second, subs: map[chan Event]struct{}{},
 		locks: map[string]*sync.Mutex{}, spawn: d.Spawn,
+		dial: func(ctx context.Context, addr string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", addr)
+		},
 	}
 	m, err := a.newChatManager(d.ChatDir)
 	if err != nil {
@@ -344,7 +352,8 @@ func (a *App) writeEtc(ctx context.Context, project string, p *config.Project) e
 	}
 	files := map[string][]byte{
 		"ca.crt": ca, "claude-managed-settings.json": settings,
-		"mcp.json": []byte(chat.MCPConfig(a.MCPURL(project, "-"))),
+		"mcp.json":        []byte(chat.MCPConfig(a.MCPURL(project, "-"))),
+		"authorized_keys": a.authorizedKeys(),
 	}
 	for name, b := range files {
 		if err := os.WriteFile(filepath.Join(etc, name), b, 0o644); err != nil {

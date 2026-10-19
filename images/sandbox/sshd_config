@@ -1,0 +1,28 @@
+# sshd for editors on your own machines (VS Code Remote-SSH). Skybreaker
+# relays connections to it from its UI over the tailnet, for the keys you
+# added there; nothing else reaches port 22. A session is one more shell in
+# this sandbox: same network, same broker, nothing more.
+Include /run/skybreaker/sshd-env.conf
+
+Port 22
+HostKey /etc/ssh/ssh_host_ed25519_key
+PermitRootLogin prohibit-password
+AuthenticationMethods publickey
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM no
+# Keys come only from Skybreaker's read-only /etc/skybreaker, never a
+# ~/.ssh/authorized_keys an agent could write.
+AuthorizedKeysFile none
+AuthorizedKeysCommand /usr/local/sbin/skybreaker-authorized-keys
+AuthorizedKeysCommandUser root
+# The editor forwards to its own server here; nothing is forwarded back.
+AllowTcpForwarding local
+AllowAgentForwarding no
+AllowStreamLocalForwarding no
+GatewayPorts no
+X11Forwarding no
+PermitTunnel no
+PermitUserEnvironment no
+PrintMotd no
+Subsystem sftp internal-sftp

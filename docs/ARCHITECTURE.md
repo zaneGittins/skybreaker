@@ -22,12 +22,13 @@ Skybreaker is one Go binary, `skybreaker`, running on one Linux host. It serves 
 | `internal/control/mcp`, `internal/board` | Skybreaker's MCP server and the per-project boards. |
 | `internal/control/scheduler`, `hooks`, `terminal` | Scheduled runs, Claude Code hooks, WebSocket terminals. |
 | `internal/control/preview` | Previews of a sandbox's web server, each on its project's own origin. |
+| `internal/control/sshkeys` | SSH keys allowed into sandboxes, for VS Code. |
 | `internal/proxy/broker` | The broker, assembled in-process. |
 | `internal/proxy/server` | The request path: tunnel, MITM and routes. |
 | `internal/proxy/policy`, `gitproto`, `graphql`, `k8s` | Rule matching, git push ref checks, GraphQL operations, Kubernetes attributes. |
 | `internal/proxy/approval`, `secrets`, `netguard`, `audit` | Approvals, host-bound secrets, connect-time address checks, audit log. |
 | `internal/tsauth` | Tailnet identity; `tsnetsrv` is the Tailscale adapter. |
-| `internal/client` | The terminal client: session picker, attach, self-update. |
+| `internal/client` | The terminal client: session picker, attach, VS Code over SSH, self-update. |
 | `web/` | The UI: plain JavaScript and CSS, embedded, no build step. |
 | `setup/` | `skybreaker-setup`, the installer, in its own module. |
 | `images/sandbox`, `deploy/` | The sandbox image, systemd units and example configs. |
@@ -72,6 +73,10 @@ Each project has a preview origin, a port of Skybreaker's tailnet name assigned 
 ## Terminal client
 
 Run without a server command, `skybreaker` is a client for your own machine. It finds the server through the local Tailscale and is known to it by your tailnet login, like the browser. It lists sessions from the inbox and attaches over the same WebSocket as the browser's terminal, switching a chat to its terminal first. A sandbox's bytes reach a real terminal emulator here, not xterm.js, so `client.Filter` drops every OSC, DCS, APC, PM and SOS string and C1 control before writing them.
+
+## VS Code over SSH
+
+Each sandbox runs sshd. `skybreaker vscode setup` makes the computer a key, adds it through `POST /api/ssh-keys` (`sshkeys.Store`, which rewrites it in canonical form) and puts a `Host *.skybreaker` block first in `~/.ssh/config`, whose `ProxyCommand` is `skybreaker ssh-proxy`. That carries ssh's bytes over a WebSocket to `/api/projects/{p}/ssh`, which starts the sandbox and relays to its sshd on `sandbox.Addr:22`. `app.SetAuthorizedKeys` writes the keys into every project's `etc/`, and sshd reads them on each login through `AuthorizedKeysCommand`. Deleting a key cuts the open relays.
 
 ## Boards and MCP
 

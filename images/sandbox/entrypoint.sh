@@ -37,6 +37,17 @@ if command -v dockerd >/dev/null 2>&1; then
   fi
 fi
 
+# sshd, for VS Code Remote-SSH from your machines (Skybreaker relays to it).
+# Its sessions get this container's environment (the broker proxy and the
+# rest), which sshd would otherwise drop.
+if [ -x /usr/sbin/sshd ]; then
+  mkdir -p /run/sshd /run/skybreaker
+  [ -s /etc/ssh/ssh_host_ed25519_key ] || ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key
+  skybreaker-sshd-env >/run/skybreaker/sshd-env.conf
+  chmod 600 /run/skybreaker/sshd-env.conf
+  /usr/sbin/sshd -E /var/log/sshd.log || echo "skybreaker: sshd didn't start" >&2
+fi
+
 # Tell the control plane the trust store is ready (it waits for this before
 # cloning, since git checks TLS against the system bundle).
 touch /run/skybreaker-ready

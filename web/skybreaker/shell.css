@@ -259,8 +259,8 @@ details.earlier .row-list { margin-top: 4px; }
 }
 
 /* ---- preview ---- */
-.preview-sheet .pv-head { display: grid; gap: 4px; padding: 4px 4px 12px; }
-.preview-sheet .pv-head span { color: var(--muted); font-size: 13.5px; }
+.preview-sheet .pv-head, .vscode-sheet .pv-head { display: grid; gap: 4px; padding: 4px 4px 12px; }
+.preview-sheet .pv-head span, .vscode-sheet .pv-head span { color: var(--muted); font-size: 13.5px; }
 .pv-open { color: inherit; text-decoration: none; }
 .pv-open svg { color: var(--sun); }
 .pv-local { opacity: .65; cursor: default; }
@@ -271,6 +271,23 @@ details.earlier .row-list { margin-top: 4px; }
 .pv-card-body { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; }
 .pv-card-addr { font: 500 12.5px var(--mono); color: var(--muted); min-width: 0; overflow-wrap: anywhere; }
 .pv-card-open { text-decoration: none; }
+
+/* ---- VS Code ---- */
+.vscode-sheet .pv-head, .vscode-sheet .vs-step { padding-left: 4px; padding-right: 4px; }
+.picker.vscode-sheet { width: min(460px, 100vw); }
+.vs-step { display: flex; gap: 12px; align-items: flex-start; padding-top: 8px; padding-bottom: 8px; }
+.vs-step > div { display: grid; gap: 8px; flex: 1; min-width: 0; }
+.vs-step > div > span { color: var(--text-2); font-size: 14px; }
+.vs-n { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--muted); font: 600 12px var(--mono); }
+.vs-cmd { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.vs-cmd code { flex: 1; min-width: 0; font: 500 13px var(--mono); overflow-wrap: anywhere; }
+.vs-open { justify-self: start; text-decoration: none; }
+.vs-keys { display: grid; gap: 2px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.vs-label { padding: 0 4px 4px; color: var(--muted); font-size: 12.5px; }
+.vs-key { display: flex; align-items: center; gap: 12px; padding: 8px 4px; }
+.vs-key > svg { flex: none; width: 18px; height: 18px; color: var(--muted); }
+.vs-key .sa-text { flex: 1; min-width: 0; }
+.vs-key .sa-sub { font-family: var(--mono); }
 
 /* ---- new project ---- */
 /* Shaped like a project tile (name line, sub line), drawn as a dashed outline. */

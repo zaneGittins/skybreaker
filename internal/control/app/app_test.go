@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -937,5 +939,59 @@ func TestEditSession(t *testing.T) {
 	}
 	if _, err := f.app.EditSession("nope", SessionEdit{Title: str("x")}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown session: %v", err)
+	}
+}
+
+func TestSSHKeysReachEverySandbox(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := f.app.StartSandbox(ctx, "orbit"); err != nil {
+		t.Fatal(err)
+	}
+	keys := "ssh-ed25519 AAAA skybreaker-1\n"
+	if err := f.app.SetAuthorizedKeys([]byte(keys)); err != nil {
+		t.Fatal(err)
+	}
+	read := func(p string) string {
+		b, _ := os.ReadFile(filepath.Join(f.dir, "projects", p, "etc", "authorized_keys"))
+		return string(b)
+	}
+	if read("orbit") != keys {
+		t.Fatalf("running sandbox has %q", read("orbit"))
+	}
+	// A sandbox started later gets them too.
+	if err := f.app.StartSandbox(ctx, "bifract"); err != nil {
+		t.Fatal(err)
+	}
+	if read("bifract") != keys {
+		t.Fatalf("new sandbox has %q", read("bifract"))
+	}
+	f.app.SetAuthorizedKeys(nil)
+	if read("orbit") != "" || read("bifract") != "" {
+		t.Fatal("a removed key stayed")
+	}
+}
+
+func TestSSHConnDialsTheSandbox(t *testing.T) {
+	f := newFixture(t)
+	var dialed string
+	f.app.dial = func(_ context.Context, addr string) (net.Conn, error) {
+		dialed = addr
+		a, _ := net.Pipe()
+		return a, nil
+	}
+	c, err := f.app.SSHConn(context.Background(), "orbit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	if want := netip.AddrPortFrom(sandbox.Addr(f.app.cfg.Subnet("orbit")), 22).String(); dialed != want {
+		t.Fatalf("dialed %s, want %s", dialed, want)
+	}
+	if len(f.docker.find(func(c []string) bool { return len(c) > 1 && c[1] == "run" })) != 1 {
+		t.Fatal("the sandbox wasn't started")
+	}
+	if _, err := f.app.SSHConn(context.Background(), "ghost"); err == nil {
+		t.Fatal("SSH to a project that doesn't exist")
 	}
 }

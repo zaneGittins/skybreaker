@@ -12,8 +12,8 @@ ARG PLAYWRIGHT=0
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl gnupg git tmux tini bash less procps jq ripgrep make \
       build-essential python3 python3-pip python3-venv bubblewrap \
-      docker.io docker-compose-v2 iproute2 \
-    && rm -rf /var/lib/apt/lists/*
+      docker.io docker-compose-v2 iproute2 openssh-server \
+    && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_*
 
 # Node, the current LTS line, for the harness CLIs (Ubuntu's is too old for
 # some of them).
@@ -52,7 +52,12 @@ COPY entrypoint.sh /usr/local/bin/skybreaker-entrypoint
 # Ahead of /usr/sbin/runc on PATH, so BuildKit finds it too.
 COPY runtime.sh /usr/local/sbin/runc
 COPY check-protocols.sh /usr/local/bin/skybreaker-check-protocols
-RUN chmod 755 /usr/local/bin/skybreaker-entrypoint /usr/local/bin/skybreaker-check-protocols /usr/local/sbin/runc
+# sshd for VS Code Remote-SSH. Host keys are made per container, at start.
+COPY sshd_config /etc/ssh/sshd_config
+COPY authorized-keys.sh /usr/local/sbin/skybreaker-authorized-keys
+COPY sshd-env.sh /usr/local/sbin/skybreaker-sshd-env
+RUN chmod 755 /usr/local/bin/skybreaker-entrypoint /usr/local/bin/skybreaker-check-protocols /usr/local/sbin/runc \
+      /usr/local/sbin/skybreaker-authorized-keys /usr/local/sbin/skybreaker-sshd-env
 
 # Credentials never live here: git and gh get them added by the broker.
 ENV GIT_TERMINAL_PROMPT=0 \

@@ -38,7 +38,7 @@ Skybreaker runs coding agents per project inside gVisor sandboxes on a Linux hos
 - **Chat from your phone.** Agents run in their structured modes and appear as a clean conversation, with tool calls, diffs, approvals and questions inline. The inbox shows what needs you first, and web push tells you when.
 - **A board per project.** Agents pick up, claim and hand back work through Skybreaker's MCP tools, scoped to their own project.
 - **Review and ship.** Read the workspace's changes against its base branch, then have the agent commit, push and open a pull request.
-- **Or from your terminal.** `skybreaker` on your laptop lists your sessions and attaches to one in Claude Code's or Codex's own terminal UI, over your tailnet.
+- **Or from your terminal and editor.** `skybreaker` on your laptop attaches to a session in Claude Code's or Codex's own terminal UI, and opens a project's sandbox in desktop VS Code over SSH, all over your tailnet.
 - **Credentials stay out of reach.** The broker adds GitHub App tokens and API keys on the way out, and only to the hosts each secret is bound to.
 - **Deny by default.** Every host and request is allowed, held for your approval or denied by per-project policy. Everything that leaves is audited, with a kill switch.
 - **Keeps itself current.** A weekly rebuild picks up new CLI versions and promotes them only after a protocol check.
