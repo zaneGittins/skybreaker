@@ -5,7 +5,7 @@ updates:
     schedule:
       interval: "weekly"
     cooldown:
-      default-days: 3
+      default-days: 7
 
   # skybreaker-setup, its own module so the server takes none of its dependencies.
   - package-ecosystem: "gomod"
@@ -13,21 +13,21 @@ updates:
     schedule:
       interval: "weekly"
     cooldown:
-      default-days: 3
+      default-days: 7
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
     cooldown:
-      default-days: 3
+      default-days: 7
 
   - package-ecosystem: "docker"
     directory: "/images/sandbox"
     schedule:
       interval: "monthly"
     cooldown:
-      default-days: 3
+      default-days: 7
     # The base moves from one Ubuntu LTS to the next by hand, after testing
     # gVisor and the inner dockerd on it; interim releases are never wanted.
     ignore:

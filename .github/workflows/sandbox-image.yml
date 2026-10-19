@@ -16,19 +16,25 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: read # checkout
+
+# Publishes queue rather than race to the same tags.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   IMAGE: ghcr.io/zanegittins/skybreaker-sandbox
 
 jobs:
   build:
+    name: Build and publish
     runs-on: ubuntu-latest
     # Job permissions replace the workflow's: keep contents readable, or a
     # private repo can't be checked out.
     permissions:
-      contents: read
-      packages: write
+      contents: read # checkout
+      packages: write # push to ghcr.io
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -10,10 +10,15 @@ on:
     types: [published]
 
 permissions:
-  contents: read
+  contents: read # checkout
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -27,7 +32,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
@@ -52,10 +57,11 @@ jobs:
           path: dist/*
 
   release:
+    name: Attach to the release
     needs: [build]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write # attach the release assets
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
