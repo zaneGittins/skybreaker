@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -261,4 +261,25 @@ test('previewURL: only a bare http(s) origin becomes a link', () => {
     'data:text/html,x', '//evil.example', 'https://evil.example:8401?x', ' https://a.b:1', '', null, 42]) {
     assert.equal(previewURL(bad), null, String(bad));
   }
+});
+
+test('parseCommand: only Skybreaker\'s own commands, everything else goes to the agent', () => {
+  assert.deepEqual(parseCommand('/rename Login flow'), { cmd: 'rename', arg: 'Login flow' });
+  assert.deepEqual(parseCommand('  /color blue  '), { cmd: 'color', arg: 'blue' });
+  assert.deepEqual(parseCommand('/color'), { cmd: 'color', arg: '' });
+  assert.deepEqual(parseCommand('/goal Ship the fix\nwith tests'), { cmd: 'goal', arg: 'Ship the fix\nwith tests' });
+  assert.deepEqual(parseCommand('/goal'), { cmd: 'goal', arg: '' });
+  for (const s of ['/compact', '/model opus', '/renamed x', '/Rename x', 'please /rename x', '/', 'hello', '']) {
+    assert.equal(parseCommand(s), null, s);
+  }
+});
+
+test('commandHints: what to suggest as you type', () => {
+  assert.deepEqual(commandHints('/').map(h => h.cmd), ['rename', 'color', 'goal']);
+  assert.deepEqual(commandHints('/co').map(h => h.cmd), ['color']);
+  assert.deepEqual(commandHints('/color ').map(h => h.color), CHAT_COLORS);
+  assert.deepEqual(commandHints('/color b').map(h => h.color), ['blue']);
+  assert.deepEqual(commandHints('/rename x'), []);
+  assert.deepEqual(commandHints('/compact'), []);
+  assert.deepEqual(commandHints('hello'), []);
 });

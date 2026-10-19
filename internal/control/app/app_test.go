@@ -910,3 +910,32 @@ func TestAgentsWorking(t *testing.T) {
 		t.Fatal("a chat waiting on you doesn't count")
 	}
 }
+
+func TestEditSession(t *testing.T) {
+	f := newFixture(t)
+	f.app.store.CreateSession(store.Session{ID: "c1", Project: "orbit", Mode: store.ModeChat, Status: store.StatusRunning, Title: "fix the login"})
+	str := func(s string) *string { return &s }
+	s, err := f.app.EditSession("c1", SessionEdit{Title: str("  Login flow  "), Color: str("blue"), Goal: str("Ship the login fix with tests")})
+	if err != nil || s.Title != "Login flow" || s.Color != "blue" || s.Goal != "Ship the login fix with tests" {
+		t.Fatalf("edit: %+v %v", s, err)
+	}
+	// Fields left out stay; empty colour and goal clear them.
+	s, err = f.app.EditSession("c1", SessionEdit{Color: str(""), Goal: str("")})
+	if err != nil || s.Title != "Login flow" || s.Color != "" || s.Goal != "" {
+		t.Fatalf("clear: %+v %v", s, err)
+	}
+	for name, e := range map[string]SessionEdit{
+		"empty title":    {Title: str("   ")},
+		"long title":     {Title: str(strings.Repeat("x", 201))},
+		"unknown colour": {Color: str("chartreuse")},
+		"markup colour":  {Color: str("blue;background:url(x)")},
+		"long goal":      {Goal: str(strings.Repeat("x", 501))},
+	} {
+		if _, err := f.app.EditSession("c1", e); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := f.app.EditSession("nope", SessionEdit{Title: str("x")}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown session: %v", err)
+	}
+}

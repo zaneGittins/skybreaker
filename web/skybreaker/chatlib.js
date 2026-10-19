@@ -151,6 +151,32 @@ function list(lines, i, out) {
   return i;
 }
 
+// CHAT_COLORS are the tints a chat can be given; the server keeps the same
+// list (app.ChatColors).
+const CHAT_COLORS = ['sun', 'planet', 'red', 'green', 'blue', 'purple', 'pink', 'teal'];
+
+const COMMANDS = [
+  { cmd: 'rename', usage: '/rename <title>', desc: 'Name this chat' },
+  { cmd: 'color', usage: '/color <colour>', desc: 'Tint this chat, to tell it apart' },
+  { cmd: 'goal', usage: '/goal <what you want done>', desc: 'Pin a goal and give it to the agent' },
+];
+
+// parseCommand reads Skybreaker's own chat commands. Anything else starting
+// with a slash (the harness's own commands) is left for the agent.
+function parseCommand(text) {
+  const m = /^\/(rename|color|goal)(?:\s+([\s\S]*))?$/.exec(String(text ?? '').trim());
+  return m ? { cmd: m[1], arg: (m[2] || '').trim() } : null;
+}
+
+// commandHints is what to suggest while you type a command.
+function commandHints(text) {
+  const s = String(text ?? '');
+  const color = /^\/color\s+(\S*)$/.exec(s);
+  if (color) return CHAT_COLORS.filter(c => c.startsWith(color[1])).map(c => ({ cmd: 'color', color: c }));
+  const m = /^\/([a-z]*)$/.exec(s);
+  return m ? COMMANDS.filter(c => c.cmd.startsWith(m[1])) : [];
+}
+
 // previewURL accepts a preview's address only as a bare http(s) origin:
 // Skybreaker sets it, and nothing else becomes the card's link.
 function previewURL(u) {
@@ -475,4 +501,4 @@ function activityLabel(c) {
   return 'Working';
 }
 
-if (typeof module !== 'undefined') module.exports = { mdBlocks, mdInline, safeHref, previewURL, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel };
+if (typeof module !== 'undefined') module.exports = { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel };

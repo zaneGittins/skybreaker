@@ -299,3 +299,23 @@ details.earlier .row-list { margin-top: 4px; }
 .np-ok svg, .np-status svg { width: 16px; height: 16px; color: var(--live, #3FB37A); }
 .np-warn { color: var(--text-2); padding: 10px 12px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--sun) 40%, var(--border)); }
 .np-warn a { color: var(--sun); }
+
+/* ---- chat colours, goal and commands ---- */
+.sc-sun { --sc: var(--sun); } .sc-planet { --sc: var(--planet); } .sc-red { --sc: #E8655A; } .sc-green { --sc: #3FB37A; }
+.sc-blue { --sc: #4C9BE8; } .sc-purple { --sc: #9A7BEA; } .sc-pink { --sc: #DB6E9C; } .sc-teal { --sc: #2FA89A; }
+.chat-page[class*="sc-"] .chat-bar { box-shadow: inset 0 -2px 0 var(--sc); }
+.chat-page[class*="sc-"] .chat-title .title::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%; background: var(--sc); vertical-align: 1px; }
+.chat-page[class*="sc-"] .composer { border-color: color-mix(in srgb, var(--sc) 55%, var(--border-strong)); }
+.chat-page[class*="sc-"] .composer:focus-within { border-color: var(--sc); }
+.srow[class*="sc-"] { box-shadow: inset 3px 0 0 var(--sc); }
+.chat-goal { display: flex; align-items: flex-start; gap: 10px; padding: 8px 10px 8px 14px; background: var(--bg-2); border-bottom: 1px solid var(--border); font-size: 13.5px; color: var(--text-2); flex-shrink: 0; }
+.chat-goal[hidden] { display: none; }
+.chat-goal > svg { width: 16px; height: 16px; margin-top: 2px; flex-shrink: 0; color: var(--sc, var(--sun)); }
+.chat-goal .goal-text { flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cmd-hints { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px; }
+.cmd-hints[hidden] { display: none; }
+.cmd-hint { display: grid; gap: 2px; padding: 7px 11px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.cmd-hint b { font: 600 13px var(--mono); }
+.cmd-hint span { font-size: 12px; color: var(--muted); }
+.swatch-hint { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+.swatch { width: 14px; height: 14px; border-radius: 50%; background: var(--sc); }

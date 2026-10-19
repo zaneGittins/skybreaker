@@ -63,6 +63,10 @@ type Session struct {
 	// Parent marks that session as belonging to its chat.
 	Terminal string `json:"terminal,omitempty"`
 	Parent   string `json:"parent,omitempty"`
+	// Color and Goal are yours: a tint to tell chats apart, and the
+	// objective pinned at the top of one.
+	Color string `json:"color,omitempty"`
+	Goal  string `json:"goal,omitempty"`
 }
 
 const (

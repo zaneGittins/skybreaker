@@ -7,7 +7,9 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/zaneGittins/skybreaker/internal/control/app"
 	"github.com/zaneGittins/skybreaker/internal/control/preview"
+	"github.com/zaneGittins/skybreaker/internal/control/store"
 )
 
 func (b *fakeBackend) Listening(_ context.Context, p string) ([]preview.Listening, error) {
@@ -74,4 +76,18 @@ func TestPreviewPagesCantDriveTheApp(t *testing.T) {
 	if code, _ := f.do(t, "GET", "/api/sessions/s1/attach", "", map[string]string{"Origin": previewOrigin, "Connection": "Upgrade", "Upgrade": "websocket"}); code != http.StatusForbidden {
 		t.Errorf("terminal from a preview: %d", code)
 	}
+}
+
+func (b *fakeBackend) EditSession(id string, e app.SessionEdit) (store.Session, error) {
+	if err := app.CheckEdit(e); err != nil {
+		return store.Session{}, err
+	}
+	s := store.Session{ID: id, Project: "orbit"}
+	if e.Title != nil {
+		s.Title = *e.Title
+	}
+	if e.Color != nil {
+		s.Color = *e.Color
+	}
+	return s, nil
 }

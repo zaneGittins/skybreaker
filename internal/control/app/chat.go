@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
@@ -690,4 +691,67 @@ func (a *App) MCPCaller(r *http.Request) (mcp.Caller, error) {
 		}
 	}
 	return mcp.Caller{Project: project, Session: session}, nil
+}
+
+// ChatColors are the colours a chat can be given, to tell sessions apart.
+var ChatColors = []string{"sun", "planet", "red", "green", "blue", "purple", "pink", "teal"}
+
+const (
+	maxTitle = 200
+	maxGoal  = 500
+)
+
+// SessionEdit changes what a session is called, its colour and its goal;
+// a nil field is left as it is, and an empty colour or goal clears it.
+type SessionEdit struct {
+	Title *string `json:"title"`
+	Color *string `json:"color"`
+	Goal  *string `json:"goal"`
+}
+
+// CheckEdit refuses an edit the UI shouldn't store.
+func CheckEdit(e SessionEdit) error {
+	if e.Title != nil {
+		t := strings.TrimSpace(*e.Title)
+		if t == "" {
+			return errors.New("a title can't be empty")
+		}
+		if utf8.RuneCountInString(t) > maxTitle {
+			return fmt.Errorf("a title is at most %d characters", maxTitle)
+		}
+	}
+	if e.Color != nil && *e.Color != "" && !slices.Contains(ChatColors, *e.Color) {
+		return fmt.Errorf("colours are %s", strings.Join(ChatColors, ", "))
+	}
+	if e.Goal != nil && utf8.RuneCountInString(strings.TrimSpace(*e.Goal)) > maxGoal {
+		return fmt.Errorf("a goal is at most %d characters", maxGoal)
+	}
+	return nil
+}
+
+// EditSession renames a session, colours it or sets its goal.
+func (a *App) EditSession(id string, e SessionEdit) (store.Session, error) {
+	if err := CheckEdit(e); err != nil {
+		return store.Session{}, err
+	}
+	if _, ok := a.store.Session(id); !ok {
+		return store.Session{}, fmt.Errorf("session %s: %w", id, ErrNotFound)
+	}
+	err := a.store.UpdateSession(id, func(s *store.Session) {
+		if e.Title != nil {
+			s.Title = strings.TrimSpace(*e.Title)
+		}
+		if e.Color != nil {
+			s.Color = *e.Color
+		}
+		if e.Goal != nil {
+			s.Goal = strings.TrimSpace(*e.Goal)
+		}
+	})
+	if err != nil {
+		return store.Session{}, err
+	}
+	s, _ := a.store.Session(id)
+	a.Publish(Event{Type: "session", Project: s.Project, Session: id, Data: "edited"})
+	return s, nil
 }

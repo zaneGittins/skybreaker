@@ -164,7 +164,8 @@ function sessionRow(s, opts = {}) {
   const t = sessionTone(s);
   const label = opts.pending ? 'Waiting for approval' : t.label;
   const tone = opts.pending ? 'wait' : t.tone;
-  return el('a.srow.srow-open.tone-' + tone, { href: '/s/' + s.id, 'data-link': true },
+  const tint = CHAT_COLORS.includes(s.color) ? '.sc-' + s.color : '';
+  return el('a.srow.srow-open.tone-' + tone + tint, { href: '/s/' + s.id, 'data-link': true },
     el('span.avatar.sm.h-' + s.harness, { title: s.harness }, s.harness.slice(0, 2)),
     el('div.who', null,
       el('div.title', null, s.mode === 'chat' ? chatName(s) : sessionName(s)),

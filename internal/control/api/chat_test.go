@@ -398,3 +398,17 @@ func TestChatShownIsInert(t *testing.T) {
 		}
 	}
 }
+
+func TestEditSessionAPI(t *testing.T) {
+	f := newFixture(t, you)
+	code, body := f.do(t, "PATCH", "/api/sessions/s1", `{"title":"Login flow","color":"blue"}`, nil)
+	if code != 200 || !strings.Contains(body, `"title":"Login flow"`) {
+		t.Fatalf("edit: %d %s", code, body)
+	}
+	if code, _ := f.do(t, "PATCH", "/api/sessions/s1", `{"color":"chartreuse"}`, nil); code != http.StatusBadRequest {
+		t.Fatalf("unknown colour: %d", code)
+	}
+	if code, _ := f.do(t, "PATCH", "/api/sessions/s1", `{"title":"x","status":"killed"}`, nil); code != http.StatusBadRequest {
+		t.Fatalf("other fields: %d", code)
+	}
+}

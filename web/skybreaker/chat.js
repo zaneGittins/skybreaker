@@ -19,6 +19,7 @@ const MODE_INFO = {
 const SHIP_MESSAGE = 'Ship it: commit the work with a clear message on a feature/, fix/, docs/ or chore/ branch (never main), push it, and open a pull request. Reply with the PR link.';
 
 Object.assign(ICON, {
+  flag: ['M5 21V4', 'M5 4h11l-2 4 2 4H5'],
   more: ['M5 12h.01', 'M12 12h.01', 'M19 12h.01'],
   file: ['M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z', 'M14 3v5h5'],
   search: ['M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14', 'M20 20l-4-4'],
@@ -178,7 +179,9 @@ async function renderChat(seq, d) {
   const modeBtn = el('button.mode-chip', { type: 'button', onclick: () => modeMenu() });
   const composer = el('form.composer', { onsubmit: e => { e.preventDefault(); submit() } }, modeBtn, input, sendBtn);
   const ended = el('div.ended-bar', { hidden: true });
-  const footer = el('div.chat-foot', null, dock, composer, ended);
+  const hints = el('div.cmd-hints', { hidden: true });
+  const footer = el('div.chat-foot', null, dock, hints, composer, ended);
+  const goalBar = el('div.chat-goal', { hidden: true });
 
   const back = () => history.length > 1 ? history.back() : navigate('/');
   const page = el('div.chat-page', null,
@@ -188,7 +191,7 @@ async function renderChat(seq, d) {
       el('button.icon-btn.bare', { onclick: () => openReview(session.project, id), 'aria-label': 'Review changes', title: 'Review changes' }, svg(ICON.branch)),
       el('button.icon-btn.bare', { onclick: () => openTerminal(), 'aria-label': 'Open in terminal', title: 'Open in terminal' }, svg(ICON.term)),
       el('button.icon-btn.bare', { onclick: e => moreMenu(e.currentTarget), 'aria-label': 'More', title: 'More' }, svg(ICON.more))),
-    scroller, jump, footer);
+    goalBar, scroller, jump, footer);
   $('#app').replaceChildren(page);
   const viewport = trackViewport();
   viewport();
@@ -213,6 +216,10 @@ async function renderChat(seq, d) {
   const head = () => {
     crumb(project, chatName(session));
     title.textContent = chatName(session);
+    for (const c of CHAT_COLORS) page.classList.toggle('sc-' + c, session.color === c);
+    goalBar.hidden = !session.goal;
+    goalBar.replaceChildren(svg(ICON.flag), el('span.goal-text', null, session.goal || ''),
+      el('button.icon-btn.bare.sm', { type: 'button', 'aria-label': 'Unpin the goal', title: 'Unpin the goal', onclick: () => runCommand({ cmd: 'goal', arg: '' }) }, svg(ICON.x)));
     const model = chatModel();
     sub.textContent = [harnessLabel(session.harness), project.name, model && (model.name || model.id)].filter(Boolean).join(' · ');
     const m = MODE_INFO[session.perm_mode] || MODE_INFO.ask;
@@ -351,7 +358,45 @@ async function renderChat(seq, d) {
     sendBtn.replaceChildren(svg(stop ? ICON.stop : ICON.send));
     sendBtn.disabled = !stop && !input.value.trim();
   };
-  input.addEventListener('input', () => { grow(); syncComposer(); saveDraft() });
+  input.addEventListener('input', () => { grow(); syncComposer(); saveDraft(); showHints() });
+
+  // --- Skybreaker's own commands: /rename, /color, /goal ---
+  const edit = async body => {
+    session = await api('PATCH', '/api/sessions/' + encodeURIComponent(id), body);
+    head();
+  };
+  const runCommand = async c => {
+    try {
+      if (c.cmd === 'rename') {
+        if (!c.arg) { toast('Give the new name: /rename <title>'); return false }
+        await edit({ title: c.arg });
+      } else if (c.cmd === 'color') {
+        if (c.arg && !CHAT_COLORS.includes(c.arg)) { toast('Colours: ' + CHAT_COLORS.join(', ')); return false }
+        await edit({ color: c.arg });
+      } else if (c.cmd === 'goal') {
+        await edit({ goal: c.arg });
+        if (c.arg) await send('Goal for this chat: ' + c.arg);
+      }
+      return true;
+    } catch (e) { toast(e.message, 'error'); return false }
+  };
+  const clearInput = () => {
+    input.value = '';
+    prefs.set(draftKey, '');
+    grow();
+    showHints();
+    syncComposer();
+  };
+  const showHints = () => {
+    const hs = commandHints(input.value);
+    hints.hidden = !hs.length;
+    hints.replaceChildren(...hs.map(h => h.color
+      ? el('button.cmd-hint.swatch-hint.sc-' + h.color, { type: 'button', onmousedown: e => e.preventDefault(),
+        onclick: async () => { if (await runCommand({ cmd: 'color', arg: h.color })) clearInput() } }, el('span.swatch'), h.color)
+      : el('button.cmd-hint', { type: 'button', onmousedown: e => e.preventDefault(),
+        onclick: () => { input.value = '/' + h.cmd + ' '; input.focus(); showHints(); syncComposer() } },
+        el('b', null, h.usage), el('span', null, h.desc))));
+  };
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !coarse()) { e.preventDefault(); submit() }
   });
@@ -366,6 +411,13 @@ async function renderChat(seq, d) {
     const text = input.value.trim();
     if (!text) {
       if (chat.working) interrupt();
+      return;
+    }
+    const command = parseCommand(text);
+    if (command) {
+      sending = true;
+      if (await runCommand(command)) clearInput();
+      sending = false;
       return;
     }
     sending = true;

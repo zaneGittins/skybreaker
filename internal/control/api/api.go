@@ -67,6 +67,7 @@ type Backend interface {
 	MarkSeen(id string) error
 	Review(ctx context.Context, project string) (app.Review, error)
 	Listening(ctx context.Context, project string) ([]preview.Listening, error)
+	EditSession(id string, e app.SessionEdit) (store.Session, error)
 }
 
 // Approvals are harness approvals: may an agent in a terminal run this tool
@@ -161,6 +162,7 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("DELETE /api/push/subscribe", s.pushUnsubscribe)
 	m.HandleFunc("DELETE /api/sessions/{id}", s.killSession)
 	m.HandleFunc("GET /api/sessions/{id}", s.session)
+	m.HandleFunc("PATCH /api/sessions/{id}", s.editSession)
 	m.HandleFunc("GET /api/sessions/{id}/snapshot", s.snapshot)
 	m.HandleFunc("GET /api/sessions/{id}/history", s.history)
 	m.HandleFunc("GET /api/sessions/{id}/attach", s.attach)
@@ -443,6 +445,27 @@ func (s *server) session(w http.ResponseWriter, r *http.Request) {
 		"session": sess,
 		"project": map[string]any{"name": sess.Project, "tint": s.tints[sess.Project]},
 	})
+}
+
+// editSession renames a session, colours it or sets its goal.
+func (s *server) editSession(w http.ResponseWriter, r *http.Request) {
+	var e app.SessionEdit
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&e); err != nil {
+		webutil.Error(w, http.StatusBadRequest, "bad edit: "+err.Error())
+		return
+	}
+	sess, err := s.Backend.EditSession(r.PathValue("id"), e)
+	if errors.Is(err, app.ErrNotFound) {
+		webutil.Error(w, http.StatusNotFound, "no such session")
+		return
+	}
+	if err != nil {
+		webutil.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, sess)
 }
 
 func (s *server) history(w http.ResponseWriter, r *http.Request) {
