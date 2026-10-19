@@ -1198,6 +1198,9 @@ function sidebar(d) {
   state.inbox = d;
   const g = inboxGroups(d.sessions, d.pending);
   const needs = g.forYou.length + (d.requests || []).length + (d.review || []).length;
+  // The logo's ring turns while any agent is working, like the halo in a chat.
+  const working = d.sessions.some(s => s.status === 'running' && s.state === 'working');
+  for (const b of document.querySelectorAll('.brand')) b.classList.toggle('working', working);
   const count = $('#inbox-count');
   count.hidden = !needs;
   count.textContent = String(needs);

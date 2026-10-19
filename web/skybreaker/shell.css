@@ -136,11 +136,15 @@ details.earlier .row-list { margin-top: 4px; }
 .sunwork .g { stroke: color-mix(in srgb, var(--sun) 55%, var(--text)); opacity: .8; animation: halo-spin 3s linear infinite reverse, halo-grow 3s ease-in-out infinite; }
 .sunwork .g { animation-delay: -1.9s; }
 @keyframes halo-spin { to { transform: rotate(360deg); } }
+/* The logo is the halo standing still; it turns while an agent works. */
+.brand .ring { transform-box: view-box; transform-origin: 16px 16px; }
+.brand.working .ring { animation: halo-spin 2.4s linear infinite; }
 @keyframes halo-grow { 0%, 100% { stroke-dasharray: 2.2 30; } 50% { stroke-dasharray: 7.5 30; } }
 @media (prefers-reduced-motion: reduce) {
   .sunwork .arc { animation: halo-fade 2.4s ease-in-out infinite; stroke-dasharray: 5 30; }
   .sunwork .o { transform: rotate(120deg); }
   .sunwork .g { transform: rotate(240deg); }
+  .brand.working .ring { animation: none; }
   @keyframes halo-fade { 50% { opacity: .45; } }
 }
 

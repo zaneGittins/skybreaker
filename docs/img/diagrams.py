@@ -68,8 +68,9 @@ def hline(x1, x2, y, label="", cls="line", both=False, lx=None):
 
 def mark(c, x, y, scale):
     return (f'<g transform="translate({x} {y}) scale({scale})">'
-            f'<path d="M7.5 10.5l5.5 5.5-5.5 5.5" fill="none" stroke="{c["mark"]}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>'
-            f'<path d="M17.6 20.3a4.6 4.6 0 0 1 7.9-5.4z" fill="{c["sun"]}"/><path d="M19.4 22.4a4.6 4.6 0 0 0 7.9-5.4z" fill="{c["planet"]}"/></g>')
+            f'<circle cx="16" cy="16" r="4.4" fill="{c["sun"]}"/>'
+            f'<path d="M24.93 14.9A9 9 0 1 1 17.1 7.07" fill="none" stroke="{c["mark"]}" stroke-width="2.6" stroke-linecap="round"/>'
+            f'<circle cx="23.3" cy="8.7" r="1.5" fill="{c["planet"]}"/></g>')
 
 
 def architecture(c):
