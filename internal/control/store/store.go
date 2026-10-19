@@ -105,6 +105,7 @@ type state struct {
 	Sessions []Session           `json:"sessions"`
 	Runs     []Run               `json:"runs"`
 	Tokens   map[string]TokenRef `json:"tokens"`
+	Previews map[string]uint16   `json:"previews,omitempty"` // project → its preview port, for good
 }
 
 type Store struct {
@@ -323,4 +324,36 @@ func (s *Store) DeleteToken(project string) error {
 	defer s.mu.Unlock()
 	delete(s.st.Tokens, project)
 	return s.save()
+}
+
+// --- previews ---------------------------------------------------------------
+
+// PreviewPort is the project's preview port, assigning the lowest in
+// [lo, hi] that no project has had. A port is never given to another
+// project, even one removed since, so a project's page can't inherit
+// another's origin and what the browser kept for it.
+func (s *Store) PreviewPort(project string, lo, hi uint16) (uint16, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p, ok := s.st.Previews[project]; ok {
+		return p, nil
+	}
+	used := map[uint16]bool{}
+	for _, p := range s.st.Previews {
+		used[p] = true
+	}
+	for p := lo; p >= lo && p <= hi; p++ {
+		if !used[p] {
+			if s.st.Previews == nil {
+				s.st.Previews = map[string]uint16{}
+			}
+			s.st.Previews[project] = p
+			if err := s.save(); err != nil {
+				delete(s.st.Previews, project)
+				return 0, err
+			}
+			return p, nil
+		}
+	}
+	return 0, fmt.Errorf("no preview ports left between %d and %d", lo, hi)
 }

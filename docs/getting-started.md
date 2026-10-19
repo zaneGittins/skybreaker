@@ -56,6 +56,10 @@ skybreaker              # pick a session and attach; Ctrl-b d brings you back
 
 `skybreaker new <project> [harness]` starts a session, `skybreaker ls` lists them, and `skybreaker update` (or the same one-liner) updates the client. Picking a chat continues it in the harness's own terminal UI; your next message from the phone resumes the chat. The client finds the machine named `skybreaker` on your tailnet and remembers it in `~/.skybreaker/config.json`; `skybreaker connect <address>` sets another.
 
+## Previews
+
+To see what an agent is building, open the project's menu (or **Preview** on a desktop) and pick a port the sandbox is listening on. The page opens on its own address, `https://skybreaker.<your-tailnet>.ts.net:84xx`, apart from Skybreaker. Dev servers must listen on `0.0.0.0` rather than `localhost` (`vite --host 0.0.0.0`, `next dev -H 0.0.0.0`). If you use Tailscale ACLs, allow your login ports 8401-8499 on the `skybreaker` machine as well as 443.
+
 ## Configuration
 
 Everything lives in `/etc/skybreaker/skybreaker.yaml` (projects, policy, users) and `secrets.yaml`. Each project lists what its sandbox may reach in `allow` and `capabilities`; anything else is denied. Restart `skybreaker` after editing, and `skybreaker-nftables` too after adding a project. [deploy/skybreaker.example.yaml](../deploy/skybreaker.example.yaml) is a commented example.

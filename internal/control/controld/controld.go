@@ -8,11 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +27,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/hooks"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
 	"github.com/zaneGittins/skybreaker/internal/control/netrules"
+	"github.com/zaneGittins/skybreaker/internal/control/preview"
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
 	"github.com/zaneGittins/skybreaker/internal/control/scheduler"
 	"github.com/zaneGittins/skybreaker/internal/control/show"
@@ -189,8 +194,15 @@ func Run(ctx context.Context, o Options) error {
 		OnUpdate: func(r store.Run) { a.Publish(app.Event{Type: "run", Project: r.Project, Data: r}) },
 	})
 
+	previews, previewLns, previewHandlers := openPreviews(cfg, st, uiNet)
+	defer func() {
+		for _, ln := range previewLns {
+			ln.Close()
+		}
+	}()
+
 	apiHandler, err := api.New(api.Deps{
-		Config: cfg, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push,
+		Config: cfg, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews,
 		Static: web.Skybreaker(), Version: o.Version,
 		Upgrade: func(w http.ResponseWriter, r *http.Request) (terminal.Conn, error) { return wsock.Accept(w, r) },
 		Bridge: func(ctx context.Context, c terminal.Conn, argv []string) error {
@@ -225,8 +237,12 @@ func Run(ctx context.Context, o Options) error {
 	fromSandbox.Handle("/mcp/", tools.Handler(a.MCPCaller))
 	fromSandbox.Handle("/", hk)
 	servers := []*http.Server{webutil.NewServer(ctx, apiHandler), webutil.NewServer(ctx, fromSandbox), webutil.NewServer(ctx, brk.Handler())}
-	errs := make(chan error, 3)
-	for i, ln := range []net.Listener{ul, hl, pl} {
+	listeners := []net.Listener{ul, hl, pl}
+	for i, h := range previewHandlers {
+		servers, listeners = append(servers, webutil.NewServer(ctx, h)), append(listeners, previewLns[i])
+	}
+	errs := make(chan error, len(listeners))
+	for i, ln := range listeners {
 		go func() {
 			if err := servers[i].Serve(ln); !errors.Is(err, http.ErrServerClosed) {
 				errs <- err
@@ -322,4 +338,67 @@ func loadOrCreateKey(path string) ([]byte, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+// Preview ports: one per project, for good (see store.PreviewPort).
+const previewLo, previewHi = 8401, 8499
+
+// openPreviews opens each project's preview origin: a port of Skybreaker's
+// own name, serving what the project's sandbox serves on the port you pick,
+// to the same users as the UI. A project whose port can't be opened has no
+// preview; the rest of Skybreaker carries on.
+func openPreviews(cfg *config.Config, st *store.Store, uiNet tsauth.Network) (*preview.Registry, []net.Listener, []http.Handler) {
+	reg := preview.NewRegistry()
+	host := ""
+	scheme := "https"
+	if cfg.Tailscale.Disabled {
+		h, _, err := net.SplitHostPort(cfg.Tailscale.DevListen)
+		if err != nil {
+			return reg, nil, nil
+		}
+		host, scheme = h, "http"
+	} else if u, err := url.Parse(cfg.UIURL); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	if host == "" {
+		log.Printf("skybreaker: previews are off: set ui_url")
+		return reg, nil, nil
+	}
+	var lns []net.Listener
+	var hs []http.Handler
+	for _, name := range slices.Sorted(maps.Keys(cfg.Projects)) {
+		port, err := st.PreviewPort(name, previewLo, previewHi)
+		if err != nil {
+			log.Printf("skybreaker: no preview for %s: %v", name, err)
+			continue
+		}
+		ln, err := uiNet.ListenTLS(net.JoinHostPort(listenHost(cfg), strconv.Itoa(int(port))))
+		if err != nil {
+			log.Printf("skybreaker: no preview for %s: %v", name, err)
+			continue
+		}
+		origin := scheme + "://" + net.JoinHostPort(host, strconv.Itoa(int(port)))
+		reg.SetOrigin(name, origin)
+		subnet := cfg.Subnet(name)
+		var h http.Handler = &preview.Handler{Project: name, Origin: origin, Target: func() (netip.AddrPort, bool) {
+			p, ok := reg.Target(name)
+			return netip.AddrPortFrom(sandbox.Addr(subnet), p), ok
+		}}
+		h = tsauth.RequireUsers(uiNet, cfg.Users)(h)
+		if cfg.Tailscale.Disabled {
+			h = tsauth.LoopbackHost(h)
+		}
+		lns, hs = append(lns, ln), append(hs, h)
+	}
+	return reg, lns, hs
+}
+
+// listenHost is where preview listeners bind: the tailnet node, or in
+// development the UI's loopback address.
+func listenHost(cfg *config.Config) string {
+	if cfg.Tailscale.Disabled {
+		h, _, _ := net.SplitHostPort(cfg.Tailscale.DevListen)
+		return h
+	}
+	return ""
 }

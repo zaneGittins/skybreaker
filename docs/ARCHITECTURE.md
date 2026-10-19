@@ -21,6 +21,7 @@ Skybreaker is one Go binary, `skybreaker`, running on one Linux host. It serves 
 | `internal/control/sandbox`, `netrules` | Container specs under `runsc`, and the nftables ruleset. |
 | `internal/control/mcp`, `internal/board` | Skybreaker's MCP server and the per-project boards. |
 | `internal/control/scheduler`, `hooks`, `terminal` | Scheduled runs, Claude Code hooks, WebSocket terminals. |
+| `internal/control/preview` | Previews of a sandbox's web server, each on its project's own origin. |
 | `internal/proxy/broker` | The broker, assembled in-process. |
 | `internal/proxy/server` | The request path: tunnel, MITM and routes. |
 | `internal/proxy/policy`, `gitproto`, `graphql`, `k8s` | Rule matching, git push ref checks, GraphQL operations, Kubernetes attributes. |
@@ -59,6 +60,10 @@ The host never reads sandbox-writable paths directly: workspaces, homes and inne
 ## Chats
 
 A chat runs the harness's structured mode (`claude -p --output-format stream-json`, `codex app-server`) through `docker exec -i`. A `chat.Driver` translates each protocol into `chat.Event`s; the `Manager` stores them in a per-chat log and streams them to the UI over server-sent events. "Open in terminal" resumes the same conversation in tmux. Drivers never name models and ignore what they don't recognise; a weekly image rebuild promotes new CLI versions only if they still speak the protocols the drivers use.
+
+## Previews
+
+Each project has a preview origin, a port of Skybreaker's tailnet name assigned once (`store.PreviewPort`) and never reused for another project. `preview.Handler` serves it to listed users, proxying to the port you chose on the sandbox's fixed address (`sandbox.Addr`). It admits only its own origin's requests and navigations, namespaces cookies per project and strips CORS headers. The dev server sees itself addressed as `localhost`. The app lists the sandbox's listening ports from its `/proc/net/tcp`.
 
 ## Terminal client
 

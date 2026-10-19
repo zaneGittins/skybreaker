@@ -55,6 +55,7 @@ func TestRunArgsShape(t *testing.T) {
 		"--network":  "skybreaker-orbit",
 		"--dns":      "127.0.0.1",
 		"--add-host": "broker:10.89.42.1", // the bridge gateway, where the broker listens
+		"--ip":       "10.89.42.2",        // fixed, so the preview proxy knows where the sandbox is
 		"--label":    "skybreaker.project=orbit",
 	}
 	for flag, want := range single {

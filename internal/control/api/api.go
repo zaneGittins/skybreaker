@@ -25,6 +25,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/hooks"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
+	"github.com/zaneGittins/skybreaker/internal/control/preview"
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
 	"github.com/zaneGittins/skybreaker/internal/control/scheduler"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
@@ -65,6 +66,7 @@ type Backend interface {
 	ChatModes(harness string) []string
 	MarkSeen(id string) error
 	Review(ctx context.Context, project string) (app.Review, error)
+	Listening(ctx context.Context, project string) ([]preview.Listening, error)
 }
 
 // Approvals are harness approvals: may an agent in a terminal run this tool
@@ -105,7 +107,8 @@ type Deps struct {
 	MCP        *mcp.Server // the board's tools and others, for your own agents; nil for none
 	Runs       Runs
 	Store      *store.Store
-	Push       Push // nil when web push is off
+	Push       Push              // nil when web push is off
+	Previews   *preview.Registry // nil when previews are off
 	Identifier tsauth.Identifier
 	Static     fs.FS
 	Version    string
@@ -137,6 +140,8 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("POST /api/projects/{p}/sessions", s.newSession)
 	m.HandleFunc("GET /api/projects/{p}/diff", s.diff)
 	m.HandleFunc("GET /api/projects/{p}/review", s.review)
+	m.HandleFunc("GET /api/projects/{p}/preview", s.preview)
+	m.HandleFunc("POST /api/projects/{p}/preview", s.setPreview)
 	m.HandleFunc("GET /api/inbox", s.inbox)
 	m.HandleFunc("GET /api/sessions/{id}/events", s.chatEvents)
 	m.HandleFunc("POST /api/sessions/{id}/messages", s.chatSend)

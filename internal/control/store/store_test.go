@@ -171,3 +171,25 @@ func TestCorruptFile(t *testing.T) {
 		t.Fatal("want error for corrupt state")
 	}
 }
+
+func TestPreviewPorts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s, _ := Open(path)
+	a, err := s.PreviewPort("orbit", 8401, 8403)
+	b, _ := s.PreviewPort("comet", 8401, 8403)
+	again, _ := s.PreviewPort("orbit", 8401, 8403)
+	if err != nil || a != 8401 || b != 8402 || again != 8401 {
+		t.Fatalf("ports %d %d %d %v", a, b, again, err)
+	}
+	// Kept across restarts, and never handed to another project.
+	s2, _ := Open(path)
+	if p, _ := s2.PreviewPort("comet", 8401, 8403); p != 8402 {
+		t.Fatalf("after reopen comet has %d", p)
+	}
+	if p, _ := s2.PreviewPort("atlas", 8401, 8403); p != 8403 {
+		t.Fatalf("atlas got %d", p)
+	}
+	if _, err := s2.PreviewPort("nova", 8401, 8403); err == nil {
+		t.Fatal("ran past the range")
+	}
+}

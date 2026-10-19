@@ -365,6 +365,7 @@ async function renderProject(seq, name, tab = 'chats') {
     el('div.p-acts', null,
       el('button.btn.sm.ghost.desk-only', { type: 'button', onclick: () => openReview(p.name) }, svg(ICON.diff), 'Changes'),
       el('button.btn.sm.ghost.desk-only', { type: 'button', onclick: () => openShell(p) }, svg(ICON.term), 'Terminal'),
+      el('button.btn.sm.ghost.desk-only', { type: 'button', onclick: () => previewSheet(p) }, svg(ICON.window), 'Preview'),
       el('button.icon-btn.p-more', { type: 'button', onclick: () => sandboxSheet(p, live.length), 'aria-label': 'Sandbox and project actions', title: 'Sandbox and project actions' }, svg(ICON.more))));
   const tabBar = el('nav.p-tabs', { 'aria-label': 'Project' }, tabs.map(([k, label, n]) =>
     el('a.p-tab' + (k === tab ? '.on' : ''), { href: projectPath(p.name, k), 'data-link': true, 'aria-current': k === tab ? 'page' : null },
@@ -430,12 +431,62 @@ function sandboxSheet(p, live) {
       el('div.sheet-acts', null,
         act(ICON.diff, 'Review changes', () => { closeSheet(); openReview(p.name) }),
         act(ICON.term, 'Open a terminal', () => openShell(p)),
+        act(ICON.window, 'Preview a web page', () => previewSheet(p), { sub: 'A dev server in the sandbox' }),
         act(ICON.clock, 'Schedules', go(projectPath(p.name, 'runs'))),
         p.running
           ? act(ICON.stop, 'Stop sandbox', () => { closeSheet(); if (!live || confirm(`Stop ${p.name}'s sandbox? ${plural(live, 'chat')} pause and resume later.`)) sandboxAction(p.name, 'stop') },
             { cls: '.danger', sub: live ? `${plural(live, 'chat')} pause and resume later` : '' })
           : act(ICON.play, 'Start sandbox', () => { closeSheet(); sandboxAction(p.name, 'start') })),
       el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Close')));
+}
+
+// --- previews ---------------------------------------------------------------
+
+Object.assign(ICON, {
+  window: ['M3 5h18v14H3z', 'M3 9h18', 'M6 7h.01', 'M9 7h.01'],
+  external: ['M14 4h6v6', 'M20 4l-9 9', 'M18 14v6H4V6h6'],
+});
+
+// previewSheet shows a web server running in the project's sandbox, on a
+// preview address of the project's own: another port of Skybreaker's name,
+// so the page can't reach into Skybreaker. Pick a port, then open it.
+async function previewSheet(p) {
+  const path = `/api/projects/${encodeURIComponent(p.name)}/preview`;
+  let d;
+  try { d = await api('GET', path) } catch (e) { toast(e.message, 'error'); return }
+  const use = async port => {
+    try {
+      await api('POST', path, { port });
+      d.port = port;
+      draw();
+    } catch (e) { toast(e.message, 'error') }
+  };
+  // A real link, so the new tab opens on the tap itself.
+  const open = port => el('a.sheet-act.pv-open', { href: d.url, target: '_blank', rel: 'noopener noreferrer', onclick: closeSheet },
+    svg(ICON.external), el('span.sa-text', null, el('span', null, 'Open :' + port), el('span.sa-sub', null, d.url.replace(/^https?:\/\//, ''))));
+  const row = l => !l.public
+    ? el('div.sheet-act.pv-local', null, svg(ICON.window),
+      el('span.sa-text', null, el('span', null, ':' + l.port), el('span.sa-sub', null, 'Listening on localhost only. Start it on 0.0.0.0 to preview it.')))
+    : l.port === d.port ? open(l.port)
+      : el('button.sheet-act', { type: 'button', onclick: () => use(l.port) }, svg(ICON.window), el('span.sa-text', null, el('span', null, 'Preview :' + l.port)));
+  const field = el('input.pv-port', { type: 'number', min: '1', max: '65535', inputmode: 'numeric', placeholder: 'Another port', 'aria-label': 'Port' });
+  const form = el('form.pv-form', { onsubmit: e => { e.preventDefault(); const n = Number(field.value); if (n) use(n) } },
+    field, el('button.btn.sm', { type: 'submit' }, 'Preview'));
+  const draw = () => {
+    const listed = d.listening.some(l => l.port === d.port);
+    $('#sheet-root').replaceChildren(
+      el('div.backdrop', { onclick: closeSheet }),
+      el('div.picker.preview-sheet', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Preview' },
+        el('div.picker-grip'),
+        el('div.pv-head', null, el('b', null, 'Preview'), el('span', null, `A web server in ${p.name}'s sandbox, on its own address apart from Skybreaker.`)),
+        el('div.sheet-acts', null,
+          d.port && !listed ? open(d.port) : null,
+          d.listening.map(row),
+          d.listening.length ? null : el('p.pv-empty', null, d.error || 'Nothing is listening yet. Start a dev server in the sandbox on 0.0.0.0, then open this again.')),
+        form,
+        el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Close')));
+  };
+  draw();
 }
 
 const HARNESS_INFO = {

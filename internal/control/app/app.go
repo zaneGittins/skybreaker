@@ -25,6 +25,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/hooks"
+	"github.com/zaneGittins/skybreaker/internal/control/preview"
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 	"github.com/zaneGittins/skybreaker/internal/control/tmux"
@@ -758,4 +759,18 @@ func (a *App) notificationFor(ev hooks.Event) notify.Message {
 	}
 	m.Click = a.uiURL + "/p/" + ev.Project
 	return m
+}
+
+// Listening lists the TCP ports something in the project's sandbox listens
+// on, for the preview. It reads /proc/net inside the sandbox; whatever the
+// sandbox prints is parsed defensively and bounded.
+func (a *App) Listening(ctx context.Context, project string) ([]preview.Listening, error) {
+	if _, err := a.project(project); err != nil {
+		return nil, err
+	}
+	out, err := a.sandbox.Exec(ctx, project, "sh", "-c", "cat /proc/net/tcp /proc/net/tcp6 2>/dev/null; true")
+	if err != nil {
+		return nil, err
+	}
+	return preview.ParseListening(out), nil
 }

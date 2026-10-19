@@ -29,6 +29,12 @@ func Gateway(subnet netip.Prefix) netip.Addr {
 	return subnet.Masked().Addr().Next()
 }
 
+// Addr is the sandbox's own address on its network, the one after the
+// gateway, fixed at start so the host knows where to reach it.
+func Addr(subnet netip.Prefix) netip.Addr {
+	return Gateway(subnet).Next()
+}
+
 // BridgeName is the Linux interface name of a project's bridge. Interface
 // names are capped at 15 bytes, so long project names are shortened with a
 // hash suffix. The "sky-" prefix lets nftables match every sandbox bridge.

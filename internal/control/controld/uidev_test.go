@@ -92,6 +92,9 @@ func (d *devDocker) Run(ctx context.Context, name string, args ...string) ([]byt
 		return nil, nil
 	case strings.HasPrefix(line, "exec ") && strings.Contains(line, " git "):
 		return devGit(line)
+	case strings.HasPrefix(line, "exec ") && strings.Contains(line, "/proc/net/tcp"):
+		// A dev server on 0.0.0.0:5173 and another on localhost:3000.
+		return []byte("  sl  local_address rem_address   st\n   0: 00000000:1435 00000000:0000 0A\n   1: 0100007F:0BB8 00000000:0000 0A\n"), nil
 	case strings.HasPrefix(line, "exec "):
 		return nil, nil
 	}

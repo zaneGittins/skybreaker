@@ -33,6 +33,15 @@ Sandboxes reach the outside only through `HTTPS_PROXY=http://<project>:<token>@b
 | Connection | Resolved addresses are checked at connect time against loopback, link-local, metadata, private ranges, the tailnet and your LAN. |
 | Audit | Every decision is logged and shown on the Activity page. |
 
+## Previews
+
+A preview shows you a web server running in a sandbox. Its page is written by the agent, so it runs in your browser on an origin of its own: another port of Skybreaker's tailnet name (8401 and up), one per project, never reused for another project. On that origin it can't read or drive the app: the app refuses writes from other origins and checks a terminal's exact origin. The preview itself:
+
+- answers only listed users, like the app, and only its own origin's requests and plain navigations, so another project's page can't read it with your identity, whatever CORS headers the dev server sends;
+- keeps cookies to its project, renamed and `HttpOnly`, because browsers share cookies across ports;
+- refuses to be framed by other origins and leaves the app no opener;
+- connects only to its own sandbox's address, on the port you chose in the app.
+
 ## Approvals
 
 An `ask` request is held for up to 30 seconds. If it isn't approved in time, the agent receives a 403 with an approval ID, and an identical retry succeeds once approved.

@@ -218,6 +218,7 @@ func (s Spec) RunArgs() ([]string, error) {
 		// The broker listens on the host; this is the host's address on
 		// the project's own network.
 		"--add-host", "broker:" + Gateway(s.Subnet).String(),
+		"--ip", Addr(s.Subnet).String(),
 		// Inner dockerd needs capabilities. Under runsc they exist only in
 		// gVisor's user-space kernel.
 		"--cap-add", "ALL",
