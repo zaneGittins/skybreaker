@@ -138,7 +138,14 @@ type Policy struct {
 	Auto []string `json:"auto" yaml:"auto"`
 	Ask  []string `json:"ask" yaml:"ask"`
 	Deny []string `json:"deny" yaml:"deny"`
+	// Proxy lists the resources (nodes, pods, services) whose proxy
+	// subresource is allowed. A proxy request reaches a kubelet, pod or
+	// service with the route's credential, past rules that only see the
+	// outer resource, so none is allowed unless listed here.
+	Proxy []string `json:"proxy,omitempty" yaml:"proxy,omitempty"`
 }
+
+var proxyable = map[string]bool{"nodes": true, "pods": true, "services": true}
 
 var verbs = map[string]bool{
 	"get": true, "list": true, "watch": true, "create": true, "update": true,
@@ -156,6 +163,11 @@ func (p Policy) Validate() error {
 	for _, d := range p.Deny {
 		if err := validDeny(d); err != nil {
 			return err
+		}
+	}
+	for _, r := range p.Proxy {
+		if !proxyable[r] {
+			return fmt.Errorf("k8s: proxy: %q has no proxy subresource (use nodes, pods or services)", r)
 		}
 	}
 	return nil
@@ -206,6 +218,9 @@ func hasVerb(list []string, verb string) bool {
 // Decide applies deny entries first, then Auto, then Ask; anything else is
 // denied. Discovery requests are non-resource GETs and follow "get".
 func (p Policy) Decide(a Attributes) (policy.Action, string) {
+	if !a.NonResource && a.Subresource == "proxy" && !slices.Contains(p.Proxy, strings.ToLower(a.Resource)) {
+		return policy.Deny, a.Resource + "/proxy is not allowed (list it under the route's k8s proxy)"
+	}
 	for _, d := range p.Deny {
 		if deniedBy(d, a) {
 			return policy.Deny, "denied by " + d

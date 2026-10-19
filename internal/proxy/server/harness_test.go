@@ -56,6 +56,7 @@ const testConfig = `{
        "rules": [
          {"match": "GET /repos/{repo}/**", "action": "auto"},
          {"match": "PUT /repos/{repo}/pulls/*/merge", "action": "ask"},
+         {"match": "POST /graphql", "action": "auto", "graphql": {"mutations": ["createPullRequest", "addComment"], "other": "ask"}},
          {"match": "DELETE /**", "action": "deny"}
        ]}
     ],
@@ -184,6 +185,19 @@ func newWorld(t *testing.T) *world {
 		w.hits = append(w.hits, upstreamHit{Host: r.Host, Method: r.Method, Path: path, Header: r.Header.Clone(), Body: body})
 		w.mu.Unlock()
 		rw.Header().Set("X-Upstream", r.Host)
+		if r.URL.Query().Get("watch") == "stream" {
+			// A watch: events until the client goes away.
+			for range 200 {
+				io.WriteString(rw, "event\n")
+				rw.(http.Flusher).Flush()
+				select {
+				case <-r.Context().Done():
+					return
+				case <-time.After(50 * time.Millisecond):
+				}
+			}
+			return
+		}
 		io.WriteString(rw, "hello from "+r.Host)
 	}))
 	w.upstream.TLS = &tls.Config{GetCertificate: func(h *tls.ClientHelloInfo) (*tls.Certificate, error) {

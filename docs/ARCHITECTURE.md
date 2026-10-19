@@ -23,7 +23,7 @@ Skybreaker is one Go binary, `skybreaker`, running on one Linux host. It serves 
 | `internal/control/scheduler`, `hooks`, `terminal` | Scheduled runs, Claude Code hooks, WebSocket terminals. |
 | `internal/proxy/broker` | The broker, assembled in-process. |
 | `internal/proxy/server` | The request path: tunnel, MITM and routes. |
-| `internal/proxy/policy`, `gitproto`, `k8s` | Rule matching, git push ref checks, Kubernetes attributes. |
+| `internal/proxy/policy`, `gitproto`, `graphql`, `k8s` | Rule matching, git push ref checks, GraphQL operations, Kubernetes attributes. |
 | `internal/proxy/approval`, `secrets`, `netguard`, `audit` | Approvals, host-bound secrets, connect-time address checks, audit log. |
 | `internal/tsauth` | Tailnet identity; `tsnetsrv` is the Tailscale adapter. |
 | `internal/client` | The terminal client: session picker, attach, self-update. |
@@ -44,8 +44,8 @@ The server uses the standard library except for two adapters: `tsauth/tsnetsrv` 
 
 1. **Caller.** The connection must come from a sandbox network, carrying a live token minted for that project. Tokens are rechecked on every request inside MITM connections, and revoked tokens' connections are closed.
 2. **Destination.** The host must be in the project's `allow` list or capabilities. A **tunnel** splices bytes, **mitm** terminates TLS with the broker's CA, and a **route** is a reverse-proxy path on the broker.
-3. **Rules.** The first matching rule decides `auto`, `ask` or `deny`; no match is a denial. Requests with their own credentials, ambiguous paths (`..`, `//`, encoded slashes) and protocol upgrades are refused first. An `ask` is bound to a hash of the exact request and held for approval.
-4. **Credentials.** The broker strips placeholders and adds the secret, only if the secret lists the upstream host.
+3. **Rules.** The first matching rule decides `auto`, `ask` or `deny`; no match is a denial. Requests with their own credentials, impersonation headers, ambiguous paths (`..`, `//`, encoded slashes) and protocol upgrades are refused first. GraphQL rules parse the operation (`internal/proxy/graphql`) and Kubernetes routes the verb and resource. An `ask` is bound to a hash of the exact request, headers included, and held for approval.
+4. **Credentials.** The token is checked again (it may have been revoked while held), then the broker strips placeholders and adds the secret, only if the secret lists the upstream host. Revoking a token also cancels its requests still in flight.
 5. **Connect.** Resolved addresses are checked against loopback, link-local, metadata, private and tailnet ranges. Tailnet upstreams a route allows are dialled through Skybreaker's own Tailscale node.
 
 ## Sandboxes

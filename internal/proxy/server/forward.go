@@ -7,14 +7,17 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"mime"
 	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +26,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/proxy/audit"
 	"github.com/zaneGittins/skybreaker/internal/proxy/config"
 	"github.com/zaneGittins/skybreaker/internal/proxy/gitproto"
+	"github.com/zaneGittins/skybreaker/internal/proxy/graphql"
 	"github.com/zaneGittins/skybreaker/internal/proxy/k8s"
 	"github.com/zaneGittins/skybreaker/internal/proxy/netguard"
 	"github.com/zaneGittins/skybreaker/internal/proxy/policy"
@@ -36,6 +40,7 @@ const maxAskBody = 4 << 20 // held in memory while waiting, and hashed into the 
 // which policy applies.
 type target struct {
 	peer        sender
+	token       string // the session token that authorised the request
 	pp          *config.ProjectPolicy
 	mode        string
 	scheme      string
@@ -105,6 +110,12 @@ func isUpgrade(r *http.Request) bool {
 var hopHeaders = []string{"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade"}
 
 func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
+	// Revoking the token cancels the request wherever it is: held for an
+	// approval, or streaming a response.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	defer s.trackRequest(t.token, cancel)()
+	r = r.WithContext(ctx)
 	e := audit.Entry{Sender: t.peer.Name(), Project: t.pp.Name, Mode: t.mode, Host: t.host, Method: r.Method, Path: t.escapedPath}
 	path, ok := policy.CleanPath(t.escapedPath)
 	if !ok {
@@ -116,6 +127,10 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 	// the session token and is ours.
 	r.Header.Del("Proxy-Authorization")
 	if reason := foreignCredential(r); reason != "" {
+		s.deny(w, e, http.StatusForbidden, reason)
+		return
+	}
+	if reason := impersonation(r); reason != "" {
 		s.deny(w, e, http.StatusForbidden, reason)
 		return
 	}
@@ -153,6 +168,46 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 		return
 	}
 
+	// 2a. GraphQL: one endpoint does everything, so the rule looks at the
+	// operation. Queries and the rule's listed mutations keep its action;
+	// any other operation gets the rule's graphql.other; a body that can't
+	// be read unambiguously is refused.
+	if rule != nil && rule.GraphQL != nil {
+		if r.Header.Get("Content-Encoding") != "" {
+			s.deny(w, e, http.StatusBadRequest, "compressed GraphQL bodies are not inspected")
+			return
+		}
+		if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
+			s.deny(w, e, http.StatusUnsupportedMediaType, "GraphQL requests must be application/json")
+			return
+		}
+		b, err := io.ReadAll(io.LimitReader(r.Body, maxAskBody+1))
+		if err != nil || len(b) > maxAskBody {
+			s.deny(w, e, http.StatusRequestEntityTooLarge, "GraphQL request too large to inspect")
+			return
+		}
+		body, read = b, true
+		q, err := graphql.Parse(body)
+		if err != nil {
+			s.deny(w, e, http.StatusBadRequest, err.Error())
+			return
+		}
+		what := q.Op + " " + strings.Join(q.Fields, ", ")
+		if q.Indirect {
+			what += " (and fragments)"
+		}
+		view = append(view, approval.Field{Label: "GraphQL", Value: strings.TrimSpace(what)})
+		listed := q.Op == "query" || q.Op == "mutation" && !q.Indirect && len(q.Fields) > 0 &&
+			!slices.ContainsFunc(q.Fields, func(f string) bool { return !slices.Contains(rule.GraphQL.Mutations, f) })
+		if !listed {
+			action, reason = rule.GraphQL.OtherAction(), "GraphQL "+strings.TrimSpace(what)+" is not on the rule's list"
+			if action != policy.Ask {
+				s.deny(w, e, http.StatusForbidden, reason)
+				return
+			}
+		}
+	}
+
 	// 2. Ref policy for git pushes, read from the start of the pack stream.
 	if rule != nil && len(rule.Refs) > 0 {
 		if r.Header.Get("Content-Encoding") != "" {
@@ -177,6 +232,15 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 		}
 	}
 
+	// What goes upstream: the request's own headers, less hop-by-hop ones,
+	// the placeholders and cookies. These are what an approval binds.
+	out := r.Header.Clone()
+	stripHop(out)
+	for _, h := range credentialHeaders {
+		out.Del(h)
+	}
+	out.Del("Cookie")
+
 	// 3. Ask: hold the request until approved, or answer 403 with an ID an
 	// identical retry can use once approved.
 	if action == policy.Ask {
@@ -192,19 +256,24 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 		if r.URL.RawQuery != "" {
 			target += "?" + r.URL.RawQuery
 		}
-		// The content type changes what a body means (a k8s merge patch
-		// versus an apply), and the route, port and secret decide where it
-		// lands and with whose authority, so all of them are bound into the
-		// approval along with the body.
+		// Headers change what a request means (a k8s merge patch versus an
+		// apply, an If-Match, an API version), and the route, port and
+		// secret decide where it lands and with whose authority, so all of
+		// them are bound into the approval along with the body.
 		ct := r.Header.Get("Content-Type")
 		view = append(view, approval.Field{Label: "Content-Type", Value: ct})
+		for _, name := range slices.Sorted(maps.Keys(out)) {
+			if !plainHeaders[name] {
+				view = append(view, approval.Field{Label: "Header", Value: name + ": " + strings.Join(out[name], ", ")})
+			}
+		}
 		if t.routePrefix != "" {
 			view = append(view, approval.Field{Label: "Route", Value: t.routePrefix})
 		}
 		if t.port != 443 {
 			view = append(view, approval.Field{Label: "Port", Value: strconv.Itoa(t.port)})
 		}
-		bound := approvalBinding(t) + "content-type: " + ct + "\n"
+		bound := approvalBinding(t) + "headers: " + headerBinding(out) + "\n"
 		req := approval.Request{
 			Project: t.pp.Name, Method: r.Method, Host: t.host, Path: target, Sender: t.peer.Name(),
 			Body: append([]byte(bound), body...),
@@ -234,13 +303,14 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 		}
 	}
 
-	// 4. Credentials: drop the placeholders and any cookies, then add ours.
-	out := r.Header.Clone()
-	stripHop(out)
-	for _, h := range credentialHeaders {
-		out.Del(h)
+	// The session may have ended while the request was held: a revoked token
+	// gets no credential, whatever was approved.
+	if !s.live(t.token, t.pp.Name) {
+		s.deny(w, e, http.StatusProxyAuthRequired, "session revoked or expired")
+		return
 	}
-	out.Del("Cookie")
+
+	// 4. Credentials: the placeholders and cookies are gone; add ours.
 	if t.inject != nil {
 		secret, err := s.secrets.Resolve(r.Context(), t.inject.SecretName(), t.host, secrets.Scope{Repo: t.pp.Repo})
 		if err != nil {
@@ -298,6 +368,38 @@ func (s *Server) relay(w http.ResponseWriter, resp *http.Response, e audit.Entry
 
 // approvalBinding is the part of where a request goes that the method,
 // host and path don't already say.
+// plainHeaders are the ones every client sends; the approval binds them
+// like the rest, but the card doesn't list them.
+var plainHeaders = map[string]bool{"Accept": true, "Accept-Encoding": true, "Accept-Language": true, "User-Agent": true, "Content-Type": true, "Content-Length": true}
+
+// headerBinding encodes headers unambiguously: canonical names, sorted,
+// each with its values in order.
+func headerBinding(h http.Header) string {
+	merged := map[string][]string{}
+	for k, v := range h {
+		ck := http.CanonicalHeaderKey(k)
+		merged[ck] = append(merged[ck], v...)
+	}
+	list := [][]string{}
+	for _, k := range slices.Sorted(maps.Keys(merged)) {
+		list = append(list, append([]string{k}, merged[k]...))
+	}
+	b, _ := json.Marshal(list)
+	return string(b)
+}
+
+// impersonation refuses Kubernetes impersonation headers: the injected
+// credential may hold impersonate rights, and a sandbox must never borrow
+// another identity through them.
+func impersonation(r *http.Request) string {
+	for k := range r.Header {
+		if strings.HasPrefix(http.CanonicalHeaderKey(k), "Impersonate-") {
+			return "impersonation headers are refused"
+		}
+	}
+	return ""
+}
+
 func approvalBinding(t target) string {
 	return fmt.Sprintf("mode=%s route=%s port=%d secret=%s\n", t.mode, t.routePrefix, t.port, t.inject.SecretName())
 }
@@ -454,7 +556,7 @@ func preview(b []byte) string {
 // HTTPS upstream and go through the rules.
 func (s *Server) plain(w http.ResponseWriter, r *http.Request, peer sender) {
 	e := audit.Entry{Sender: peer.Name(), Host: r.URL.Host, Method: r.Method, Path: r.URL.EscapedPath()}
-	pp, _, ok := s.proxyAuth(r)
+	pp, token, ok := s.proxyAuth(r)
 	if !ok {
 		s.needAuth(w, e)
 		return
@@ -481,7 +583,7 @@ func (s *Server) plain(w http.ResponseWriter, r *http.Request, peer sender) {
 			s.deny(w, e, http.StatusForbidden, "port 443 is not allowed for "+host)
 			return
 		}
-		s.forward(w, r, target{peer: peer, pp: pp, mode: config.ModeMITM, scheme: "https", host: host, port: 443,
+		s.forward(w, r, target{peer: peer, token: token, pp: pp, mode: config.ModeMITM, scheme: "https", host: host, port: 443,
 			escapedPath: r.URL.EscapedPath(), rules: rule.Rules, inject: rule.Inject, guard: s.guard})
 		return
 	}
@@ -514,16 +616,18 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	peer := senderOf(r)
 	e := audit.Entry{Sender: peer.Name(), Mode: config.ModeRoute, Method: r.Method, Path: r.URL.EscapedPath()}
 	var (
-		pp *config.ProjectPolicy
-		ok bool
+		pp    *config.ProjectPolicy
+		token string
+		ok    bool
 	)
 	if tok := bearer(r.Header.Get("Authorization")); tok != "" {
 		if info, live := s.sessions.Lookup(tok); live {
 			pp, ok = s.projectFor(r, info.Project, tok)
 		}
+		token = tok
 		r.Header.Del("Authorization")
 	} else {
-		pp, _, ok = s.proxyAuth(r)
+		pp, token, ok = s.proxyAuth(r)
 	}
 	if !ok {
 		e.Decision, e.Reason, e.Status = "deny", "missing or invalid session token", http.StatusUnauthorized
@@ -557,7 +661,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		port, _ = strconv.Atoi(p)
 	}
 	s.forward(w, r, target{
-		peer: peer, pp: pp, mode: config.ModeRoute, scheme: "https", host: rt.Upstream.Hostname(), port: port,
+		peer: peer, token: token, pp: pp, mode: config.ModeRoute, scheme: "https", host: rt.Upstream.Hostname(), port: port,
 		escapedPath: rt.Strip(r.URL.EscapedPath()), routePrefix: rt.Prefix, rules: rt.Rules, k8s: rt.K8s,
 		inject: rt.Inject, guard: g, roots: rt.RootCAs, transport: "route:" + pp.Name + ":" + rt.Prefix,
 	})

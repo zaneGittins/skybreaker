@@ -28,7 +28,7 @@ Sandboxes reach the outside only through `HTTPS_PROXY=http://<project>:<token>@b
 |---|---|
 | Caller | The request must come from the project's sandbox network with a live token minted for that project. Revocation takes effect immediately, including on open connections. |
 | Destination | The host must be on the project's list. Each host is a **tunnel** (opaque), **mitm** (TLS terminated so rules can see method and path) or a **route** (a reverse-proxy path, for clients that pin their own CA). |
-| Request | Each method and path is `auto`, `ask` or `deny`; unmatched requests are denied. Requests carrying their own credentials are refused. `refs:` restricts git pushes to branch globs; `k8s:` rules decide on Kubernetes verbs and resources. |
+| Request | Each method and path is `auto`, `ask` or `deny`; unmatched requests are denied. Requests carrying their own credentials are refused. `refs:` restricts git pushes to branch globs. `graphql:` reads GraphQL operations, so a mutation off the rule's list (such as `mergePullRequest`) needs approval. `k8s:` rules decide on Kubernetes verbs and resources; proxy subresources and impersonation headers are refused. |
 | Credentials | A secret is added only if it lists the upstream host. An unbound secret would let an agent read it back through an echo server. |
 | Connection | Resolved addresses are checked at connect time against loopback, link-local, metadata, private ranges, the tailnet and your LAN. |
 | Audit | Every decision is logged and shown on the Activity page. |
@@ -37,7 +37,7 @@ Sandboxes reach the outside only through `HTTPS_PROXY=http://<project>:<token>@b
 
 An `ask` request is held for up to 30 seconds. If it isn't approved in time, the agent receives a 403 with an approval ID, and an identical retry succeeds once approved.
 
-- Approvals are bound to a hash of the exact request (project, method, host, path, query, port, route, secret, content type and body) and are single-use.
+- Approvals are bound to a hash of the exact request (project, method, host, path, query, port, route, secret, every forwarded header and the body) and are single-use. A token revoked while its request is held gets nothing from the approval.
 - The card shows the broker's own parse of the request, never the agent's description. Characters that could hide or reorder text (bidi, zero-width, controls) are shown as `<U+XXXX>`.
 - Only the logins in `users` can view or answer approvals, and sandboxes cannot reach the UI.
 

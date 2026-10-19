@@ -29,10 +29,38 @@ func (a Action) Valid() bool { return a == Auto || a == Ask || a == Deny }
 
 // Rule is one entry as written in config. Refs are receive-pack ref globs the
 // proxy server enforces; policy only checks they stay under refs/heads/.
+// GraphQL, likewise, is enforced by the server on the request body.
 type Rule struct {
-	Match  string   `json:"match" yaml:"match"`
-	Action Action   `json:"action" yaml:"action"`
-	Refs   []string `json:"refs,omitempty" yaml:"refs,omitempty"`
+	Match   string   `json:"match" yaml:"match"`
+	Action  Action   `json:"action" yaml:"action"`
+	Refs    []string `json:"refs,omitempty" yaml:"refs,omitempty"`
+	GraphQL *GraphQL `json:"graphql,omitempty" yaml:"graphql,omitempty"`
+}
+
+// GraphQL narrows a rule to some GraphQL operations: queries and the listed
+// mutations get the rule's action; any other operation gets Other.
+type GraphQL struct {
+	Mutations []string `json:"mutations" yaml:"mutations"`
+	Other     Action   `json:"other,omitempty" yaml:"other,omitempty"` // ask or deny; deny if unset
+}
+
+func (g *GraphQL) OtherAction() Action {
+	if g.Other == "" {
+		return Deny
+	}
+	return g.Other
+}
+
+func validGraphQLName(n string) bool {
+	if n == "" {
+		return false
+	}
+	for i, c := range n {
+		if !(c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || i > 0 && c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 type Decision struct {
@@ -73,6 +101,16 @@ func compile(r *Rule, vars map[string]string) (compiled, error) {
 	for _, ref := range r.Refs {
 		if !strings.HasPrefix(ref, "refs/heads/") || ref == "refs/heads/" {
 			return compiled{}, fmt.Errorf("refs %q must be a branch glob under refs/heads/", ref)
+		}
+	}
+	if g := r.GraphQL; g != nil {
+		if o := g.OtherAction(); o != Ask && o != Deny {
+			return compiled{}, fmt.Errorf("graphql other must be ask or deny, not %q", g.Other)
+		}
+		for _, m := range g.Mutations {
+			if !validGraphQLName(m) {
+				return compiled{}, fmt.Errorf("graphql mutation %q is not a GraphQL name", m)
+			}
 		}
 	}
 	fields := strings.Fields(r.Match)

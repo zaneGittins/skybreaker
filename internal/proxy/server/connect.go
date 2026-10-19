@@ -180,7 +180,7 @@ func (s *Server) mitm(w http.ResponseWriter, r *http.Request, e audit.Entry, pp 
 				return
 			}
 			s.forward(w, ir, target{
-				peer: peer, pp: pp, mode: config.ModeMITM, scheme: "https", host: host, port: port,
+				peer: peer, token: token, pp: pp, mode: config.ModeMITM, scheme: "https", host: host, port: port,
 				escapedPath: ir.URL.EscapedPath(), rules: rule.Rules, inject: rule.Inject, guard: s.guard,
 			})
 		}),

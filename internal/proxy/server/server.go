@@ -82,6 +82,7 @@ type Server struct {
 	// so revocation and expiry cut them off too.
 	connMu    sync.Mutex
 	conns     map[net.Conn]string
+	reqs      map[*inFlight]string // requests on the broker's own listener, by token
 	reapEvery time.Duration
 	stop      context.CancelFunc
 }
@@ -96,7 +97,7 @@ func New(d Deps) (*Server, error) {
 		approvals: d.Approvals, audit: d.Audit, guard: d.Guard,
 		roots: d.UpstreamRoots, hold: d.Hold, uiURL: d.UIURL, portMap: d.portMap,
 		mux: http.NewServeMux(), transports: map[string]*http.Transport{},
-		conns: map[net.Conn]string{}, reapEvery: d.reapEvery,
+		conns: map[net.Conn]string{}, reqs: map[*inFlight]string{}, reapEvery: d.reapEvery,
 	}
 	if s.hold <= 0 {
 		s.hold = 30 * time.Second
@@ -176,7 +177,32 @@ func (s *Server) track(c net.Conn, token string) (untrack func()) {
 	}
 }
 
-// reap closes open connections whose session was revoked or has expired.
+// inFlight is a request being held or relayed, which revocation cancels.
+type inFlight struct{ cancel context.CancelFunc }
+
+// trackRequest records a request until untrack is called. Requests inside
+// a MITM connection end with it; routes and plain HTTP have no connection
+// of their own to close, so their context is cancelled instead.
+func (s *Server) trackRequest(token string, cancel context.CancelFunc) (untrack func()) {
+	f := &inFlight{cancel}
+	s.connMu.Lock()
+	s.reqs[f] = token
+	s.connMu.Unlock()
+	return func() {
+		s.connMu.Lock()
+		delete(s.reqs, f)
+		s.connMu.Unlock()
+	}
+}
+
+// live reports whether token still authorises project.
+func (s *Server) live(token, project string) bool {
+	info, ok := s.sessions.Lookup(token)
+	return ok && info.Project == project
+}
+
+// reap closes open connections and cancels requests whose session was
+// revoked or has expired.
 func (s *Server) reap(ctx context.Context) {
 	t := time.NewTicker(s.reapEvery)
 	defer t.Stop()
@@ -191,6 +217,12 @@ func (s *Server) reap(ctx context.Context) {
 			if _, live := s.sessions.Lookup(token); !live {
 				c.Close()
 				delete(s.conns, c)
+			}
+		}
+		for f, token := range s.reqs {
+			if _, live := s.sessions.Lookup(token); !live {
+				f.cancel()
+				delete(s.reqs, f)
 			}
 		}
 		s.connMu.Unlock()

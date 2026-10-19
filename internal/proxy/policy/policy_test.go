@@ -270,3 +270,24 @@ func TestLowercaseMethodIsDenied(t *testing.T) {
 		t.Errorf("POST: %s, want ask", d.Action)
 	}
 }
+
+func TestGraphQLRule(t *testing.T) {
+	ok := []Rule{{Match: "POST /graphql", Action: Auto, GraphQL: &GraphQL{Mutations: []string{"createPullRequest", "addComment"}, Other: Ask}}}
+	if _, err := Compile(ok, nil); err != nil {
+		t.Fatal(err)
+	}
+	for name, g := range map[string]*GraphQL{
+		"other auto defeats the check": {Mutations: []string{"addComment"}, Other: Auto},
+		"bad other":                    {Other: "maybe"},
+		"bad mutation name":            {Mutations: []string{"merge PullRequest"}},
+		"empty mutation name":          {Mutations: []string{""}},
+	} {
+		if _, err := Compile([]Rule{{Match: "POST /graphql", Action: Auto, GraphQL: g}}, nil); err == nil {
+			t.Errorf("%s: compiled", name)
+		}
+	}
+	// Unset, other is deny.
+	if (&GraphQL{}).OtherAction() != Deny {
+		t.Error("other defaults to something other than deny")
+	}
+}

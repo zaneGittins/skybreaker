@@ -291,8 +291,14 @@ capabilities:
         - { match: "POST /repos/{repo}/pulls", action: auto }
         - { match: "POST /repos/{repo}/issues/*/comments", action: auto }
         - { match: "PATCH /repos/{repo}/pulls/*", action: auto }
-        # gh pr create uses GraphQL; the App's permissions bound it.
-        - { match: "POST /graphql", action: auto }
+        # gh uses GraphQL. Queries, and the mutations that open, edit and comment
+        # on pull requests and issues, run; any other mutation (gh pr merge's
+        # mergePullRequest, deleteRef, ...) waits for your approval.
+        - match: "POST /graphql"
+          action: auto
+          graphql:
+            mutations: [createPullRequest, updatePullRequest, markPullRequestReadyForReview, addComment, createIssue]
+            other: ask
         - { match: "GET /user", action: auto }
 
   # Claude and ChatGPT subscriptions: the harnesses sign in themselves and

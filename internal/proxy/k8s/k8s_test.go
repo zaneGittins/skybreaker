@@ -333,3 +333,44 @@ func TestNamespaceDenyCoversClusterWideReads(t *testing.T) {
 		t.Errorf("no ns deny: %s, want auto", act)
 	}
 }
+
+// Proxy subresources reach a kubelet, a pod or a service with the injected
+// credential, past every rule that looks at the outer resource. They are
+// denied unless a route lists the resource under proxy.
+func TestProxySubresources(t *testing.T) {
+	paths := []string{
+		"/api/v1/nodes/worker/proxy/pods",
+		"/api/v1/nodes/worker/proxy",
+		"/api/v1/namespaces/apps/pods/web/proxy/metrics",
+		"/api/v1/namespaces/apps/services/web:80/proxy/admin",
+		"/api/v1/namespaces/apps/services/https:web:443/proxy/",
+	}
+	open := Policy{Auto: []string{"*"}}
+	for _, p := range paths {
+		a, err := Parse("GET", p, url.Values{})
+		if err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if got, reason := open.Decide(a); got != policy.Deny || !strings.Contains(reason, "proxy") {
+			t.Errorf("%s: %q (%s), want deny", p, got, reason)
+		}
+	}
+	svc := Policy{Auto: []string{"get"}, Deny: []string{"ns:kube-system"}, Proxy: []string{"services"}}
+	if err := svc.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]policy.Action{
+		"/api/v1/namespaces/apps/services/web:80/proxy/healthz":        policy.Auto,
+		"/api/v1/namespaces/apps/pods/web/proxy/metrics":               policy.Deny,
+		"/api/v1/nodes/worker/proxy/pods":                              policy.Deny,
+		"/api/v1/namespaces/kube-system/services/dns:53/proxy/metrics": policy.Deny,
+	} {
+		a, _ := Parse("GET", p, url.Values{})
+		if got, reason := svc.Decide(a); got != want {
+			t.Errorf("%s: %q (%s), want %q", p, got, reason, want)
+		}
+	}
+	if err := (Policy{Proxy: []string{"secrets"}}).Validate(); err == nil {
+		t.Error("proxy: [secrets] accepted")
+	}
+}
