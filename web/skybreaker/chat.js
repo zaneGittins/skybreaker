@@ -136,8 +136,8 @@ function diffView(diff, { open = 3, limit = 400 } = {}) {
 
 // --- the page -----------------------------------------------------------------
 
-// sunMark is the logo's broken sun, the working indicator: its halves part
-// along the crack and close again while the agent works.
+// sunMark is the logo's broken sun, the working indicator: while the agent
+// works it turns over along its crack, and its halves trade places.
 function sunMark() {
   const ns = 'http://www.w3.org/2000/svg';
   const s = document.createElementNS(ns, 'svg');

@@ -125,12 +125,20 @@ details.earlier .row-list { margin-top: 4px; }
 .chat-working { gap: 10px; color: var(--text-2); }
 .chat-working .wtext { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .chat-working .wtime { flex-shrink: 0; font: 600 12px var(--mono); color: var(--muted); }
-.sunwork { width: 18px; height: 18px; flex-shrink: 0; overflow: visible; }
-.sunwork .a { fill: var(--sun); --dx: -0.9px; --dy: -1.3px; }
-.sunwork .b { fill: var(--planet); --dx: 0.9px; --dy: 1.3px; }
-.sunwork .half { animation: sun-split 1.8s cubic-bezier(.45, 0, .55, 1) infinite; }
-@keyframes sun-split { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(var(--dx), var(--dy)); } }
+/* The sun turns over along its own crack, rests, and turns on round: the
+   halves trade places each time. While it's edge-on they part a hair. */
+.sunwork { width: 18px; height: 18px; flex-shrink: 0; overflow: visible; animation: sun-flip 3.2s cubic-bezier(.65, 0, .35, 1) infinite; }
+.sunwork .a { fill: var(--sun); --dx: -0.68px; --dy: -0.99px; }
+.sunwork .b { fill: var(--planet); --dx: 0.68px; --dy: 0.99px; }
+.sunwork .half { animation: sun-crack 3.2s cubic-bezier(.65, 0, .35, 1) infinite; }
+@keyframes sun-flip {
+  0% { transform: perspective(48px) rotate3d(.825, -.564, 0, 0deg); }
+  22%, 50% { transform: perspective(48px) rotate3d(.825, -.564, 0, 180deg); }
+  72%, 100% { transform: perspective(48px) rotate3d(.825, -.564, 0, 360deg); }
+}
+@keyframes sun-crack { 0%, 22%, 50%, 72%, 100% { transform: translate(0, 0); } 11%, 61% { transform: translate(var(--dx), var(--dy)); } }
 @media (prefers-reduced-motion: reduce) {
+  .sunwork { animation: none; }
   .sunwork .half { animation: sun-fade 2.4s ease-in-out infinite; }
   @keyframes sun-fade { 50% { opacity: .5; } }
 }
