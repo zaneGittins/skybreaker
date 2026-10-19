@@ -1,0 +1,12 @@
+# /etc/systemd/system/skybreaker-sandbox-update.timer
+#   systemctl enable --now skybreaker-sandbox-update.timer
+[Unit]
+Description=Weekly Skybreaker sandbox image rebuild
+
+[Timer]
+OnCalendar=Sun 04:00
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

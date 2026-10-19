@@ -1,0 +1,16 @@
+# /etc/systemd/system/skybreaker-sandbox-update.service
+# Rebuilds the sandbox image with current harness CLIs; see
+# /usr/local/bin/skybreaker-sandbox-update. The build context is installed at
+# /opt/skybreaker/image (a copy of images/sandbox).
+[Unit]
+Description=Rebuild the Skybreaker sandbox image with current harness CLIs
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/skybreaker-sandbox-update /opt/skybreaker/image
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h

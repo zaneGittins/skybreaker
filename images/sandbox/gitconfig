@@ -1,0 +1,12 @@
+# System git config for sandboxes. Real credentials are added by the broker;
+# nothing here may run a program.
+[credential]
+	helper =
+[http]
+	proxyAuthMethod = basic
+[core]
+	fsmonitor = false
+[safe]
+	directory = *
+[init]
+	defaultBranch = main

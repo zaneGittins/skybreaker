@@ -1,0 +1,689 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"maps"
+	"net/http"
+	"net/netip"
+	"os/exec"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/zaneGittins/skybreaker/internal/control/chat"
+	"github.com/zaneGittins/skybreaker/internal/control/mcp"
+	"github.com/zaneGittins/skybreaker/internal/control/store"
+	"github.com/zaneGittins/skybreaker/internal/control/tmux"
+	"github.com/zaneGittins/skybreaker/internal/notify"
+)
+
+// Spawn starts a command on the host with pipes, for a chat harness's
+// `docker exec -i`.
+type Spawn func(ctx context.Context, argv []string) (*chat.Proc, error)
+
+// SpawnExec is the real Spawn. The process outlives the request that
+// started it, so it isn't tied to ctx.
+func SpawnExec(_ context.Context, argv []string) (*chat.Proc, error) {
+	cmd := exec.Command(argv[0], argv[1:]...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	tail := &tailBuffer{max: 8 << 10}
+	cmd.Stderr = tail
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return &chat.Proc{
+		Stdin: stdin, Stdout: stdout, Wait: cmd.Wait,
+		Kill:   func() { cmd.Process.Kill() },
+		Stderr: tail.String,
+	}, nil
+}
+
+// tailBuffer keeps the last max bytes written to it.
+type tailBuffer struct {
+	mu  sync.Mutex
+	max int
+	b   []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.b = append(t.b, p...)
+	if len(t.b) > t.max {
+		t.b = append([]byte(nil), t.b[len(t.b)-t.max:]...)
+	}
+	return len(p), nil
+}
+
+func (t *tailBuffer) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return string(t.b)
+}
+
+// pidWrapper records the harness's PID inside the sandbox before it
+// becomes the harness, so it can be killed there: killing the host's
+// docker exec client leaves the process in the container running.
+const pidWrapper = `mkdir -p /tmp/skybreaker-chat && echo $$ > "/tmp/skybreaker-chat/$0.pid" && exec "$@"`
+
+func (a *App) newChatManager(dir string) (*chat.Manager, error) {
+	l, err := chat.OpenLog(dir)
+	if err != nil {
+		return nil, err
+	}
+	return chat.NewManager(chat.Config{
+		Log: l, Sessions: a.store, Start: a.startChat, Options: a.chatOptions,
+		Driver: func(s store.Session) chat.Driver {
+			m, ok := a.cfg.Harnesses.Get(s.Harness)
+			if !ok || m.Chat == "" {
+				return nil
+			}
+			return chat.New(m.Chat)
+		},
+		OnChange: a.chatChanged,
+	}), nil
+}
+
+func (a *App) chatOptions(s store.Session) chat.Options {
+	return chat.Options{Cwd: "/workspace", MCP: a.MCPURL(s.Project, s.ID)}
+}
+
+// startChat runs a chat's harness in its sandbox, starting the sandbox
+// first if need be. A terminal the chat was continued in is closed: one
+// conversation can't have two harnesses writing to it.
+func (a *App) startChat(ctx context.Context, s store.Session, argv []string, env map[string]string) (*chat.Proc, error) {
+	if err := a.StartSandbox(ctx, s.Project); err != nil {
+		return nil, err
+	}
+	if err := a.waitReady(ctx, s.Project); err != nil {
+		return nil, err
+	}
+	if s.Terminal != "" {
+		a.closeChatTerminal(ctx, s)
+		a.chat.Note(s.ID, "Back in the chat. The agent remembers what happened in the terminal, but it isn't shown here.")
+	}
+	full := a.sandbox.ExecPipeArgv(s.Project, "/workspace", env, append([]string{"sh", "-c", pidWrapper, s.ID}, argv...)...)
+	p, err := a.spawn(ctx, full)
+	if err != nil {
+		return nil, err
+	}
+	kill := p.Kill
+	project, id := s.Project, s.ID
+	p.Kill = func() {
+		kctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		a.sandbox.Exec(kctx, project, "sh", "-c", `kill -TERM "$(cat "/tmp/skybreaker-chat/$0.pid")" 2>/dev/null; true`, id)
+		if kill != nil {
+			kill()
+		}
+	}
+	return p, nil
+}
+
+// NewChat starts a chat session: the harness runs in its structured mode
+// and the UI draws the conversation. The sandbox and harness start on the
+// first message, or in the background now, so that message is quick.
+func (a *App) NewChat(ctx context.Context, project, harnessName string) (store.Session, error) {
+	p, err := a.project(project)
+	if err != nil {
+		return store.Session{}, err
+	}
+	if !slices.Contains(p.Harnesses, harnessName) {
+		return store.Session{}, fmt.Errorf("harness %q is not enabled for %s", harnessName, project)
+	}
+	m, ok := a.cfg.Harnesses.Get(harnessName)
+	if !ok {
+		return store.Session{}, fmt.Errorf("harness %q: %w", harnessName, ErrNotFound)
+	}
+	if m.Chat == "" {
+		return store.Session{}, fmt.Errorf("harness %s runs only in a terminal", harnessName)
+	}
+	now := time.Now().UTC()
+	s := store.Session{ID: newSessionID(), Project: project, Harness: harnessName, Created: now, Status: store.StatusRunning,
+		Mode: store.ModeChat, State: store.ChatIdle, PermMode: chat.ModeAsk, Updated: now, Seen: now}
+	if err := a.store.CreateSession(s); err != nil {
+		return store.Session{}, err
+	}
+	a.Publish(Event{Type: "session", Project: project, Session: s.ID, Data: "started"})
+	a.bg.Go(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), startTimeout)
+		defer cancel()
+		if err := a.StartSandbox(ctx, project); err != nil {
+			log.Printf("skybreaker: warm sandbox %s: %v", project, err)
+		}
+	})
+	return s, nil
+}
+
+// chatSession returns a chat session, or an error for anything else.
+func (a *App) chatSession(id string) (store.Session, error) {
+	s, err := a.session(id)
+	if err != nil {
+		return s, err
+	}
+	if s.Mode != store.ModeChat {
+		return s, fmt.Errorf("session %s is a terminal", id)
+	}
+	return s, nil
+}
+
+func (a *App) ChatSend(ctx context.Context, id, text string) error {
+	if _, err := a.chatSession(id); err != nil {
+		return err
+	}
+	a.store.UpdateSession(id, func(x *store.Session) { x.Seen = time.Now().UTC() })
+	return a.chat.Send(ctx, id, text)
+}
+
+func (a *App) ChatAnswer(ctx context.Context, id, ask string, ans chat.Answer) error {
+	if _, err := a.chatSession(id); err != nil {
+		return err
+	}
+	return a.chat.Answer(ctx, id, ask, ans)
+}
+
+func (a *App) ChatInterrupt(ctx context.Context, id string) error {
+	if _, err := a.chatSession(id); err != nil {
+		return err
+	}
+	return a.chat.Interrupt(id)
+}
+
+func (a *App) ChatMode(ctx context.Context, id, mode string) error {
+	if _, err := a.chatSession(id); err != nil {
+		return err
+	}
+	return a.chat.SetMode(ctx, id, mode)
+}
+
+// ChatModel switches a chat to one of the models its harness lists.
+func (a *App) ChatModel(ctx context.Context, id, model string) error {
+	if _, err := a.chatSession(id); err != nil {
+		return err
+	}
+	return a.chat.SetModel(ctx, id, model)
+}
+
+// ChatLogin starts the harness's sign-in. Harnesses that sign in only in
+// their terminal UI return chat.ErrTerminalLogin; the UI opens the
+// terminal instead.
+func (a *App) ChatLogin(ctx context.Context, id string) error {
+	if _, err := a.chatSession(id); err != nil {
+		return err
+	}
+	return a.chat.Login(ctx, id)
+}
+
+func (a *App) ChatEvents(id string, after int64) ([]chat.Event, error) {
+	if _, err := a.chatSession(id); err != nil {
+		return nil, err
+	}
+	return a.chat.Events(id, after)
+}
+
+func (a *App) ChatSubscribe(id string) (<-chan chat.Event, func()) { return a.chat.Subscribe(id) }
+
+// MarkSeen records that the user has looked at a session, which takes a
+// finished one out of the inbox's "for you" list.
+func (a *App) MarkSeen(id string) error {
+	if _, err := a.session(id); err != nil {
+		return err
+	}
+	return a.store.UpdateSession(id, func(x *store.Session) { x.Seen = time.Now().UTC() })
+}
+
+// ChatModes lists the permission modes a harness's chat has.
+func (a *App) ChatModes(harnessName string) []string {
+	m, ok := a.cfg.Harnesses.Get(harnessName)
+	if !ok || m.Chat == "" {
+		return nil
+	}
+	return chat.New(m.Chat).Modes()
+}
+
+var ErrBusy = errors.New("the agent is working; stop it first")
+
+// ChatTerminal continues a chat in its harness's terminal UI, resumed on
+// the same conversation, for sign-ins and anything the chat can't do. The
+// chat's process stops first; the next message closes the terminal and
+// resumes the chat.
+func (a *App) ChatTerminal(ctx context.Context, id string) (store.Session, error) {
+	s, err := a.chatSession(id)
+	if err != nil {
+		return store.Session{}, err
+	}
+	if s.Status != store.StatusRunning {
+		return store.Session{}, errors.New("this session has ended")
+	}
+	if s.State == store.ChatWorking || s.State == store.ChatWaiting {
+		return store.Session{}, ErrBusy
+	}
+	if s.Terminal != "" {
+		if t, ok := a.store.Session(s.Terminal); ok && t.Status == store.StatusRunning {
+			if _, err := a.sandbox.Exec(ctx, s.Project, tmux.Has(t.ID)...); err == nil {
+				return t, nil
+			}
+		}
+	}
+	m, ok := a.cfg.Harnesses.Get(s.Harness)
+	if !ok {
+		return store.Session{}, fmt.Errorf("harness %q: %w", s.Harness, ErrNotFound)
+	}
+	a.chat.Stop(id)
+	if err := a.StartSandbox(ctx, s.Project); err != nil {
+		return store.Session{}, err
+	}
+	if err := a.EnsureTmux(ctx, s.Project); err != nil {
+		return store.Session{}, err
+	}
+	t := store.Session{ID: newSessionID(), Project: s.Project, Harness: s.Harness, Title: s.Title, Created: time.Now().UTC(), Status: store.StatusRunning, Parent: s.ID}
+	env := map[string]string{"SKYBREAKER_SESSION": t.ID}
+	for k, v := range m.Env {
+		env[k] = v
+	}
+	if _, err := a.sandbox.Exec(ctx, s.Project, tmux.NewSession(t.ID, "/workspace", env, m.ResumeArgs(s.Resume, MCPPath))...); err != nil {
+		return store.Session{}, fmt.Errorf("start %s terminal: %w", s.Harness, err)
+	}
+	if err := a.store.CreateSession(t); err != nil {
+		return store.Session{}, err
+	}
+	a.store.UpdateSession(id, func(x *store.Session) { x.Terminal = t.ID })
+	a.chat.Note(id, "Continued in the terminal.")
+	return t, nil
+}
+
+// closeChatTerminal ends the terminal a chat was continued in.
+func (a *App) closeChatTerminal(ctx context.Context, s store.Session) {
+	if s.Terminal == "" {
+		return
+	}
+	if tmux.ValidName(s.Terminal) {
+		a.sandbox.Exec(ctx, s.Project, tmux.Kill(s.Terminal)...)
+	}
+	now := time.Now().UTC()
+	a.store.UpdateSession(s.Terminal, func(x *store.Session) {
+		if x.Status == store.StatusRunning {
+			x.Status, x.Ended = store.StatusKilled, &now
+		}
+	})
+	a.store.UpdateSession(s.ID, func(x *store.Session) { x.Terminal = "" })
+}
+
+// killChat ends a chat: its process stops and its terminal closes. The
+// conversation stays readable.
+func (a *App) killChat(ctx context.Context, s store.Session) {
+	a.chat.Stop(s.ID)
+	a.closeChatTerminal(ctx, s)
+	now := time.Now().UTC()
+	a.store.UpdateSession(s.ID, func(x *store.Session) {
+		if x.Status == store.StatusRunning {
+			x.Status, x.Ended = store.StatusKilled, &now
+		}
+		if x.State == store.ChatWorking || x.State == store.ChatWaiting {
+			x.State = store.ChatIdle
+		}
+	})
+}
+
+// chatChanged tells the UI a chat's state moved, and buzzes the phone when
+// it now needs the user, or finished. The push names the harness and
+// project, never what the agent said.
+func (a *App) chatChanged(before, after store.Session) {
+	a.Publish(Event{Type: "session", Project: after.Project, Session: after.ID, Data: after.State})
+	var m notify.Message
+	who := "A " + after.Harness + " session in " + after.Project
+	bucket := after.ID + "-" + strconv.FormatInt(time.Now().Unix()/60, 10)
+	switch {
+	case after.State == store.ChatWaiting:
+		m = notify.Message{ID: "chat-wait-" + bucket, Title: "Approval waiting", Body: who + " is waiting for you.", Priority: 4}
+	case after.State == store.ChatLogin:
+		m = notify.Message{ID: "chat-login-" + bucket, Title: "Sign-in needed", Body: who + " needs signing in.", Priority: 4}
+	case after.State == store.ChatFailed:
+		m = notify.Message{ID: "chat-fail-" + bucket, Title: "Agent stopped", Body: who + " hit a problem."}
+	case after.State == store.ChatIdle && before.State == store.ChatWorking:
+		m = notify.Message{ID: "chat-done-" + bucket, Title: "Agent finished", Body: who + " is done.", Priority: 2}
+	default:
+		return
+	}
+	m.Click = a.uiURL + "/s/" + after.ID
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := a.notify.Notify(ctx, m); err != nil {
+			log.Printf("skybreaker: notify: %v", err)
+		}
+	}()
+}
+
+// ReapChats stops chat harnesses that have sat idle; their conversations
+// resume on the next message.
+func (a *App) ReapChats() { a.chat.Reap(time.Now()) }
+
+// RecoverChats settles chats that were mid-turn when skybreaker last stopped.
+func (a *App) RecoverChats() { a.chat.Recover(a.store.ListSessions("")) }
+
+// CloseChats stops every chat harness, and waits for background starts,
+// for shutdown.
+func (a *App) CloseChats() {
+	a.chat.Close()
+	a.bg.Wait()
+}
+
+// IsChat reports whether session is a chat in project: the hook handler
+// lets those sessions' permission prompts through to the chat.
+func (a *App) IsChat(project, session string) bool {
+	s, ok := a.store.Session(session)
+	return ok && s.Project == project && s.Mode == store.ModeChat
+}
+
+// chatSessionsOf lists a project's chat sessions.
+func (a *App) chatSessionsOf(project string) []store.Session {
+	var out []store.Session
+	for _, s := range a.store.ListSessions(project) {
+		if s.Mode == store.ModeChat {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// stopChats stops a project's chat harnesses, before its sandbox goes.
+func (a *App) stopChats(project string) {
+	var wg sync.WaitGroup
+	for _, s := range a.chatSessionsOf(project) {
+		wg.Go(func() { a.chat.Stop(s.ID) })
+	}
+	wg.Wait()
+}
+
+// --- review ---------------------------------------------------------------
+
+// Review is what a project's workspace has changed against the branch it
+// started from: commits not yet on the base, and the diff, uncommitted work
+// and new files included.
+type Review struct {
+	Branch  string       `json:"branch"`
+	Base    string       `json:"base,omitempty"`
+	Commits []Commit     `json:"commits"`
+	Files   []FileChange `json:"files"`
+	Diff    string       `json:"diff"`
+	Clean   bool         `json:"clean"`
+}
+
+type Commit struct {
+	SHA     string `json:"sha"`
+	Subject string `json:"subject"`
+	When    string `json:"when"`
+}
+
+type FileChange struct {
+	Path    string `json:"path"`
+	Added   int    `json:"added"`
+	Removed int    `json:"removed"`
+	New     bool   `json:"new,omitempty"`
+}
+
+const maxReviewDiff = 2 << 20
+
+// Review runs git in the sandbox, never on the host.
+func (a *App) Review(ctx context.Context, project string) (Review, error) {
+	if _, err := a.project(project); err != nil {
+		return Review{}, err
+	}
+	git := func(args ...string) (string, error) {
+		out, err := a.sandbox.Exec(ctx, project, GitArgs("/workspace", args...)...)
+		return string(out), err
+	}
+	branch, err := git("rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return Review{}, fmt.Errorf("the workspace isn't a git repository yet: %w", err)
+	}
+	r := Review{Branch: strings.TrimSpace(branch), Commits: []Commit{}, Files: []FileChange{}}
+	// The base: where this branch left the remote's default branch.
+	base := ""
+	for _, ref := range []string{"@{upstream}", "origin/HEAD", "origin/main", "origin/master"} {
+		if r.Branch != "HEAD" && ref == "@{upstream}" {
+			if up, err := git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); err == nil && strings.TrimSpace(up) != "origin/"+r.Branch {
+				continue // a feature branch tracking itself: compare with the default branch
+			}
+		}
+		if mb, err := git("merge-base", ref, "HEAD"); err == nil && strings.TrimSpace(mb) != "" {
+			base = strings.TrimSpace(mb)
+			if ref != "@{upstream}" {
+				r.Base = ref
+			} else {
+				r.Base = "upstream"
+			}
+			break
+		}
+	}
+	diffFrom := "HEAD"
+	if base != "" {
+		diffFrom = base
+		if log, err := git("log", "--format=%h%x1f%s%x1f%cI", "--max-count=50", base+"..HEAD"); err == nil {
+			for line := range strings.SplitSeq(strings.TrimSpace(log), "\n") {
+				if f := strings.Split(line, "\x1f"); len(f) == 3 {
+					r.Commits = append(r.Commits, Commit{SHA: f[0], Subject: f[1], When: f[2]})
+				}
+			}
+		}
+	}
+	diffArgs := []string{"diff", "--no-ext-diff", "--no-textconv", "--no-color", "--find-renames"}
+	if numstat, err := git(append(diffArgs, "--numstat", diffFrom)...); err == nil {
+		for line := range strings.SplitSeq(strings.TrimSpace(numstat), "\n") {
+			f := strings.SplitN(line, "\t", 3)
+			if len(f) != 3 {
+				continue
+			}
+			add, _ := strconv.Atoi(f[0])
+			del, _ := strconv.Atoi(f[1])
+			r.Files = append(r.Files, FileChange{Path: f[2], Added: add, Removed: del})
+		}
+	}
+	diff, _ := git(append(diffArgs, diffFrom)...)
+	var b strings.Builder
+	b.WriteString(diff)
+	// New files aren't in git diff until added; show each as a whole-file
+	// addition, without touching the agent's index.
+	if untracked, err := git("ls-files", "--others", "--exclude-standard", "-z"); err == nil {
+		files := strings.Split(strings.TrimRight(untracked, "\x00"), "\x00")
+		for i, f := range files {
+			if f == "" {
+				continue
+			}
+			if i >= 50 {
+				fmt.Fprintf(&b, "\n… and %d more new files\n", len(files)-i)
+				break
+			}
+			// --no-index exits 1 when the files differ, which they do.
+			d, _ := git("diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-index", "--", "/dev/null", f)
+			added, _ := countLines(d)
+			r.Files = append(r.Files, FileChange{Path: f, Added: added, New: true})
+			b.WriteString(d)
+			if b.Len() > maxReviewDiff {
+				break
+			}
+		}
+	}
+	r.Diff = b.String()
+	if len(r.Diff) > maxReviewDiff {
+		r.Diff = r.Diff[:maxReviewDiff] + "\n… diff truncated\n"
+	}
+	r.Clean = len(r.Files) == 0 && len(r.Commits) == 0
+	return r, nil
+}
+
+func countLines(diff string) (added, removed int) {
+	for line := range strings.SplitSeq(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"):
+		case strings.HasPrefix(line, "+"):
+			added++
+		case strings.HasPrefix(line, "-"):
+			removed++
+		}
+	}
+	return
+}
+
+// idleFor is how long a sandbox's chats must have been quiet before it is
+// restarted onto a new image.
+const idleFor = 15 * time.Minute
+
+// RefreshSandboxes restarts running sandboxes whose image the weekly
+// rebuild has replaced, once nothing in them is in use: no live terminal,
+// no scheduled run, no chat working or touched lately. Chats resume in the
+// new sandbox on their next message.
+func (a *App) RefreshSandboxes(ctx context.Context) {
+	for _, project := range slices.Sorted(maps.Keys(a.cfg.Projects)) {
+		stale, err := a.sandbox.ImageStale(ctx, project, a.cfg.Sandbox.Image)
+		if err != nil || !stale {
+			continue
+		}
+		if st, err := a.sandbox.Status(ctx, project); err != nil || !st.Running || a.busy(ctx, project) {
+			continue
+		}
+		log.Printf("skybreaker: restarting %s onto the new sandbox image", project)
+		if err := a.StopSandbox(ctx, project); err != nil {
+			log.Printf("skybreaker: refresh %s: %v", project, err)
+			continue
+		}
+		if err := a.StartSandbox(ctx, project); err != nil {
+			log.Printf("skybreaker: refresh %s: %v", project, err)
+			continue
+		}
+		a.Publish(Event{Type: "sandbox", Project: project, Data: "restarted onto the new sandbox image"})
+	}
+}
+
+// SweepContainers stops what agents left running in a project's inner
+// Docker once nothing in the project has been in use for idleFor: no live
+// terminal, no scheduled run, no chat working or touched lately. Each quiet
+// spell is swept once.
+func (a *App) SweepContainers(ctx context.Context) {
+	for _, project := range slices.Sorted(maps.Keys(a.cfg.Projects)) {
+		if st, err := a.sandbox.Status(ctx, project); err != nil || !st.Running {
+			continue
+		}
+		a.sweptMu.Lock()
+		done := a.swept[project]
+		a.sweptMu.Unlock()
+		if a.busy(ctx, project) {
+			a.markSwept(project, false)
+			continue
+		}
+		if !done {
+			a.stopContainers(ctx, project)
+			a.markSwept(project, true)
+		}
+	}
+}
+
+func (a *App) markSwept(project string, v bool) {
+	a.sweptMu.Lock()
+	defer a.sweptMu.Unlock()
+	if a.swept == nil {
+		a.swept = map[string]bool{}
+	}
+	a.swept[project] = v
+}
+
+// sessionEnded stops a project's containers when the session that just
+// ended was its last live one, and no scheduled run is going.
+func (a *App) sessionEnded(project string) {
+	for _, x := range a.store.ListSessions(project) {
+		if x.Status == store.StatusRunning {
+			return
+		}
+	}
+	for _, r := range a.store.ListRuns(project, 50) {
+		if r.Status == store.RunRunning {
+			return
+		}
+	}
+	a.bg.Go(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		a.stopContainers(ctx, project)
+	})
+}
+
+// stopContainers stops every container running in a project's inner
+// Docker. Stopped, not removed, so an agent or you can still look at them.
+func (a *App) stopContainers(ctx context.Context, project string) {
+	out, err := a.sandbox.Exec(ctx, project, "docker", "ps", "-q")
+	if err != nil {
+		return
+	}
+	ids := strings.Fields(string(out))
+	if len(ids) == 0 {
+		return
+	}
+	if _, err := a.sandbox.Exec(ctx, project, append([]string{"docker", "stop", "-t", "10"}, ids...)...); err != nil {
+		log.Printf("skybreaker: stop containers in %s: %v", project, err)
+		return
+	}
+	log.Printf("skybreaker: stopped %d containers in %s, which nothing was using", len(ids), project)
+}
+
+// busy reports whether anything in a project's sandbox is in use.
+func (a *App) busy(ctx context.Context, project string) bool {
+	for _, r := range a.store.ListRuns(project, 50) {
+		if r.Status == store.RunRunning {
+			return true
+		}
+	}
+	sessions, err := a.Sessions(ctx, project)
+	if err != nil {
+		return true
+	}
+	for _, s := range sessions {
+		if s.Status != store.StatusRunning {
+			continue
+		}
+		if s.Mode != store.ModeChat {
+			return true // a live terminal would lose its process
+		}
+		if s.State == store.ChatWorking || s.State == store.ChatWaiting || time.Since(s.Updated) < idleFor || a.chat.Running(s.ID) && time.Since(s.Seen) < idleFor {
+			return true
+		}
+	}
+	return false
+}
+
+// MCPCaller places a request to the sandboxes' MCP mount,
+// /mcp/<project>/<hook token>/<session or ->: it must come from that
+// project's own sandbox network and carry its hook token, and a session it
+// names must be one of that project's.
+func (a *App) MCPCaller(r *http.Request) (mcp.Caller, error) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/mcp/"), "/")
+	if len(parts) != 3 {
+		return mcp.Caller{}, ErrNotFound
+	}
+	project, token, session := parts[0], parts[1], parts[2]
+	ap, err := netip.ParseAddrPort(r.RemoteAddr)
+	if err != nil {
+		return mcp.Caller{}, err
+	}
+	if from, ok := a.cfg.ProjectOf(ap.Addr()); !ok || from != project || !a.CheckHookToken(project, token) {
+		return mcp.Caller{}, errors.New("mcp: not this project's sandbox")
+	}
+	if session != "-" {
+		if s, ok := a.store.Session(session); !ok || s.Project != project {
+			return mcp.Caller{}, errors.New("mcp: not this project's session")
+		}
+	}
+	return mcp.Caller{Project: project, Session: session}, nil
+}

@@ -1,0 +1,33 @@
+#!/bin/sh
+# Rebuilds the sandbox image with the newest harness CLIs and OS packages,
+# and promotes it only if the CLIs still speak what Skybreaker's chat drivers
+# expect. Skybreaker restarts idle sandboxes onto the new image by itself.
+#
+#   skybreaker-sandbox-update [CONTEXT_DIR] [IMAGE]
+#
+# Run weekly by skybreaker-sandbox-update.timer. A failed check leaves the
+# current image in place and exits non-zero, so the failure shows in
+# `systemctl status skybreaker-sandbox-update`.
+set -eu
+ctx=${1:-/opt/skybreaker/image}
+image=${2:-$(sed -n 's/^[[:space:]]*image:[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}[[:space:]]*$/\1/p' /etc/skybreaker/skybreaker.yaml | head -n1)}
+[ -n "$image" ] || { echo "no sandbox image configured" >&2; exit 2; }
+candidate="${image%%:*}:candidate"
+
+echo "building $candidate from $ctx"
+docker build --pull --no-cache -t "$candidate" "$ctx"
+
+echo "checking the harness protocols"
+docker run --rm --network none --entrypoint skybreaker-check-protocols "$candidate"
+
+old=$(docker image inspect -f '{{.Id}}' "$image" 2>/dev/null || true)
+docker tag "$candidate" "$image"
+docker rmi "$candidate" >/dev/null
+new=$(docker image inspect -f '{{.Id}}' "$image")
+if [ "$old" = "$new" ]; then
+  echo "$image is unchanged"
+else
+  echo "promoted $image ($new)"
+  # Keep the previous image's layers from piling up.
+  docker image prune -f >/dev/null || true
+fi

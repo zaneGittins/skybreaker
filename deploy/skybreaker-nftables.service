@@ -1,0 +1,16 @@
+# /etc/systemd/system/skybreaker-nftables.service
+# Sandboxes may reach the broker and hook ports on the host and nothing else,
+# and those ports answer sandboxes only. Restart it after adding a project.
+[Unit]
+Description=Pin Skybreaker sandboxes to the broker
+After=docker.service
+Before=skybreaker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '/usr/local/bin/skybreaker nftables -config /etc/skybreaker/skybreaker.yaml | /usr/sbin/nft -f -'
+ExecStop=/usr/sbin/nft delete table inet skybreaker
+
+[Install]
+WantedBy=multi-user.target

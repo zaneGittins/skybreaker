@@ -1,0 +1,13 @@
+{
+  "iptables": false,
+  "ip6tables": false,
+  "features": {
+    "containerd-snapshotter": false
+  },
+  "runtimes": {
+    "skybreaker": {
+      "path": "/usr/local/sbin/runc"
+    }
+  },
+  "default-runtime": "skybreaker"
+}

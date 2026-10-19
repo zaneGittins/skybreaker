@@ -1,0 +1,74 @@
+name: Release
+
+# Builds skybreaker and skybreaker-setup for each published release and
+# attaches them, with checksums.txt (which skybreaker-setup verifies every
+# download against) and install.sh. The sandbox image is tagged with the
+# release by sandbox-image.yml.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+          VERSION: ${{ github.ref_name }}
+        run: |
+          go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" \
+            -o "dist/skybreaker-linux-${GOARCH}" ./cmd/skybreaker
+          cd setup && go build -trimpath -ldflags "-s -w -X github.com/zaneGittins/skybreaker/setup.Version=${VERSION}" \
+            -o "../dist/skybreaker-setup-linux-${GOARCH}" ./cmd/skybreaker-setup
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-${{ matrix.goarch }}
+          path: dist/*
+
+  release:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/install.sh
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          cp scripts/install.sh dist/
+          cd dist
+          sha256sum skybreaker-* > checksums.txt
+          cat checksums.txt
+          gh release upload "${TAG}" skybreaker-* checksums.txt install.sh --repo "${REPO}" --clobber

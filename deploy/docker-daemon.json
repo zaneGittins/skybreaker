@@ -1,0 +1,8 @@
+{
+  "runtimes": {
+    "runsc": {
+      "path": "/usr/bin/runsc",
+      "runtimeArgs": ["--net-raw", "--allow-packet-socket-write"]
+    }
+  }
+}

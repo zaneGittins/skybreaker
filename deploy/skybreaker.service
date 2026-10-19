@@ -1,0 +1,35 @@
+# /etc/systemd/system/skybreaker.service
+#   useradd --system --home /var/lib/skybreaker --shell /usr/sbin/nologin --groups docker skybreaker
+# The docker group is root-equivalent, so this service is as trusted as root.
+# Sandboxes never see the docker socket; gVisor stands between them and the
+# host, and Skybreaker refuses to start without it.
+[Unit]
+Description=Skybreaker
+After=network-online.target docker.service skybreaker-nftables.service
+Wants=network-online.target
+Requires=docker.service skybreaker-nftables.service
+
+[Service]
+User=skybreaker
+Group=skybreaker
+SupplementaryGroups=docker
+ExecStart=/usr/local/bin/skybreaker serve -config /etc/skybreaker/skybreaker.yaml
+EnvironmentFile=-/etc/skybreaker/env
+StateDirectory=skybreaker
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=3
+
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+LockPersonality=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

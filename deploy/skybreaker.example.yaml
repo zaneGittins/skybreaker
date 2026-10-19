@@ -1,0 +1,155 @@
+# Skybreaker's config: /etc/skybreaker/skybreaker.yaml, mode 0600.
+# Secrets live in secrets.yaml next to it; this file names them, never holds them.
+
+data_dir: /var/lib/skybreaker           # workspaces, homes, the broker's CA, tokens and audit log
+users: [you@example.com]                # tailnet logins allowed to use Skybreaker and approve requests
+ui_url: https://skybreaker.example.ts.net
+tailscale:
+  hostname: skybreaker                  # join once with TS_AUTHKEY in /etc/skybreaker/env
+secrets_file: /etc/skybreaker/secrets.yaml
+
+sandbox:
+  image: ghcr.io/zanegittins/skybreaker-sandbox:latest
+  memory: 8g
+  cpus: "4"
+  # subnet_base: 10.89.0.0/16           # one /24 per project
+  # hook_port: 7701
+
+broker:
+  # port: 8080                          # sandboxes reach it as broker:8080 on their own network
+  # hold: 30s                           # an ask request waits this long for you before failing with an approval ID
+  netguard:
+    block: [192.168.0.0/16]             # your LAN, on top of the built-in private ranges
+
+# ntfy:                                 # optional; web push to your phone works without it
+#   url: https://ntfy.sh/your-random-topic
+
+projects:
+  myapp:
+    repo: you/myapp
+    branch: main
+    harnesses: [claude, codex]
+    key: APP                            # the board's ref prefix (APP-12); derived from the name if unset
+    env:
+      GIT_AUTHOR_NAME: you
+      GIT_AUTHOR_EMAIL: you@example.com
+      GIT_COMMITTER_NAME: you
+      GIT_COMMITTER_EMAIL: you@example.com
+    # What this sandbox may reach. Nothing else gets out.
+    allow:
+      - { host: registry.npmjs.org, mode: tunnel }
+      - { host: proxy.golang.org, mode: tunnel }
+      - { host: sum.golang.org, mode: tunnel }
+      # proxy.golang.org redirects module zips here; only its own bucket.
+      - host: storage.googleapis.com
+        mode: mitm
+        rules:
+          - { match: "GET /proxy-golang-org-prod/**", action: auto }
+      - { host: registry-1.docker.io, mode: tunnel }
+      - { host: auth.docker.io, mode: tunnel }
+      - { host: production.cloudflare.docker.com, mode: tunnel }
+      - { host: pypi.org, mode: tunnel }
+      - { host: files.pythonhosted.org, mode: tunnel }
+    capabilities: [github, claude-login, codex-login]
+
+# Capabilities are named bundles of hosts and routes that projects opt into.
+# {repo} is the project's own repo.
+capabilities:
+  github:
+    - host: github.com
+      mode: mitm
+      inject: { basic_auth: { user: x-access-token, secret: github_app } }
+      rules:
+        # git smart HTTP. Remotes must end in .git.
+        - { match: "GET /{repo}.git/info/refs", action: auto }
+        - { match: "POST /{repo}.git/git-upload-pack", action: auto }
+        - { match: "POST /{repo}.git/git-receive-pack", action: auto, refs: ["refs/heads/feature/*", "refs/heads/fix/*", "refs/heads/docs/*", "refs/heads/chore/*"] }
+    - host: api.github.com
+      mode: mitm
+      inject: { bearer: github_app }
+      rules:
+        - { match: "PUT /repos/{repo}/pulls/*/merge", action: ask }
+        - { match: "DELETE /**", action: deny }
+        - { match: "GET /repos/{repo}/**", action: auto }
+        - { match: "POST /repos/{repo}/pulls", action: auto }
+        - { match: "POST /repos/{repo}/issues/*/comments", action: auto }
+        - { match: "PATCH /repos/{repo}/pulls/*", action: auto }
+        # gh pr create uses GraphQL; the App's permissions bound it.
+        - { match: "POST /graphql", action: auto }
+        - { match: "GET /user", action: auto }
+
+  # Claude and ChatGPT subscriptions: the harnesses sign in themselves and
+  # keep their tokens in the sandbox's home.
+  claude-login:
+    - { host: claude.ai, mode: tunnel }
+    - { host: platform.claude.com, mode: tunnel }
+    - { host: console.anthropic.com, mode: tunnel }
+    - { host: api.anthropic.com, mode: tunnel }
+    - { host: statsig.anthropic.com, mode: tunnel }
+    - host: raw.githubusercontent.com
+      mode: mitm
+      rules:
+        - { match: "GET /anthropics/claude-code/**", action: auto }
+  codex-login:
+    - { host: auth.openai.com, mode: tunnel }
+    - { host: chatgpt.com, mode: tunnel }
+    - { host: api.openai.com, mode: tunnel }
+
+  # An API key instead of a subscription: the key never enters the sandbox
+  # (set env ANTHROPIC_API_KEY: skybreaker-injected on the project), and a
+  # request carrying any other key is refused.
+  llm-anthropic:
+    - host: api.anthropic.com
+      mode: mitm
+      inject: { header: { name: x-api-key, secret: anthropic } }
+      rules:
+        - { match: "POST /v1/messages", action: auto }
+        - { match: "POST /v1/messages/count_tokens", action: auto }
+        - { match: "GET /v1/models", action: auto }
+
+  digitalocean:
+    - host: api.digitalocean.com
+      mode: mitm
+      inject: { bearer: do_token }
+      rules:
+        - { match: "GET /**", action: auto }
+        - { match: "DELETE /**", action: deny }
+        - { match: "* /**", action: ask }
+
+  k8s-prod:
+    - route: /k8s/prod                  # kubeconfig server: http://broker:8080/k8s/prod
+      upstream: https://abc123.k8s.ondigitalocean.com
+      ca_file: /etc/skybreaker/k8s-prod-ca.crt   # the cluster's own CA
+      inject: { bearer: k8s_prod }
+      k8s:
+        auto: [get, list, watch]
+        ask: [create, update, patch, delete]
+        deny: [secrets, pods/exec, pods/attach, pods/portforward, "ns:kube-system"]
+
+  # A service on your tailnet, reached through Skybreaker's own tailnet node.
+  # Tailnet addresses are blocked unless a route allows them.
+  grafana:
+    - route: /grafana                   # agents use http://broker:8080/grafana
+      upstream: https://grafana.example.ts.net
+      allow_private: [100.101.102.103]
+      rules:
+        - { match: "GET /api/**", action: auto }
+
+# Harnesses are built in: claude, codex, pi, qwen, opencode, and shell (a plain
+# terminal every project gets). Override one here if you need to:
+# harnesses:
+#   claude:
+#     tui: [claude]
+#     headless: [claude, -p, "{prompt}", --output-format, stream-json, --verbose, --max-budget-usd, "{budget}"]
+#     approval: claude-hooks
+#     result: claude-stream-json
+
+jobs:
+  - name: nightly-myapp
+    project: myapp
+    harness: claude
+    schedule: "0 2 * * *"
+    kind: board                         # take the next Todo item off the board, branch, open a PR
+    budget_usd: 5
+    allowed_tools: [Bash, Read, Edit, Write, Glob, Grep, "mcp__skybreaker__*"]
+    timeout: 1h

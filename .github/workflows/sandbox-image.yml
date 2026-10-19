@@ -1,0 +1,74 @@
+name: Sandbox image
+
+# Builds the sandbox image with the newest harness CLIs, checks they still
+# speak what the chat drivers use, and publishes it. Weekly, like a host's own
+# skybreaker-sandbox-update, so a protocol change shows up here too.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'images/sandbox/**'
+      - '.github/workflows/sandbox-image.yml'
+    tags:
+      - 'v*'
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/zanegittins/skybreaker-sandbox
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Job permissions replace the workflow's: keep contents readable, or a
+    # private repo can't be checked out.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: images/sandbox
+          platforms: linux/amd64
+          pull: true
+          no-cache: true
+          load: true
+          tags: skybreaker-sandbox:candidate
+
+      - name: Check the harness protocols
+        run: docker run --rm --network none --entrypoint skybreaker-check-protocols skybreaker-sandbox:candidate
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push
+        env:
+          REF: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          tags=("${IMAGE}:latest" "${IMAGE}:$(date -u +%Y-%m-%d)")
+          if [[ "${REF_TYPE}" == "tag" ]]; then
+            tags=("${IMAGE}:${REF}")
+            [[ "${REF}" != *-* ]] && tags+=("${IMAGE}:latest")
+          fi
+          for t in "${tags[@]}"; do
+            docker tag skybreaker-sandbox:candidate "$t"
+            docker push "$t"
+          done

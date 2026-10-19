@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v6
+        with:
+          go-version-file: go.mod
+
+      - name: Format
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: Vet
+        run: go vet ./...
+
+      # The JS tests (web/) run under node, which the runner has.
+      - name: Test
+        run: go test -race ./... -count=1
+
+      # The build without the tsnet and YAML modules must keep compiling.
+      - name: Test without third-party modules
+        run: go test -tags nodeps ./... -count=1
+
+      - name: Build
+        run: make build
+
+      # skybreaker-setup is its own module; its tests run the server's own
+      # config check on what the installer writes.
+      - name: Vet and test the installer
+        working-directory: setup
+        run: |
+          go vet ./...
+          go test -race ./... -count=1
+
+      - name: Build the installer
+        run: make setup
