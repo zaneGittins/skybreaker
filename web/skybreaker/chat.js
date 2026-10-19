@@ -136,21 +136,33 @@ function diffView(diff, { open = 3, limit = 400 } = {}) {
 
 // --- the page -----------------------------------------------------------------
 
-// sunMark is the logo's broken sun, the working indicator: while the agent
-// works it turns over along its crack, and its halves trade places.
+// sunMark is the logo's broken sun as a coin, the working indicator: while
+// the agent works it turns over, showing the sun's other side (its halves'
+// colours swapped), and back. Two faces, a rim of stacked rings between
+// them, and light that falls off as a face turns away make it read as a
+// solid thing turning, not a picture squashing.
 function sunMark() {
   const ns = 'http://www.w3.org/2000/svg';
-  const s = document.createElementNS(ns, 'svg');
-  s.setAttribute('viewBox', '16.5 12.5 12 12');
-  s.setAttribute('class', 'sunwork');
-  s.setAttribute('aria-hidden', 'true');
-  for (const [d, cls] of [['M17.6 20.3a4.6 4.6 0 0 1 7.9-5.4z', 'half a'], ['M19.4 22.4a4.6 4.6 0 0 0 7.9-5.4z', 'half b']]) {
-    const p = document.createElementNS(ns, 'path');
-    p.setAttribute('d', d);
-    p.setAttribute('class', cls);
-    s.append(p);
-  }
-  return s;
+  const halves = ['M17.6 20.3a4.6 4.6 0 0 1 7.9-5.4z', 'M19.4 22.4a4.6 4.6 0 0 0 7.9-5.4z'];
+  const face = (side, fills) => {
+    const s = document.createElementNS(ns, 'svg');
+    s.setAttribute('viewBox', '16.5 12.5 12 12');
+    s.setAttribute('class', 'face ' + side);
+    // The back is drawn mirrored, so once turned it shows the sun the right
+    // way round.
+    const g = document.createElementNS(ns, 'g');
+    if (side === 'back') g.setAttribute('transform', 'translate(45 0) scale(-1 1)');
+    halves.forEach((d, i) => {
+      const p = document.createElementNS(ns, 'path');
+      p.setAttribute('d', d);
+      p.setAttribute('class', fills[i]);
+      g.append(p);
+    });
+    s.append(g);
+    return s;
+  };
+  const coin = el('span.coin', null, ...[1, 2, 3, 4, 5].map(() => el('span.rim')), face('front', ['a', 'b']), face('back', ['b', 'a']));
+  return el('span.sunwork', { 'aria-hidden': 'true' }, coin);
 }
 
 async function renderChat(seq, d) {
