@@ -169,7 +169,10 @@ func command(ctx context.Context, cmd string, args []string, version string, out
 		if isTerminal(int(os.Stdout.Fd())) {
 			return errors.New("ssh-proxy is for ssh's ProxyCommand, not a terminal; `skybreaker vscode setup` sets it up")
 		}
-		return c.SSHProxy(ctx, p, os.Stdin, os.Stdout)
+		if err := c.SSHProxy(ctx, p, os.Stdin, os.Stdout); err != nil && ctx.Err() == nil {
+			return err
+		}
+		return nil // ssh hung up on us
 	case "vscode":
 		if len(args) != 1 || args[0] != "setup" {
 			return errors.New("usage: skybreaker vscode setup")

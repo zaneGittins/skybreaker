@@ -31,15 +31,20 @@ func TestSSHDEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+	// One line: sshd keeps only the first SetEnv it reads.
+	line, ok := strings.CutPrefix(string(out), "SetEnv ")
+	if !ok || strings.Count(string(out), "\n") != 1 {
+		t.Fatalf("want one SetEnv line, got\n%s", out)
+	}
+	got := strings.Fields(strings.ReplaceAll(strings.TrimSpace(line), `"a b"`, `"a_b"`))
 	slices.Sort(got)
 	want := []string{
-		`SetEnv HTTPS_PROXY="http://orbit:secret-tok@broker:8080"`,
-		`SetEnv PATH="/usr/local/go/bin:/usr/bin"`,
-		`SetEnv SPACED="a b"`,
+		`HTTPS_PROXY="http://orbit:secret-tok@broker:8080"`,
+		`PATH="/usr/local/go/bin:/usr/bin"`,
+		`SPACED="a_b"`,
 	}
 	if !slices.Equal(got, want) {
-		t.Fatalf("got\n%s\nwant\n%s", out, want)
+		t.Fatalf("got %q\nwant %q", got, want)
 	}
 	if strings.Contains(string(out), "AuthorizedKeysFile") {
 		t.Fatal("a value smuggled in a directive")
