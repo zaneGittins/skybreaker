@@ -873,3 +873,24 @@ func TestCloneWaitsForCA(t *testing.T) {
 		}
 	}
 }
+
+// A diff the runner cut off at its output limit is shown truncated, not
+// as a failure.
+func TestDiffOverTheOutputLimit(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.app.StartSandbox(ctx, "orbit")
+	big := "diff --git a/x b/x\n" + strings.Repeat("+line\n", 1<<20)
+	f.docker.set(func() {
+		f.docker.execOut = func(args []string) (string, error) {
+			if len(args) > 0 && args[0] == "git" {
+				return big, fmt.Errorf("docker exec: %w", sandbox.ErrOutputLimit)
+			}
+			return "", nil
+		}
+	})
+	out, err := f.app.Diff(ctx, "orbit")
+	if err != nil || !strings.HasSuffix(out, "… diff truncated") || len(out) > 3<<20 {
+		t.Fatalf("Diff: %d bytes, %v", len(out), err)
+	}
+}

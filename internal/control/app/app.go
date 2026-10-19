@@ -685,6 +685,9 @@ func (a *App) Diff(ctx context.Context, project string) (string, error) {
 		return "", err
 	}
 	out, err := a.sandbox.Exec(ctx, project, GitArgs("/workspace", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD")...)
+	if errors.Is(err, sandbox.ErrOutputLimit) {
+		err = nil // cut off by the runner: truncated below like any long diff
+	}
 	const max = 2 << 20
 	if len(out) > max {
 		out = append(out[:max], "\n… diff truncated"...)

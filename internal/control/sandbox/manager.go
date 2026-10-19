@@ -23,20 +23,69 @@ type Runner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
 }
 
-// ExecRunner runs commands with os/exec.
-type ExecRunner struct{}
+// ExecRunner runs commands with os/exec. What a sandbox command prints is
+// the sandbox's to choose (it can replace git, sh or tmux), so stdout is
+// read only up to MaxOutput, and a command that prints more is killed;
+// stderr keeps its first maxStderr bytes.
+type ExecRunner struct {
+	MaxOutput int64 // 0 is DefaultMaxOutput
+}
 
-func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	var stdout, stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return stdout.Bytes(), fmt.Errorf("%s %s: %w: %s", name, firstArg(args), err, msg)
+const (
+	DefaultMaxOutput = 32 << 20
+	maxStderr        = 64 << 10
+)
+
+// ErrOutputLimit reports a command stopped for printing too much.
+var ErrOutputLimit = errors.New("output over the limit")
+
+// capped keeps the first max bytes written to it. Over the limit it calls
+// over (once) and, if fail is set, fails the write so the copy stops.
+type capped struct {
+	buf  bytes.Buffer
+	max  int64
+	fail bool
+	hit  bool
+	over func()
+}
+
+func (c *capped) Write(p []byte) (int, error) {
+	if room := c.max - int64(c.buf.Len()); int64(len(p)) > room {
+		c.buf.Write(p[:max(room, 0)])
+		if !c.hit {
+			c.hit = true
+			c.over()
 		}
-		return stdout.Bytes(), fmt.Errorf("%s %s: %w", name, firstArg(args), err)
+		if c.fail {
+			return 0, ErrOutputLimit
+		}
+		return len(p), nil
 	}
-	return stdout.Bytes(), nil
+	return c.buf.Write(p)
+}
+
+func (r ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	limit := r.MaxOutput
+	if limit <= 0 {
+		limit = DefaultMaxOutput
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stdout := &capped{max: limit, fail: true, over: cancel}
+	stderr := &capped{max: maxStderr, over: func() {}}
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	err := cmd.Run()
+	if stdout.hit {
+		return stdout.buf.Bytes(), fmt.Errorf("%s %s: %w (%d bytes)", name, firstArg(args), ErrOutputLimit, limit)
+	}
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.buf.String()); msg != "" {
+			return stdout.buf.Bytes(), fmt.Errorf("%s %s: %w: %s", name, firstArg(args), err, msg)
+		}
+		return stdout.buf.Bytes(), fmt.Errorf("%s %s: %w", name, firstArg(args), err)
+	}
+	return stdout.buf.Bytes(), nil
 }
 
 func firstArg(args []string) string {

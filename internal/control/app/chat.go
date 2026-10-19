@@ -17,6 +17,7 @@ import (
 
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
+	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 	"github.com/zaneGittins/skybreaker/internal/control/tmux"
 	"github.com/zaneGittins/skybreaker/internal/notify"
@@ -444,6 +445,9 @@ func (a *App) Review(ctx context.Context, project string) (Review, error) {
 	}
 	git := func(args ...string) (string, error) {
 		out, err := a.sandbox.Exec(ctx, project, GitArgs("/workspace", args...)...)
+		if errors.Is(err, sandbox.ErrOutputLimit) {
+			err = nil // a diff cut off by the runner is truncated below
+		}
 		return string(out), err
 	}
 	branch, err := git("rev-parse", "--abbrev-ref", "HEAD")
