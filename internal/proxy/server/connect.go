@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -113,11 +114,65 @@ func (s *Server) tunnel(w http.ResponseWriter, r *http.Request, e audit.Entry, h
 		up.Close()
 		return
 	}
+	defer s.track(client, token)()
+	// A tunnel is opened for a host, but the bytes inside could name any
+	// site at that address (a CDN serves thousands): it carries TLS to the
+	// host it was opened for, or nothing.
+	client.SetReadDeadline(time.Now().Add(15 * time.Second))
+	name, seen, err := serverName(client)
+	client.SetReadDeadline(time.Time{})
+	if err != nil || !strings.EqualFold(strings.TrimSuffix(name, "."), host) {
+		client.Close()
+		up.Close()
+		reason := fmt.Sprintf("the tunnel's TLS server name %q isn't %s", name, host)
+		if err != nil {
+			reason = "a tunnel carries TLS with the host's server name, and this didn't"
+		}
+		e.Decision, e.Reason, e.Status = "deny", reason, http.StatusForbidden
+		s.log(e)
+		return
+	}
 	e.Decision, e.Status = "allow", http.StatusOK
 	s.log(e)
-	defer s.track(client, token)()
-	splice(client, up)
+	splice(&bufferedConn{Conn: client, r: bufio.NewReader(io.MultiReader(bytes.NewReader(seen), client))}, up)
 }
+
+// errHello stops a handshake once the ClientHello has been read.
+var errHello = errors.New("read the ClientHello")
+
+// serverName reads the TLS ClientHello that opens c and returns its server
+// name, with every byte read so the hello can go on to the upstream.
+func serverName(c net.Conn) (string, []byte, error) {
+	rec := &recordConn{Conn: c}
+	var name string
+	got := false
+	err := tls.Server(rec, &tls.Config{GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
+		name, got = h.ServerName, true
+		return nil, errHello
+	}}).Handshake()
+	if !got {
+		if err == nil {
+			err = errors.New("no ClientHello")
+		}
+		return "", rec.buf.Bytes(), err
+	}
+	return name, rec.buf.Bytes(), nil
+}
+
+// recordConn keeps what is read through it and writes nothing, so a TLS
+// server can parse a ClientHello without answering it.
+type recordConn struct {
+	net.Conn
+	buf bytes.Buffer
+}
+
+func (c *recordConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	c.buf.Write(p[:n])
+	return n, err
+}
+
+func (c *recordConn) Write(p []byte) (int, error) { return len(p), nil }
 
 // splice copies both ways until either side finishes.
 func splice(a, b net.Conn) {

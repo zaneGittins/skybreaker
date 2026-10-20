@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -635,5 +636,72 @@ func TestUpgradeRequestsRefusedPlainly(t *testing.T) {
 	}
 	if n := len(w.approvals.List()); n != 0 {
 		t.Errorf("%d approval cards for upgrade requests", n)
+	}
+}
+
+// A tunnel carries TLS to the host it was opened for: one opened for
+// tunnel.test can't present another name to the same address (domain
+// fronting reaches every site behind a CDN), or carry anything but TLS.
+func TestTunnelChecksServerName(t *testing.T) {
+	w := newWorld(t)
+	open := func() net.Conn {
+		c, err := net.Dial("tcp", w.proxy.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		auth := base64.StdEncoding.EncodeToString([]byte("orbit:" + w.token))
+		fmt.Fprintf(c, "CONNECT tunnel.test:443 HTTP/1.1\r\nHost: tunnel.test:443\r\nProxy-Authorization: Basic %s\r\n\r\n", auth)
+		br := bufio.NewReader(c)
+		if resp, err := http.ReadResponse(br, nil); err != nil || resp.StatusCode != 200 {
+			t.Fatalf("connect: %v %v", resp, err)
+		}
+		return c
+	}
+	pool := w.brokerCA.Pool()
+	pool.AppendCertsFromPEM(w.publicCA.CertPEM())
+	for _, name := range []string{"api.github.test", ""} {
+		c := open()
+		tc := tls.Client(c, &tls.Config{ServerName: name, RootCAs: pool, InsecureSkipVerify: name == ""})
+		c.SetDeadline(time.Now().Add(3 * time.Second))
+		if err := tc.Handshake(); err == nil {
+			t.Errorf("a tunnel for tunnel.test reached %q", name)
+		}
+		c.Close()
+	}
+	c := open()
+	c.SetDeadline(time.Now().Add(3 * time.Second))
+	fmt.Fprintf(c, "GET / HTTP/1.1\r\nHost: api.github.test\r\n\r\n")
+	if b, _ := io.ReadAll(c); len(b) != 0 {
+		t.Errorf("plain text through a tunnel: %q", b)
+	}
+	c.Close()
+	if n := len(w.hitsFor("api.github.test")); n != 0 {
+		t.Fatalf("api.github.test saw %d requests through tunnel.test", n)
+	}
+	if !strings.Contains(w.auditBuf.String(), "server name") {
+		t.Error("refusal not audited")
+	}
+}
+
+// A plain-HTTP request to a tunnel host goes to that host by name: a Host
+// header naming another site at the same address is not passed on.
+func TestPlainHTTPHostHeaderIsTheURLs(t *testing.T) {
+	w := newWorld(t)
+	c, err := net.Dial("tcp", w.proxy.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	auth := base64.StdEncoding.EncodeToString([]byte("orbit:" + w.token))
+	fmt.Fprintf(c, "GET http://plain.test/x HTTP/1.1\r\nHost: api.github.test\r\nProxy-Authorization: Basic %s\r\nConnection: close\r\n\r\n", auth)
+	resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("plain: %v %v", resp, err)
+	}
+	if n := len(w.hitsFor("api.github.test")); n != 0 {
+		t.Fatal("the upstream was told it served api.github.test")
+	}
+	if n := len(w.hitsFor("plain.test")); n != 1 {
+		t.Fatalf("plain.test saw %d requests", n)
 	}
 }

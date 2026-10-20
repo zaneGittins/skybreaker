@@ -385,3 +385,30 @@ func TestViewRevealsInvisibleCharacters(t *testing.T) {
 		t.Error("the stored card differs from the returned one")
 	}
 }
+
+// Revoking a project's token ends what was asked under it: a card left
+// pending or approved can't be redeemed by the next token.
+func TestExpireProject(t *testing.T) {
+	s, _ := newStore()
+	pending, _ := s.Request(context.Background(), req("/pending"), 0)
+	approved, _ := s.Request(context.Background(), req("/approved"), 0)
+	s.Decide(approved.ID, true, "zane@example.com")
+	other := req("/other")
+	other.Project = "bifract"
+	theirs, _ := s.Request(context.Background(), other, 0)
+	if n := s.Expire("orbit"); n != 2 {
+		t.Fatalf("expired %d", n)
+	}
+	if _, err := s.Decide(pending.ID, true, "z"); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("decided an expired card: %v", err)
+	}
+	if _, out := s.Request(context.Background(), req("/approved"), 0); out == Allowed {
+		t.Fatal("an approval outlived its project's revocation")
+	}
+	if a, _ := s.Get(theirs.ID); a.State != StatePending {
+		t.Fatalf("another project's card: %s", a.State)
+	}
+	if n := s.Expire(""); n != 2 {
+		t.Fatalf("expire all: %d", n)
+	}
+}

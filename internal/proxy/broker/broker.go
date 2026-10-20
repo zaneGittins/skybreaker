@@ -134,17 +134,48 @@ func (b *Broker) Mint(_ context.Context, project string, ttl time.Duration) (Min
 }
 
 func (b *Broker) Revoke(_ context.Context, id string) error {
+	project := b.projectOf(id)
 	if _, err := b.sessions.Revoke(id); err != nil {
 		return err
 	}
+	b.revokedToken(project)
 	b.audit.Log(audit.Entry{Decision: "revoke", Reason: "session " + id})
 	return nil
+}
+
+// projectOf names the project a session token belongs to.
+func (b *Broker) projectOf(id string) string {
+	for _, s := range b.sessions.List() {
+		if s.ID == id {
+			return s.Project
+		}
+	}
+	return ""
+}
+
+// revoked takes effect at once: open connections close, held requests
+// end, and what the project asked for can't be approved or redeemed by its
+// next token. project "" is every project.
+func (b *Broker) revoked(project string) {
+	b.approvals.Expire(project)
+	b.srv.Sweep()
+}
+
+// revokedToken is revoked for one token, whose project may be unknown: then
+// connections are still swept, and no approvals are touched.
+func (b *Broker) revokedToken(project string) {
+	if project == "" {
+		b.srv.Sweep()
+		return
+	}
+	b.revoked(project)
 }
 
 // RevokeProject revokes every token of a project, including ones whose IDs
 // the control plane lost.
 func (b *Broker) RevokeProject(_ context.Context, project string) error {
 	n, err := b.sessions.RevokeProject(project)
+	b.revoked(project)
 	if n > 0 {
 		b.audit.Log(audit.Entry{Project: project, Decision: "revoke", Reason: fmt.Sprintf("%d sessions", n)})
 	}
@@ -216,10 +247,12 @@ func (b *Broker) Tokens() []session.Info { return b.sessions.List() }
 
 // RevokeToken cuts one sandbox off until it is restarted.
 func (b *Broker) RevokeToken(id, by string) error {
+	project := b.projectOf(id)
 	ok, err := b.sessions.Revoke(id)
 	if !ok {
 		return ErrNotFound
 	}
+	b.revokedToken(project)
 	if err != nil {
 		b.audit.Log(audit.Entry{Sender: by, By: by, Decision: "revoke", Reason: "session " + id + " revoked in memory but not saved: " + err.Error()})
 		return fmt.Errorf("revoked now, but not saved: a restart would restore it (%w)", err)
@@ -232,6 +265,7 @@ func (b *Broker) RevokeToken(id, by string) error {
 // once, open connections included.
 func (b *Broker) RevokeAll(by string) (int, error) {
 	n, err := b.sessions.RevokeAll()
+	b.revoked("")
 	if err != nil {
 		b.audit.Log(audit.Entry{Sender: by, By: by, Decision: "revoke", Reason: fmt.Sprintf("kill switch: %d sessions revoked in memory but not saved: %v", n, err)})
 		return n, fmt.Errorf("revoked %d now, but not saved: a restart would restore them (%w)", n, err)

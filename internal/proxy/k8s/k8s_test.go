@@ -306,7 +306,9 @@ func TestNamespaceDenyCoversClusterWideReads(t *testing.T) {
 	// GET /api/v1/pods lists pods in every namespace, kube-system included.
 	// With an ns: deny, a namespaced resource must name its namespace.
 	p := Policy{Auto: []string{"get", "list", "watch"}, Deny: []string{"ns:kube-system"}}
-	for _, path := range []string{"/api/v1/pods", "/api/v1/watch/pods", "/api/v1/configmaps", "/apis/apps/v1/deployments", "/apis/example.com/v1/widgets"} {
+	// A custom resource named like a built-in cluster-scoped one is still
+	// namespaced: the group tells them apart.
+	for _, path := range []string{"/api/v1/pods", "/api/v1/watch/pods", "/api/v1/configmaps", "/apis/apps/v1/deployments", "/apis/example.com/v1/widgets", "/apis/evil.example/v1/nodes", "/apis/evil.example/v1/namespaces", "/apis/rbac.example/v1/clusterroles"} {
 		a, err := Parse("GET", path, url.Values{})
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)

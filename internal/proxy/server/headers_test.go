@@ -109,3 +109,46 @@ func TestTwoContentTypesRefused(t *testing.T) {
 		t.Fatalf("two content types: %d", resp.StatusCode)
 	}
 }
+
+// Rules judge the method on the wire; a header that has the upstream treat
+// a POST as a DELETE would act on a method no rule was asked about.
+func TestMethodOverrideRefused(t *testing.T) {
+	w := newWorld(t)
+	for _, h := range []string{"X-HTTP-Method-Override", "x-http-method", "X-Method-Override"} {
+		code, _, _ := do(t, w.orbit(), "POST", "https://open.test/things/1", "{}", map[string]string{h: "DELETE", "Content-Type": "application/json"})
+		if code != http.StatusForbidden {
+			t.Errorf("%s: %d", h, code)
+		}
+	}
+	if code, _, _ := do(t, w.orbit(), "POST", "https://open.test/things/1", "{}", map[string]string{"Content-Type": "application/json"}); code != 200 {
+		t.Fatalf("a plain POST: %d", code)
+	}
+	if n := len(w.hitsFor("open.test")); n != 1 {
+		t.Fatalf("%d overridden requests reached upstream", n)
+	}
+}
+
+// Some servers split a query on ';' as well as '&'; a credential the agent
+// brings after one is still its own.
+func TestQueryCredentialAfterSemicolon(t *testing.T) {
+	w := newWorld(t)
+	for _, q := range []string{"?address=x;key=AIzaOWN", "?a=1&b=2;api_key=OWN", "?%6Bey=OWN"} {
+		if code, _, _ := do(t, w.orbit(), "GET", "https://open.test/maps"+q, "", nil); code != http.StatusForbidden {
+			t.Errorf("%s: %d", q, code)
+		}
+	}
+	if n := len(w.hitsFor("open.test")); n != 0 {
+		t.Fatalf("%d requests with the agent's own key reached upstream", n)
+	}
+}
+
+// An approval binds the path as it goes upstream, escapes and all: /a%3Fb
+// and /a?b are different requests and must not share one.
+func TestApprovalBindsTheEscapedPath(t *testing.T) {
+	w := newWorld(t)
+	do(t, w.orbit(), "PUT", "https://api.github.test/repos/zaneGittins/orbit/pulls/7%3Fx/merge", "{}", jsonCT)
+	list := w.approvals.List()
+	if len(list) != 1 || !strings.Contains(list[0].Path, "%3F") {
+		t.Fatalf("approvals %+v", list)
+	}
+}

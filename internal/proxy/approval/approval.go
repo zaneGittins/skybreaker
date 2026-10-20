@@ -290,6 +290,31 @@ func (s *Store) Decide(id string, approve bool, by string) (Approval, error) {
 	return e.a, nil
 }
 
+// Expire ends the project's pending and approved requests ("" for every
+// project), as revoking its token does: what was asked under it can't be
+// approved or redeemed later. It returns how many it ended.
+func (s *Store) Expire(project string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, e := range s.byID {
+		if project != "" && e.a.Project != project {
+			continue
+		}
+		switch e.a.State {
+		case StatePending:
+			close(e.done)
+		case StateApproved:
+		default:
+			continue
+		}
+		e.a.State = StateExpired
+		s.publishLocked(e.a)
+		n++
+	}
+	return n
+}
+
 func (s *Store) Get(id string) (Approval, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

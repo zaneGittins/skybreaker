@@ -201,8 +201,7 @@ func (s *Server) live(token, project string) bool {
 	return ok && info.Project == project
 }
 
-// reap closes open connections and cancels requests whose session was
-// revoked or has expired.
+// reap sweeps on a timer, for sessions that expire.
 func (s *Server) reap(ctx context.Context) {
 	t := time.NewTicker(s.reapEvery)
 	defer t.Stop()
@@ -212,31 +211,37 @@ func (s *Server) reap(ctx context.Context) {
 			return
 		case <-t.C:
 		}
-		// Decide under the lock; close outside it. Closing a TLS conn can
-		// block on a peer that has stopped reading, and every request takes
-		// this lock.
-		var conns []net.Conn
-		var reqs []*inFlight
-		s.connMu.Lock()
-		for c, token := range s.conns {
-			if _, live := s.sessions.Lookup(token); !live {
-				conns = append(conns, c)
-				delete(s.conns, c)
-			}
+		s.Sweep()
+	}
+}
+
+// Sweep closes open connections and cancels requests whose session was
+// revoked or has expired. Revoking calls it at once.
+func (s *Server) Sweep() {
+	// Decide under the lock; close outside it. Closing a TLS conn can
+	// block on a peer that has stopped reading, and every request takes
+	// this lock.
+	var conns []net.Conn
+	var reqs []*inFlight
+	s.connMu.Lock()
+	for c, token := range s.conns {
+		if _, live := s.sessions.Lookup(token); !live {
+			conns = append(conns, c)
+			delete(s.conns, c)
 		}
-		for f, token := range s.reqs {
-			if _, live := s.sessions.Lookup(token); !live {
-				reqs = append(reqs, f)
-				delete(s.reqs, f)
-			}
+	}
+	for f, token := range s.reqs {
+		if _, live := s.sessions.Lookup(token); !live {
+			reqs = append(reqs, f)
+			delete(s.reqs, f)
 		}
-		s.connMu.Unlock()
-		for _, f := range reqs {
-			f.cancel()
-		}
-		for _, c := range conns {
-			go c.Close()
-		}
+	}
+	s.connMu.Unlock()
+	for _, f := range reqs {
+		f.cancel()
+	}
+	for _, c := range conns {
+		go c.Close()
 	}
 }
 

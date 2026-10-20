@@ -227,7 +227,7 @@ func (p Policy) Decide(a Attributes) (policy.Action, string) {
 		}
 		// A request with no namespace on a namespaced resource spans every
 		// namespace, the denied one included.
-		if strings.HasPrefix(d, "ns:") && !a.NonResource && a.Namespace == "" && !clusterScoped[a.Resource] {
+		if strings.HasPrefix(d, "ns:") && !a.NonResource && a.Namespace == "" && !isClusterScoped(a) {
 			return policy.Deny, "denied by " + d + ": name a namespace"
 		}
 	}
@@ -241,18 +241,29 @@ func (p Policy) Decide(a Attributes) (policy.Action, string) {
 }
 
 // clusterScoped lists the built-in resources that live outside any
-// namespace. Anything else without a namespace (including unknown custom
-// resources) counts as spanning all namespaces, which fails closed.
-var clusterScoped = map[string]bool{
-	"namespaces": true, "nodes": true, "persistentvolumes": true, "componentstatuses": true,
-	"clusterroles": true, "clusterrolebindings": true, "customresourcedefinitions": true,
-	"apiservices": true, "storageclasses": true, "csidrivers": true, "csinodes": true,
-	"volumeattachments": true, "priorityclasses": true, "runtimeclasses": true, "ingressclasses": true,
-	"mutatingwebhookconfigurations": true, "validatingwebhookconfigurations": true,
-	"validatingadmissionpolicies": true, "validatingadmissionpolicybindings": true,
-	"certificatesigningrequests": true, "flowschemas": true, "prioritylevelconfigurations": true,
-	"tokenreviews": true, "selfsubjectreviews": true, "selfsubjectaccessreviews": true,
-	"selfsubjectrulesreviews": true, "subjectaccessreviews": true,
+// namespace, by resource then API group ("" is the core group): a custom
+// resource may share a built-in's name in another group, and is namespaced.
+// Anything else without a namespace (including unknown custom resources)
+// counts as spanning all namespaces, which fails closed.
+var clusterScoped = map[string]string{
+	"namespaces": "", "nodes": "", "persistentvolumes": "", "componentstatuses": "",
+	"clusterroles": "rbac.authorization.k8s.io", "clusterrolebindings": "rbac.authorization.k8s.io",
+	"customresourcedefinitions": "apiextensions.k8s.io", "apiservices": "apiregistration.k8s.io",
+	"storageclasses": "storage.k8s.io", "csidrivers": "storage.k8s.io", "csinodes": "storage.k8s.io",
+	"volumeattachments": "storage.k8s.io", "priorityclasses": "scheduling.k8s.io",
+	"runtimeclasses": "node.k8s.io", "ingressclasses": "networking.k8s.io",
+	"mutatingwebhookconfigurations": "admissionregistration.k8s.io", "validatingwebhookconfigurations": "admissionregistration.k8s.io",
+	"validatingadmissionpolicies": "admissionregistration.k8s.io", "validatingadmissionpolicybindings": "admissionregistration.k8s.io",
+	"certificatesigningrequests": "certificates.k8s.io",
+	"flowschemas":                "flowcontrol.apiserver.k8s.io", "prioritylevelconfigurations": "flowcontrol.apiserver.k8s.io",
+	"tokenreviews": "authentication.k8s.io", "selfsubjectreviews": "authentication.k8s.io",
+	"selfsubjectaccessreviews": "authorization.k8s.io", "selfsubjectrulesreviews": "authorization.k8s.io",
+	"subjectaccessreviews": "authorization.k8s.io",
+}
+
+func isClusterScoped(a Attributes) bool {
+	g, ok := clusterScoped[a.Resource]
+	return ok && g == a.APIGroup
 }
 
 func deniedBy(d string, a Attributes) bool {

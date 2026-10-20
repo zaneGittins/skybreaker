@@ -92,3 +92,18 @@ func TestGraphQLDisguisesAreHeld(t *testing.T) {
 		t.Fatalf("%d disguised or unreadable requests reached GitHub", n)
 	}
 }
+
+// The operation is judged from the body alone, so nothing else may carry
+// one: a server that reads query or operationName from the URL would run
+// what the URL says while the broker judged the body.
+func TestGraphQLQueryStringRefused(t *testing.T) {
+	w := newWorld(t)
+	body := gql(`query A { viewer { login } } mutation B { mergePullRequest(input: {pullRequestId: "PR"}) { clientMutationId } }`)
+	body = strings.Replace(body, `}"}`, `}","operationName":"A"}`, 1)
+	if code, b, _ := do(t, w.orbit(), "POST", gqlURL+"?operationName=B", body, jsonCT); code != http.StatusBadRequest {
+		t.Fatalf("query string with a GraphQL request: %d %s", code, b)
+	}
+	if n := len(w.hitsFor("api.github.test")); n != 0 {
+		t.Fatalf("upstream saw %d requests", n)
+	}
+}

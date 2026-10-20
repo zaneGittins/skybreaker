@@ -80,7 +80,13 @@ func foreignCredential(r *http.Request) string {
 			}
 		}
 	}
-	for name := range r.URL.Query() {
+	// Split on ';' as well as '&': url.Query drops pairs with a ';', and
+	// some servers split on it.
+	for _, pair := range strings.FieldsFunc(r.URL.RawQuery, func(c rune) bool { return c == '&' || c == ';' }) {
+		name, _, _ := strings.Cut(pair, "=")
+		if n, err := url.QueryUnescape(name); err == nil {
+			name = n
+		}
 		if credentialParams[strings.ToLower(name)] {
 			return "request carries a credential in the query parameter " + name
 		}
@@ -179,6 +185,13 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 	// any other operation gets the rule's graphql.other; a body that can't
 	// be read unambiguously is refused.
 	if rule != nil && rule.GraphQL != nil {
+		// The operation is judged from the body alone; a server that also
+		// reads query or operationName from the URL would run something
+		// else, so nothing may ride there.
+		if r.URL.RawQuery != "" || r.URL.ForceQuery {
+			s.deny(w, e, http.StatusBadRequest, "GraphQL requests carry their operation in the body, not the URL")
+			return
+		}
 		if r.Header.Get("Content-Encoding") != "" {
 			s.deny(w, e, http.StatusBadRequest, "compressed GraphQL bodies are not inspected")
 			return
@@ -258,7 +271,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 			}
 			body, read = b, true
 		}
-		target := path
+		target := t.escapedPath
 		if r.URL.RawQuery != "" {
 			target += "?" + r.URL.RawQuery
 		}
@@ -400,13 +413,18 @@ func headerBinding(h http.Header) string {
 	return string(b)
 }
 
-// impersonation refuses Kubernetes impersonation headers: the injected
-// credential may hold impersonate rights, and a sandbox must never borrow
-// another identity through them.
+// impersonation refuses headers that change who or what a request is:
+// Kubernetes impersonation (the injected credential may hold impersonate
+// rights, and a sandbox must never borrow another identity), and method
+// overrides (rules judge the method on the wire; an upstream that took a
+// POST for a DELETE would act on a method no rule was asked about).
 func impersonation(r *http.Request) string {
 	for k := range r.Header {
-		if strings.HasPrefix(http.CanonicalHeaderKey(k), "Impersonate-") {
+		switch k = http.CanonicalHeaderKey(k); {
+		case strings.HasPrefix(k, "Impersonate-"):
 			return "impersonation headers are refused"
+		case k == "X-Http-Method-Override", k == "X-Http-Method", k == "X-Method-Override":
+			return "method override headers are refused"
 		}
 	}
 	return ""
