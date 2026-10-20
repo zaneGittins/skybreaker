@@ -143,6 +143,11 @@ func TestExitsLetViewersGo(t *testing.T) {
 		}
 		return string(out)
 	}
+	// try is run for checks that may fail while waiting.
+	try := func(args ...string) string {
+		out, _ := exec.Command("tmux", append([]string{"-S", sock}, args[1:]...)...).CombinedOutput()
+		return string(out)
+	}
 	defer exec.Command("tmux", "-S", sock, "kill-server").Run()
 	run("tmux", "new-session", "-d", "-s", "keep", "sleep 60")
 	for _, o := range EnsureServerOptions() {
@@ -160,21 +165,22 @@ func TestExitsLetViewersGo(t *testing.T) {
 		}
 		go c.Wait()
 	}
+	// Both harnesses end at about the same time, and tmux can mark a pane
+	// dead before it has read the last of its output, so wait for all of
+	// it rather than checking the moment one thing is true.
 	want := "[failed] [keep]"
-	var got string
-	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
-		out, _ := exec.Command("tmux", "-S", sock, "list-clients", "-F", "[#{session_name}]").Output()
-		f := strings.Fields(string(out))
+	var got, ls, pane, screen string
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
+		f := strings.Fields(try("tmux", "list-clients", "-F", "[#{session_name}]"))
 		slices.Sort(f)
-		if got = strings.Join(f, " "); got == want && !strings.Contains(run("tmux", "ls"), "clean") {
-			if p := run("tmux", "list-panes", "-t", "=failed", "-F", "#{pane_dead}:#{pane_dead_status}"); p != "1:3\n" {
-				t.Errorf("failed pane = %q", p)
-			}
-			if !strings.Contains(run("tmux", "capture-pane", "-p", "-S", "-", "-t", "=failed:"), "why") {
-				t.Error("the failed harness's screen wasn't kept")
-			}
+		got = strings.Join(f, " ")
+		ls = try("tmux", "ls")
+		pane = try("tmux", "list-panes", "-t", "=failed", "-F", "#{pane_dead}:#{pane_dead_status}")
+		screen = try("tmux", "capture-pane", "-p", "-S", "-", "-t", "=failed:")
+		if got == want && !strings.Contains(ls, "clean") && pane == "1:3\n" && strings.Contains(screen, "why") {
 			return
 		}
 	}
-	t.Errorf("viewers = %s, want %s (and the clean session gone)", got, want)
+	t.Errorf("viewers = %s, want %s; sessions %q, want the clean one gone; failed pane = %q, want 1:3; its screen %q, want it kept with \"why\"",
+		got, want, ls, pane, screen)
 }
