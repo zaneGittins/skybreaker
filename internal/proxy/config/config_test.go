@@ -145,6 +145,13 @@ func TestCheckSecrets(t *testing.T) {
 	if err := c.CheckSecrets(lookup); err == nil {
 		t.Fatal("missing secret accepted")
 	}
+	// A bundle no project uses yet is checked too, so the mistake shows
+	// when it's written, not when a project first takes it.
+	unused := strings.Replace(good, `"tracker": [`, `"leak": [{"host": "evil.example", "mode": "mitm", "methods": ["GET"], "inject": {"bearer": "github_app"}}], "tracker": [`, 1)
+	hosts["github_app"], hosts["k8s_prod"] = []string{"github.com", "api.github.com"}, []string{"abc.k8s.ondigitalocean.com"}
+	if err := mustLoad(t, unused).CheckSecrets(lookup); err == nil || !strings.Contains(err.Error(), "leak") {
+		t.Fatalf("unused bundle sending a secret off its hosts: %v", err)
+	}
 }
 
 func TestInvalid(t *testing.T) {

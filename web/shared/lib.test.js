@@ -19,6 +19,7 @@ test('route', () => {
   assert.deepEqual(route('/s/sabc123'), { name: 'session', id: 'sabc123' });
   assert.deepEqual(route('/r/r20261017020000abcd'), { name: 'run', id: 'r20261017020000abcd' });
   assert.deepEqual(route('/activity'), { name: 'activity' });
+  assert.deepEqual(route('/settings'), { name: 'settings' });
   assert.deepEqual(route('/activity/x'), { name: 'notfound' });
   assert.deepEqual(route('/p/Bad%20Name'), { name: 'notfound' });
   assert.deepEqual(route('/s/../../etc'), { name: 'notfound' });
@@ -142,4 +143,25 @@ test('dropPosition', () => {
   assert.equal(dropPosition(4, undefined), 5);   // bottom
   assert.equal(dropPosition(1, 2), 1.5);         // between
   assert.equal(dropPosition(-1, -1), -1);        // equal neighbours: the server respaces
+});
+
+test('rules as lines', () => {
+  const { rulesToText, rulesFromText, hostsFromText } = require('./lib.js');
+  assert.equal(rulesToText({ methods: ['GET', 'POST'] }), 'GET,POST /** auto');
+  assert.equal(rulesToText({ rules: [{ match: 'GET /repos/{repo}/**', action: 'auto' }, { match: 'DELETE /**', action: 'deny' }] }),
+    'GET /repos/{repo}/** auto\nDELETE /** deny');
+  assert.deepEqual(rulesFromText('GET /repos/** auto\n\n  # a comment\nPUT /x/*/merge   ask\n'),
+    { rules: [{ match: 'GET /repos/** auto'.replace(' auto', ''), action: 'auto' }, { match: 'PUT /x/*/merge', action: 'ask' }] });
+  assert.match(rulesFromText('GET /x allow').error, /line 1/);
+  assert.match(rulesFromText('auto').error, /line 1/);
+  assert.match(rulesFromText('GET auto').error, /line 1/);
+  assert.match(rulesFromText('').error, /at least one/);
+  assert.deepEqual(hostsFromText(' api.openai.com,  eu.api.openai.com\nx.example '), ['api.openai.com', 'eu.api.openai.com', 'x.example']);
+  assert.deepEqual(hostsFromText(''), []);
+});
+
+test('settings audit rows', () => {
+  const { auditRow } = require('./lib.js');
+  assert.deepEqual(auditRow({ decision: 'config', by: 'z', reason: 'added secret openai for api.openai.com' }),
+    { tone: 'info', verb: 'Settings', target: 'added secret openai for api.openai.com' });
 });

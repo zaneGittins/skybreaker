@@ -41,6 +41,7 @@ function route(path) {
   const m = /^\/(p|s|r)\/([^/]+)$/.exec(path);
   if (path === '/' || path === '') return { name: 'home' };
   if (path === '/activity') return { name: 'activity' };
+  if (path === '/settings') return { name: 'settings' };
   const t = /^\/p\/([^/]+)\/(board|runs)$/.exec(path);
   if (t) {
     let v;
@@ -175,7 +176,7 @@ function dropPosition(above, below) {
 // tone, a verb and what it was about.
 const AUDIT = {
   allow: ['ok', 'Allowed'], approve: ['ok', 'Approved'], deny: ['bad', 'Blocked'], ask: ['wait', 'Asked'],
-  mint: ['info', 'Token issued'], revoke: ['bad', 'Revoked'],
+  mint: ['info', 'Token issued'], revoke: ['bad', 'Revoked'], config: ['info', 'Settings'],
 };
 function auditRow(e) {
   const [tone, verb] = AUDIT[e.decision] || ['info', e.decision || ''];
@@ -183,4 +184,28 @@ function auditRow(e) {
   return { tone, verb, target: reveal(target) };
 }
 
-if (typeof module !== 'undefined') module.exports = { ago, until, duration, route, auditRow, dropPosition, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal, tail };
+// rulesToText and rulesFromText turn a host's rules into lines of
+// "METHOD /path action" for the settings page, and back.
+function rulesToText(e) {
+  if (e.methods && e.methods.length) return e.methods.join(',') + ' /** auto';
+  return (e.rules || []).map(r => r.match + ' ' + r.action).join('\n');
+}
+
+function rulesFromText(text) {
+  const rules = [];
+  const lines = String(text).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = /^(\S+)\s+(\/\S*)\s+(auto|ask|deny)$/.exec(line);
+    if (!m) return { error: `line ${i + 1}: write it as METHOD /path auto, ask or deny` };
+    rules.push({ match: m[1] + ' ' + m[2], action: m[3] });
+  }
+  if (!rules.length) return { error: 'add at least one rule, such as GET /** auto' };
+  return { rules };
+}
+
+// hostsFromText splits a list of hosts typed with commas, spaces or lines.
+const hostsFromText = text => String(text).split(/[\s,]+/).map(h => h.trim()).filter(Boolean);
+
+if (typeof module !== 'undefined') module.exports = { rulesToText, rulesFromText, hostsFromText, ago, until, duration, route, auditRow, dropPosition, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal, tail };

@@ -112,6 +112,9 @@ func (h *Host) Install(ctx context.Context, a *Answers, checks []Check) error {
 		return h.fail("Starting Skybreaker", err)
 	}
 	h.Out.Done("Skybreaker " + rel + " is running")
+	if a != nil && a.AppLater() {
+		h.Out.Note("Next: create the GitHub App at " + a.UIURL() + "/settings")
+	}
 	return nil
 }
 

@@ -30,7 +30,7 @@ type Answers struct {
 	Tailnet string   // the tailnet's DNS name, such as tail1234.ts.net
 	AuthKey string   // a Tailscale auth key, for the first start only
 
-	AppID  string // the GitHub App's ID
+	AppID  string // the GitHub App's ID; empty with AppKey to create it in Settings later
 	AppKey string // path to its private key on this host
 
 	Repo      string // the first project's owner/name
@@ -69,8 +69,15 @@ func (a *Answers) ValidateTailscale() error {
 	return errors.Join(errs...)
 }
 
+// AppLater reports whether the GitHub App is left to Skybreaker's
+// Settings, which create it from a manifest in one click.
+func (a *Answers) AppLater() bool { return a.AppID == "" && a.AppKey == "" }
+
 // ValidateGitHub checks the wizard's GitHub App page.
 func (a *Answers) ValidateGitHub() error {
+	if a.AppLater() {
+		return nil
+	}
 	var errs []error
 	if !appIDRe.MatchString(a.AppID) {
 		errs = append(errs, errors.New("App ID: the number on the App's settings page"))
@@ -172,9 +179,12 @@ func (a *Answers) Files(l Layout) ([]File, error) {
 	if err := a.Validate(); err != nil {
 		return nil, err
 	}
-	key, err := os.ReadFile(a.AppKey)
-	if err != nil {
-		return nil, err
+	var key []byte
+	if !a.AppLater() {
+		var err error
+		if key, err = os.ReadFile(a.AppKey); err != nil {
+			return nil, err
+		}
 	}
 	caps := []string{"github"}
 	for _, h := range []string{"claude", "codex"} {
@@ -204,12 +214,15 @@ func (a *Answers) Files(l Layout) ([]File, error) {
 	if err := secretsTmpl.Execute(&sec, data); err != nil {
 		return nil, err
 	}
-	return []File{
+	files := []File{
 		{l.Config(), cfg.Bytes(), 0o600},
 		{l.Secrets(), sec.Bytes(), 0o600},
-		{l.AppKey(), key, 0o600},
 		{filepath.Join(l.Etc, "env"), []byte("TS_AUTHKEY=" + a.AuthKey + "\n"), 0o600},
-	}, nil
+	}
+	if key != nil {
+		files = append(files, File{l.AppKey(), key, 0o600})
+	}
+	return files, nil
 }
 
 // q quotes a value as a JSON string, which YAML reads as the same string.
@@ -327,6 +340,12 @@ secrets:
     kind: github_app
     hosts: [github.com, api.github.com]
     github_app:
+{{- if .A.AppLater}}
+      # Created in Skybreaker: Settings, GitHub. Until then git and the
+      # GitHub API get no credential.
+      from_app: true
+{{- else}}
       app_id: {{q .A.AppID}}
       key_file: {{q .KeyFile}}
+{{- end}}
 `))

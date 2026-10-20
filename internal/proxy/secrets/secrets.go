@@ -27,6 +27,9 @@ import (
 var (
 	ErrUnbound = errors.New("secret is not bound to this host")
 	ErrUnknown = errors.New("unknown secret")
+	// ErrNotCreated is a GitHub App the config file leaves to Skybreaker's
+	// settings, before it is created there.
+	ErrNotCreated = errors.New("the GitHub App isn't created yet: create it in Skybreaker's Settings")
 )
 
 // Minted values stay redactable this long after they were handed out, which
@@ -45,8 +48,14 @@ type Spec struct {
 }
 
 type GitHubAppSpec struct {
-	AppID          string            `json:"app_id" yaml:"app_id"`
-	KeyFile        string            `json:"key_file" yaml:"key_file"`
+	AppID   string `json:"app_id,omitempty" yaml:"app_id,omitempty"`
+	KeyFile string `json:"key_file,omitempty" yaml:"key_file,omitempty"`
+	// Key is the PEM itself: an App created in Skybreaker's settings keeps
+	// it in the app's secrets file.
+	Key string `json:"key,omitempty" yaml:"key,omitempty"`
+	// FromApp leaves the App to be created in Skybreaker's settings. The
+	// secret's hosts are bound now; until then it resolves to nothing.
+	FromApp        bool              `json:"from_app,omitempty" yaml:"from_app,omitempty"`
 	InstallationID int64             `json:"installation_id,omitempty" yaml:"installation_id,omitempty"`
 	APIBase        string            `json:"api_base,omitempty" yaml:"api_base,omitempty"`
 	Permissions    map[string]string `json:"permissions,omitempty" yaml:"permissions,omitempty"`
@@ -78,13 +87,14 @@ type Store struct {
 
 	mu     sync.Mutex
 	minted map[string]time.Time
+	used   map[string]time.Time
 	now    func() time.Time
 }
 
 // NewStore validates specs and loads their values. Errors name the secret,
 // never its value.
 func NewStore(specs []Spec, httpClient *http.Client) (*Store, error) {
-	s := &Store{secrets: map[string]*secret{}, minted: map[string]time.Time{}, now: time.Now}
+	s := &Store{secrets: map[string]*secret{}, minted: map[string]time.Time{}, used: map[string]time.Time{}, now: time.Now}
 	for _, sp := range specs {
 		if sp.Name == "" {
 			return nil, errors.New("secrets: a secret has no name")
@@ -157,12 +167,21 @@ func (s *Store) build(sp Spec, httpClient *http.Client) (*secret, error) {
 }
 
 func githubAppMinter(g *GitHubAppSpec, httpClient *http.Client) (*githubapp.App, func(context.Context, Scope) (string, error), error) {
-	if g == nil || g.AppID == "" || g.KeyFile == "" {
-		return nil, nil, errors.New("github_app needs app_id and key_file")
+	if g != nil && g.FromApp {
+		if g.AppID != "" || g.KeyFile != "" || g.Key != "" {
+			return nil, nil, errors.New("github_app: from_app leaves app_id and the key to Skybreaker's settings")
+		}
+		return nil, func(context.Context, Scope) (string, error) { return "", ErrNotCreated }, nil
 	}
-	pemBytes, err := os.ReadFile(g.KeyFile)
-	if err != nil {
-		return nil, nil, err
+	if g == nil || g.AppID == "" || (g.KeyFile == "") == (g.Key == "") {
+		return nil, nil, errors.New("github_app needs app_id and key_file (or from_app)")
+	}
+	pemBytes := []byte(g.Key)
+	if g.KeyFile != "" {
+		var err error
+		if pemBytes, err = os.ReadFile(g.KeyFile); err != nil {
+			return nil, nil, err
+		}
 	}
 	key, err := githubapp.ParseKey(pemBytes)
 	if err != nil {
@@ -275,6 +294,7 @@ func (s *Store) Resolve(ctx context.Context, name, host string, scope Scope) (st
 		return "", fmt.Errorf("secrets: %s for %q: %w", name, host, ErrUnbound)
 	}
 	if sec.mint == nil {
+		s.markUsed(name)
 		return sec.value, nil
 	}
 	v, err := sec.mint(ctx, scope)
@@ -282,7 +302,21 @@ func (s *Store) Resolve(ctx context.Context, name, host string, scope Scope) (st
 		return "", fmt.Errorf("secrets: %s: %w", name, err)
 	}
 	s.remember(v)
+	s.markUsed(name)
 	return v, nil
+}
+
+func (s *Store) markUsed(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.used[name] = s.now()
+}
+
+// LastUsed is when each secret was last sent, since Skybreaker started.
+func (s *Store) LastUsed() map[string]time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return maps.Clone(s.used)
 }
 
 func (s *Store) remember(v string) {

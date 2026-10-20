@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http/httptest"
@@ -36,7 +37,7 @@ func TestUIDev(t *testing.T) {
 	}
 	dir := t.TempDir()
 	cfg := fmt.Sprintf(`{
-	  "data_dir": %q, "users": ["dev@example.com"],
+	  "data_dir": %q, "users": ["dev@example.com"], "ui_url": "https://skybreaker.example.ts.net",
 	  "tailscale": {"disabled": true, "dev_listen": %q},
 	  "broker": {"listen": "127.0.0.1:0", "hold": "1ms"},
 	  "sandbox": {"image": "skybreaker-sandbox:dev", "hook_listen": "127.0.0.1:0"},
@@ -51,11 +52,16 @@ func TestUIDev(t *testing.T) {
 	}`, filepath.Join(dir, "data"), addr)
 	path := filepath.Join(dir, "skybreaker.json")
 	os.WriteFile(path, []byte(cfg), 0o600)
-	err := Run(context.Background(), Options{
-		ConfigPath: path, Version: "uidev", Runner: &devDocker{}, Spawn: devSpawn,
-		OnBroker: devRequests,
-	})
-	t.Fatal(err)
+	// A change saved in Settings restarts Skybreaker, as serve does.
+	for {
+		err := Run(context.Background(), Options{
+			ConfigPath: path, Version: "uidev", Runner: &devDocker{}, Spawn: devSpawn,
+			OnBroker: devRequests,
+		})
+		if !errors.Is(err, ErrRestart) {
+			t.Fatal(err)
+		}
+	}
 }
 
 // devRequests has skybreaker's sandbox ask to merge a pull request now and then,

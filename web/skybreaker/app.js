@@ -2,8 +2,8 @@
 
 // Skybreaker's UI. Views: home (the inbox: every session, what needs you
 // first), project (its sandbox, sessions and schedules), session (a chat, see
-// chat.js, or a terminal), run (a scheduled run's log) and activity (what the
-// broker let out, tokens and the kill switch).
+// chat.js, or a terminal), run (a scheduled run's log), activity (what the
+// broker let out, tokens and the kill switch) and settings (settings.js).
 // Agent text only ever goes in through textContent; see dom.js.
 
 const state = { meta: null, route: null, seq: 0, timers: [], term: null, chat: null };
@@ -52,6 +52,7 @@ async function go() {
       case 'session': await renderSession(seq, state.route.id); break;
       case 'run': await renderRun(seq, state.route.id); break;
       case 'activity': await renderActivity(seq); break;
+      case 'settings': await renderSettings(seq); break;
       default: renderNotFound();
     }
     if (seq === state.seq) markSidebar();
@@ -551,8 +552,9 @@ function projectNameFrom(repo) {
   return n.slice(0, 40);
 }
 
-// newProjectSheet creates a project from the capability bundles the config
-// defines. Skybreaker restarts to run it, once no agent is working.
+// newProjectSheet creates a project from the bundles defined in the config
+// file or in Settings. Skybreaker restarts to run it, once no agent is
+// working.
 async function newProjectSheet() {
   let caps;
   try { caps = await api('GET', '/api/capabilities') } catch (e) { toast(e.message, 'error'); return }
@@ -590,8 +592,8 @@ async function newProjectSheet() {
     field('Repository', repo, 'On GitHub. The agents clone it and open pull requests to it.'),
     field('Name', name, 'Lowercase letters, digits and dashes.'),
     el('fieldset.np-group', null, el('legend', null, 'Agents'), agentBoxes),
-    el('fieldset.np-group', null, el('legend', null, 'Access'), capBoxes.length ? capBoxes : el('p.np-hint', null, 'Your config defines no capability bundles yet.'),
-      el('p.np-hint', null, 'What the sandbox may reach, from the bundles in your config. Anything else is denied.')),
+    el('fieldset.np-group', null, el('legend', null, 'Access'), capBoxes.length ? capBoxes : el('p.np-hint', null, 'No bundles yet: make one in Settings.'),
+      el('p.np-hint', null, 'What the sandbox may reach. Anything else is denied; add hosts later in Settings.')),
     error, create);
   const sheet = (...body) => $('#sheet-root').replaceChildren(
     el('div.backdrop', { onclick: closeSheet }),
@@ -1226,6 +1228,7 @@ function markSidebar() {
   const project = r.name === 'project' ? r.project : r.name === 'session' ? state.chat?.project : null;
   $('#nav-inbox').classList.toggle('on', r.name === 'home');
   $('#nav-activity').classList.toggle('on', r.name === 'activity');
+  $('#nav-settings').classList.toggle('on', r.name === 'settings');
   for (const a of document.querySelectorAll('.side-project')) a.classList.toggle('on', a.dataset.project === project);
   $('#new-chat-label').textContent = project ? 'New chat in ' + project : 'New chat';
   state.newChatIn = project;

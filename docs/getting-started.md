@@ -4,7 +4,7 @@
 
 - **A Linux host** with Docker. A VM is fine; allow about 4 GB of memory and a few cores per active project.
 - **A Tailscale tailnet.** Skybreaker joins it as its own machine, `skybreaker`.
-- **A GitHub App** installed on the repos agents will work on (see [GitHub](#github)).
+- **A GitHub account or organization** for the repos agents will work on. Skybreaker creates its GitHub App for you (see [GitHub](#github)).
 
 gVisor is required, and the installer adds it if it's missing.
 
@@ -14,20 +14,24 @@ gVisor is required, and the installer adds it if it's missing.
 curl -fsSL https://github.com/zaneGittins/skybreaker/releases/latest/download/install.sh | sh
 ```
 
-The installer asks for your tailnet login, a Tailscale auth key (admin console → Settings → Keys), the GitHub App's ID and private key, and your first repo. It then installs gVisor and nftables, writes the config to `/etc/skybreaker`, validates it, installs the systemd units and sandbox image, and starts Skybreaker. If a step fails, fix the cause and run `sudo skybreaker-setup install` again; it picks up where it stopped.
+The installer asks for your tailnet login, a Tailscale auth key (admin console → Settings → Keys) and your first repo. Leave the GitHub App's fields empty to create the App afterwards in Settings, or give the ID and private key of one you made. It then installs gVisor and nftables, writes the config to `/etc/skybreaker`, validates it, installs the systemd units and sandbox image, and starts Skybreaker. If a step fails, fix the cause and run `sudo skybreaker-setup install` again; it picks up where it stopped.
 
 For unattended installs:
 
 ```sh
 sudo TS_AUTHKEY=tskey-auth-... skybreaker-setup install --yes \
-  --login you@github --tailnet tail1234.ts.net --app-id 123456 --app-key app.pem --repo you/project
+  --login you@github --tailnet tail1234.ts.net --repo you/project
 ```
+
+Add `--app-id 123456 --app-key app.pem` to use a GitHub App you made yourself.
 
 To install a specific version or prerelease, pass it to the script: `... | SKYBREAKER_VERSION=v0.1.0 sh`.
 
 To install without the wizard, see [Install by hand](manual-install.md).
 
 ## GitHub
+
+Open **Settings** and choose **Create GitHub App** (for your account or an organization). GitHub opens with the App filled in; confirm, and you come back to Settings to install it on your repos. Skybreaker keeps the App's key; you never copy a `.pem`.
 
 - **App permissions:** `contents:write`, `pull_requests:write`, `issues:write` and `metadata:read`. Never `workflows`, `administration` or `secrets`.
 - **Ruleset on `main`:** block direct pushes, force pushes and deletion, and keep the App off the bypass list.
@@ -76,7 +80,14 @@ A preview page loads only from its own server, so fonts or scripts from CDNs don
 
 ## Configuration
 
-Everything lives in `/etc/skybreaker/skybreaker.yaml` (projects, policy, users) and `secrets.yaml`. Each project lists what its sandbox may reach in `allow` and `capabilities`; anything else is denied. Restart `skybreaker` after editing. Projects can also be created in the app (**New project** on the home page), from the capability bundles this file defines; those are kept in `projects.json` next to it. [deploy/skybreaker.example.yaml](../deploy/skybreaker.example.yaml) is a commented example.
+The base is `/etc/skybreaker/skybreaker.yaml` (users, projects, policy) and `secrets.yaml`. Each project lists what its sandbox may reach in `allow` and `capabilities` (bundles); anything else is denied. Restart `skybreaker` after editing. [deploy/skybreaker.example.yaml](../deploy/skybreaker.example.yaml) is a commented example.
+
+Most of it can also be changed in the app, by the users in `admins` (everyone in `users` unless you list them):
+
+- **Settings** creates the GitHub App, adds secrets (each bound to the hosts you list, and never shown again), makes bundles, and adds bundles and hosts to any project. Every change to what a project reaches is shown as the broker compiles it before you save.
+- **New project** on the home page creates a project from the bundles there are.
+
+The app saves beside the config file, in `projects.json`, `access.json` and `app-secrets.json`, and only ever adds to it: what the file says is shown read-only, and a name in both is an error. Changes apply when Skybreaker restarts itself, once no agent is working. `app_settings: false` in the config file turns changes in the app off.
 
 ## Updating
 

@@ -13,5 +13,5 @@ func Check(configPath string) error {
 	if err != nil {
 		return err
 	}
-	return broker.Check(cfg.Policy, cfg.SecretsFile)
+	return broker.Check(cfg.Policy, cfg.SecretsFile, cfg.AppSecretsFile)
 }

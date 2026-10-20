@@ -1,0 +1,59 @@
+/* Settings: the GitHub App, secrets, bundles and project access, their
+   sheets, the host editor and the review before saving. */
+
+.settings { max-width: 920px; }
+.settings p.note { margin: 0; padding: 0; border: 0; background: none; border-radius: 0; }
+.set-sec { gap: 12px; }
+.set-banner { display: flex; align-items: center; gap: 10px; margin: 0; padding: 12px 14px; border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--sun) 40%, var(--border)); color: var(--text-2); font-size: 14px; }
+
+.set-row { align-items: flex-start; padding: 12px 14px; gap: 12px; }
+.set-row .set-ic { width: 20px; height: 20px; flex-shrink: 0; margin-top: 2px; color: var(--text-2); }
+.set-row .proj { margin-top: 6px; }
+.set-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.set-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.set-main b.mono { font: 650 14px var(--mono); }
+.set-sub { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.set-sub.mono { font: 500 12px var(--mono); color: var(--text-2); }
+.set-sub.bad { color: var(--danger); }
+.set-acts { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.set-acts .icon-btn svg { width: 18px; height: 18px; }
+.set-gh .np-check-text { gap: 8px; }
+.set-gh .np-check input.np-input { width: min(280px, 100%); height: 42px; margin-top: 4px; accent-color: auto; }
+
+.picker.set-sheet { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow-y: auto; }
+.set-sheet .pv-head { display: grid; gap: 4px; padding: 4px 4px 4px; }
+.set-sheet .pv-head span { color: var(--muted); font-size: 13.5px; }
+.set-file { display: grid; gap: 4px; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); }
+.set-file .np-hint.mono { font-family: var(--mono); overflow-wrap: anywhere; }
+.set-sheet select.np-input { font-family: var(--font); font-size: 14px; padding: 0 10px; }
+
+.ent { display: grid; gap: 10px; }
+.ent-list { display: grid; gap: 10px; }
+.ent-card { display: grid; gap: 10px; padding: 12px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); }
+.ent-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ent-row > .np-input { flex: 1 1 160px; min-width: 0; }
+.ent-row > .ent-ports { flex: 0 1 90px; }
+.ent-row > [hidden], .ent-inspected[hidden] { display: none; }
+.ent-inspected { display: grid; gap: 10px; }
+.ent-rules { font: 500 13px/1.5 var(--mono); min-height: 72px; }
+.ent-add { justify-self: start; }
+
+.rv { display: grid; gap: 14px; }
+.rv-project { display: grid; gap: 8px; }
+.rv-head { margin: 0; font-size: 14.5px; color: var(--text-2); }
+.rv-item { display: grid; gap: 4px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); border-left-width: 3px; }
+.rv-item.add { border-left-color: var(--live); }
+.rv-item.del { border-left-color: var(--danger); }
+.rv-target { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rv-target b { font: 650 14px var(--mono); overflow-wrap: anywhere; }
+.rv-how { font-size: 13.5px; color: var(--text-2); }
+.rv-rules { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.rv-rules li { font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.rv-acts { display: flex; justify-content: flex-end; gap: 8px; }
+
+@media (max-width: 760px) {
+  .picker.set-sheet { width: auto; max-height: 88vh; }
+  .set-row { padding: 12px; }
+  .set-acts .btn.sm { padding: 0 10px; }
+}

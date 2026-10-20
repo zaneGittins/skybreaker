@@ -3,6 +3,8 @@
 
 data_dir: /var/lib/skybreaker           # workspaces, homes, the broker's CA, tokens and audit log
 users: [you@example.com]                # tailnet logins allowed to use Skybreaker and approve requests
+# admins: [you@example.com]             # who may change settings in the app (secrets, bundles, access); default: users
+# app_settings: false                   # make this file the only way to change them
 ui_url: https://skybreaker.example.ts.net
 tailscale:
   hostname: skybreaker                  # join once with TS_AUTHKEY in /etc/skybreaker/env

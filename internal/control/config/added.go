@@ -1,22 +1,22 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sync"
+	"slices"
 
 	"github.com/zaneGittins/skybreaker/internal/configfile"
 	"github.com/zaneGittins/skybreaker/internal/names"
 )
 
 // Added is a project created in the app, kept in projects.json beside the
-// config file. It holds only what the app may set: a repo, its agents, a
-// board key and the names of capabilities the config file defines. Hosts,
-// rules, env and subnets stay in the file you edit, so nothing added
-// through the app can reach further than the bundles you wrote.
+// config file. It holds a repo, its agents, a board key and the names of
+// the bundles it was given. Hosts and rules the app grants live in
+// access.json (see Access), where they are checked as the app's; env and
+// subnets stay in the file you edit.
 type Added struct {
 	Repo         string   `json:"repo"`
 	Branch       string   `json:"branch,omitempty"`
@@ -30,32 +30,37 @@ type addedFile struct {
 }
 
 // ProjectsPath is where projects created in the app are kept.
-func ProjectsPath(configPath string) string {
-	return filepath.Join(filepath.Dir(configPath), "projects.json")
-}
+func ProjectsPath(configPath string) string { return PathsFor(configPath).Projects }
 
 // Added reports whether a project was created in the app.
 func (c *Config) Added(name string) bool { return c.added[name] }
 
 func readAdded(path string) (addedFile, error) {
 	var f addedFile
+	err := readJSON(path, &f)
+	return f, err
+}
+
+// readJSON decodes a file the app writes; a missing one is empty.
+func readJSON(path string, v any) error {
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return f, nil
+		return nil
 	}
 	if err != nil {
-		return f, err
+		return err
 	}
-	if err := configfile.DecodeJSON(b, &f); err != nil {
-		return f, fmt.Errorf("%s: %w", path, err)
+	if err := configfile.DecodeJSON(b, v); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
 	}
-	return f, nil
+	return nil
 }
 
 // merge adds the app's projects to c. A name in both places is an error:
 // the file you edit is never silently overridden.
 func (c *Config) merge(f addedFile, path string) error {
-	for name, a := range f.Projects {
+	for _, name := range slices.Sorted(maps.Keys(f.Projects)) {
+		a := f.Projects[name]
 		if a == nil {
 			return fmt.Errorf("%s: project %q is empty", path, name)
 		}
@@ -77,66 +82,49 @@ func (c *Config) merge(f addedFile, path string) error {
 		if c.added == nil {
 			c.added = map[string]bool{}
 		}
-		c.Projects[name] = &Project{Repo: a.Repo, Branch: a.Branch, Harnesses: a.Harnesses, Key: a.Key, Capabilities: a.Capabilities}
+		c.Projects[name] = &Project{Repo: a.Repo, Branch: a.Branch, Harnesses: a.Harnesses, Key: a.Key, Capabilities: slices.Clone(a.Capabilities)}
 		c.added[name] = true
 	}
 	return nil
 }
 
-var addMu sync.Mutex
-
 // AddProject adds a project to projects.json, after checking that the
 // whole configuration still loads with it and passes check (the broker's
 // secret bindings). On any failure the file is left as it was.
 func AddProject(configPath, name string, a Added, check func(*Config) error) error {
-	addMu.Lock()
-	defer addMu.Unlock()
-	path := ProjectsPath(configPath)
-	f, err := readAdded(path)
+	_, _, err := Edit(configPath, func(f *AppFiles) error {
+		if _, dup := f.Projects[name]; dup {
+			return fmt.Errorf("project %q already exists", name)
+		}
+		if f.Projects == nil {
+			f.Projects = map[string]*Added{}
+		}
+		f.Projects[name] = &a
+		return nil
+	}, check, false)
+	return err
+}
+
+// writeTemp writes b to a new 0600 file beside path, for a rename into
+// place once it checks out.
+func writeTemp(path string, b []byte) (string, error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
 	if err != nil {
-		return err
+		return "", err
 	}
-	if _, dup := f.Projects[name]; dup {
-		return fmt.Errorf("project %q already exists", name)
-	}
-	if f.Projects == nil {
-		f.Projects = map[string]*Added{}
-	}
-	f.Projects[name] = &a
-	b, err := jsonIndent(f)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".projects-*.json")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(b); err == nil {
+	_, err = tmp.Write(b)
+	if err == nil {
 		err = tmp.Sync()
 	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
+	if err == nil {
+		err = os.Chmod(tmp.Name(), 0o600)
+	}
 	if err != nil {
-		return err
+		os.Remove(tmp.Name())
+		return "", err
 	}
-	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
-		return err
-	}
-	c, err := loadWith(configPath, tmp.Name())
-	if err != nil {
-		return err
-	}
-	if check != nil {
-		if err := check(c); err != nil {
-			return err
-		}
-	}
-	return os.Rename(tmp.Name(), path)
-}
-
-func jsonIndent(v any) ([]byte, error) {
-	b, err := json.MarshalIndent(v, "", "  ")
-	return append(b, '\n'), err
+	return tmp.Name(), nil
 }

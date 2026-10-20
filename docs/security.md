@@ -21,7 +21,13 @@ Each project runs in its own gVisor (`runsc`) sandbox, holding the repo, toolcha
 
 **The single-host trade-off.** The broker shares a host with the sandboxes, so a sandbox escape reaches its secrets. For most setups the simpler deployment is worth it: the realistic threats (misuse of allowed access, a malicious pull request) are the same either way. If you give the broker production credentials, use the narrowest tokens available, make writes `ask`, or keep production on a separate machine.
 
-Projects can be created in the app as well as in the config file. The app writes them to `projects.json` beside the config, and can set only a project's repo, agents and board key and which of the config's capability bundles it gets. Hosts, rules, secrets and env stay in the file you edit, so nothing done through the app can let a sandbox reach further than the bundles you wrote. Sandboxes can reach neither the app nor `/etc/skybreaker`.
+**Settings in the app.** Admins (the `admins` list, or every user) can change most of the config in the app: create the GitHub App, add secrets, make bundles, add bundles and hosts to projects, and create projects. That means the app can widen what a sandbox reaches, so a hijacked UI session is the risk to plan for. Sandboxes can reach neither the app nor `/etc/skybreaker`, so the threats are a bug that runs agent text as code in the UI (agent text only ever goes in as text, and the CSP allows no inline script) or a listed user who shouldn't make changes (`admins`). The limits:
+
+- **The app only adds.** Its files (`projects.json`, `access.json`, `app-secrets.json`) are read after the config file. What the file says is shown read-only, and a name in both is an error. `app_settings: false` in the file turns changes in the app off; `admins` can only be set in the file.
+- **Hosts only.** The app adds exact host names, tunnelled or inspected, with rules and a secret to send. Routes, private addresses (`allow_private`), CA files and Kubernetes rules reach into your network or onto this host, so they stay in the file. Listeners, the data directory, the Tailscale key and the sandbox range are file-only too.
+- **Secrets keep their hosts.** A secret added in the app is typed in (the app can't name a file or variable on this host to read) and bound to the hosts listed with it. Its hosts change only when its value is pasted again, so a session that never had the value can't send it anywhere new. Values are never shown again; the page shows a keyed fingerprint.
+- **Checked like the file, then recorded.** Every change is compiled with the whole config and the broker's secret bindings before it's saved (nothing is saved if that fails), shown as a review of what each project gains and loses, recorded in the audit log by who made it (never with a value) and applied by a restart once no agent is working.
+- **The GitHub App** is created through GitHub's manifest flow: a form posted to github.com (the only other place the app's pages may post to), a one-time `state` tied to the admin who started it, and a code exchanged for the App's key on the server.
 
 ## The broker
 
@@ -65,7 +71,7 @@ Agents reach their project's board through Skybreaker's MCP server, identified b
 
 - **A GitHub ruleset** blocks direct pushes, force pushes and deletion, with the App off its bypass list. This is the backstop.
 - **The broker** refuses pushes outside the allowed branch globs, deletes and tags. It can't see history, so force pushes rely on the ruleset.
-- **The GitHub App** is never granted `workflows`, `administration` or `secrets`.
+- **The GitHub App** is never granted `workflows`, `administration` or `secrets`; the one Settings creates asks for exactly `contents`, `pull_requests` and `issues` (write) and `metadata` (read), with no webhook.
 
 ## Limits
 

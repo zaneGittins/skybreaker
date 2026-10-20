@@ -16,7 +16,7 @@ type fakeAdder struct {
 	got []config.Added
 }
 
-func (f *fakeAdder) AddProject(_ context.Context, name string, a config.Added) (AddedProject, error) {
+func (f *fakeAdder) AddProject(_ context.Context, _, name string, a config.Added) (AddedProject, error) {
 	if name == "orbit" {
 		return AddedProject{}, errors.New(`project "orbit" already exists in the config file`)
 	}

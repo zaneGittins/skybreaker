@@ -25,9 +25,10 @@ import (
 // are embedded, so nothing needs loading from elsewhere.
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
-// TerminalCSP also allows inline styles, which xterm.js's DOM renderer
-// injects for its theme. Scripts stay 'self' only.
-const TerminalCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+// TerminalCSP is the app's: it also allows inline styles, which xterm.js's
+// DOM renderer injects for its theme, and a form posted to GitHub, which is
+// how a GitHub App is created from a manifest. Scripts stay 'self' only.
+const TerminalCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self' https://github.com; frame-ancestors 'none'"
 
 // NewServer is an http.Server for a daemon listener, whose requests inherit
 // ctx. Sandboxes reach the proxy and hook listeners, so idle and oversized

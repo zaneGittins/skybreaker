@@ -118,6 +118,7 @@ type Deps struct {
 	Previews   *preview.Registry // nil when previews are off
 	Projects   ProjectAdder      // nil when projects can't be created here
 	SSHKeys    *sshkeys.Store    // nil when SSH into sandboxes is off
+	Settings   Settings          // nil when settings can't be changed here
 	Identifier tsauth.Identifier
 	Static     fs.FS
 	Version    string
@@ -130,6 +131,7 @@ type server struct {
 	Deps
 	tints map[string]int
 	ssh   relays
+	gh    ghStates
 }
 
 func New(d Deps) (http.Handler, error) {
@@ -181,6 +183,7 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("GET /api/approvals", s.approvals)
 	m.HandleFunc("POST /api/approvals/{id}", s.decide)
 	s.boardRoutes(m)
+	s.settingsRoutes(m)
 	m.HandleFunc("GET /api/requests", s.requests)
 	m.HandleFunc("POST /api/requests/{id}/{verb}", s.decideRequest)
 	m.HandleFunc("GET /api/activity", s.activity)
@@ -224,7 +227,7 @@ func (s *server) meta(w http.ResponseWriter, r *http.Request) {
 	}
 	webutil.WriteJSON(w, http.StatusOK, map[string]any{
 		"version": s.Version, "user": p.Name(), "harnesses": s.Config.Harnesses.Names(),
-		"chat": modes,
+		"chat": modes, "admin": s.Config.Admin(p.Login),
 	})
 }
 

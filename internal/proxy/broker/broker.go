@@ -30,7 +30,10 @@ var ErrNotFound = errors.New("not found")
 type Options struct {
 	DataDir     string // CA, session tokens and audit log
 	SecretsFile string // "" for none
-	Policy      *config.Config
+	// AppSecretsFile holds the secrets added in Skybreaker's settings; ""
+	// for none.
+	AppSecretsFile string
+	Policy         *config.Config
 	// Sandbox names the project whose sandbox network a connection comes
 	// from; see server.Deps.
 	Sandbox func(remoteAddr string) (project string, ok bool)
@@ -61,7 +64,7 @@ func Open(o Options) (*Broker, error) {
 	if o.Policy == nil || o.Sandbox == nil {
 		return nil, errors.New("broker: missing policy or sandbox check")
 	}
-	store, err := loadSecrets(o.Policy, o.SecretsFile)
+	store, err := loadSecrets(o.Policy, o.SecretsFile, o.AppSecretsFile)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +169,24 @@ func (b *Broker) GitHubAccess(ctx context.Context, repo string) (installed bool,
 	}
 	installURL, _ = app.InstallURL(ctx)
 	return installed, installURL, nil
+}
+
+// GitHubInstallURL is where to install the GitHub App on more repositories.
+func (b *Broker) GitHubInstallURL(ctx context.Context) (string, error) {
+	app := b.secrets.GitHubApp()
+	if app == nil {
+		return "", ErrNoGitHubApp
+	}
+	return app.InstallURL(ctx)
+}
+
+// SecretsUsed is when each secret was last sent, since start.
+func (b *Broker) SecretsUsed() map[string]time.Time { return b.secrets.LastUsed() }
+
+// LogConfig records a settings change made in the app. what never holds a
+// secret's value.
+func (b *Broker) LogConfig(by, what string) {
+	b.audit.Log(audit.Entry{Decision: "config", By: by, Reason: what})
 }
 
 // --- for the UI -------------------------------------------------------------

@@ -8,18 +8,28 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/proxy/secrets"
 )
 
-// Check loads the secrets file as Open would, key files included, and fails
-// if an injected secret is missing or isn't bound to its host.
-func Check(policy *config.Config, secretsFile string) error {
-	_, err := loadSecrets(policy, secretsFile)
+// Check loads the secrets file and the app's (appFile, "" for none) as
+// Open would, key files included, and fails if an injected secret is
+// missing or isn't bound to its host.
+func Check(policy *config.Config, secretsFile, appFile string) error {
+	_, err := loadSecrets(policy, secretsFile, appFile)
 	return err
 }
 
-func loadSecrets(policy *config.Config, file string) (*secrets.Store, error) {
+func loadSecrets(policy *config.Config, file, appFile string) (*secrets.Store, error) {
 	var specs []secrets.Spec
 	if file != "" {
 		var err error
 		if specs, err = config.LoadSecrets(file); err != nil {
+			return nil, err
+		}
+	}
+	if appFile != "" {
+		f, err := secrets.ReadAppFile(appFile)
+		if err != nil {
+			return nil, err
+		}
+		if specs, err = secrets.Merge(specs, f.Secrets); err != nil {
 			return nil, err
 		}
 	}

@@ -119,7 +119,7 @@ func Run(ctx context.Context, o Options) error {
 	}
 	tailnet, _ := uiNet.(netguard.Tailnet)
 	brk, err := broker.Open(broker.Options{
-		DataDir: filepath.Join(cfg.DataDir, "broker"), SecretsFile: cfg.SecretsFile, Policy: cfg.Policy,
+		DataDir: filepath.Join(cfg.DataDir, "broker"), SecretsFile: cfg.SecretsFile, AppSecretsFile: cfg.AppSecretsFile, Policy: cfg.Policy,
 		// Only sandboxes use the broker, each from its own network.
 		Sandbox: func(remote string) (string, bool) {
 			ap, err := netip.ParseAddrPort(remote)
@@ -212,8 +212,8 @@ func Run(ctx context.Context, o Options) error {
 		OnUpdate: func(r store.Run) { a.Publish(app.Event{Type: "run", Project: r.Project, Data: r}) },
 	})
 
-	// A project created in the app lands on a restart, once no agent is
-	// working; the first second lets the answer reach the browser.
+	// A project or setting changed in the app lands on a restart, once no
+	// agent is working; the first second lets the answer reach the browser.
 	restart := make(chan struct{}, 1)
 	var restartOnce sync.Once
 	requestRestart := func() {
@@ -234,10 +234,11 @@ func Run(ctx context.Context, o Options) error {
 		})
 	}
 
+	changes := &settings{configPath: o.ConfigPath, secrets: cfg.SecretsFile, app: a, broker: brk, restart: requestRestart}
 	apiHandler, err := api.New(api.Deps{
 		Config: cfg, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews, SSHKeys: sshKeys,
-		Projects: &adder{configPath: o.ConfigPath, app: a, broker: brk, restart: requestRestart},
-		Static:   web.Skybreaker(), Version: o.Version,
+		Projects: changes, Settings: changes,
+		Static: web.Skybreaker(), Version: o.Version,
 		Upgrade: func(w http.ResponseWriter, r *http.Request) (terminal.Conn, error) { return wsock.Accept(w, r) },
 		Bridge: func(ctx context.Context, c terminal.Conn, argv []string) error {
 			return terminal.Bridge(ctx, c, terminal.StartPTY, argv)
@@ -341,7 +342,7 @@ func Run(ctx context.Context, o Options) error {
 	case err := <-errs:
 		return err
 	case <-restart:
-		log.Printf("skybreaker: restarting to add a project")
+		log.Printf("skybreaker: restarting to apply a change made in the app")
 		result = ErrRestart
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)

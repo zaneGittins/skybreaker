@@ -30,7 +30,13 @@ type Config struct {
 	DataDir string `json:"data_dir" yaml:"data_dir"`
 	// Users are the tailnet logins allowed to use Skybreaker, approvals
 	// included.
-	Users        []string                    `json:"users" yaml:"users"`
+	Users []string `json:"users" yaml:"users"`
+	// Admins may change settings in the app (secrets, the GitHub App,
+	// bundles, project access and new projects). Default: every user.
+	Admins []string `json:"admins" yaml:"admins"`
+	// AppSettings false makes this file the only way to change them; the
+	// app's files load as they stand. Default true.
+	AppSettings  *bool                       `json:"app_settings" yaml:"app_settings"`
 	UIURL        string                      `json:"ui_url" yaml:"ui_url"` // Skybreaker's address, for notification links
 	Tailscale    Tailscale                   `json:"tailscale" yaml:"tailscale"`
 	SecretsFile  string                      `json:"secrets_file" yaml:"secrets_file"`
@@ -46,10 +52,14 @@ type Config struct {
 	Harnesses *harness.Registry `json:"-" yaml:"-"`
 	// Policy is the broker's compiled view of projects and capabilities.
 	Policy *policy.Config `json:"-" yaml:"-"`
+	// AppSecretsFile holds the secrets added in the app.
+	AppSecretsFile string `json:"-" yaml:"-"`
 
-	base    netip.Prefix
-	subnets map[string]netip.Prefix
-	added   map[string]bool // projects created in the app (projects.json)
+	base       netip.Prefix
+	subnets    map[string]netip.Prefix
+	added      map[string]bool  // projects created in the app (projects.json)
+	fileAccess map[string]Grant // each project's access as the config file gives it
+	appBundles map[string]bool  // bundles made in the app (access.json)
 }
 
 type Tailscale struct {
@@ -134,21 +144,36 @@ var (
 	branchRe  = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$`)
 )
 
-// Load reads the config file and the projects created in the app beside it.
-func Load(path string) (*Config, error) { return loadWith(path, ProjectsPath(path)) }
+// Load reads the config file and, beside it, what the app adds: projects,
+// access and secrets (see Paths).
+func Load(path string) (*Config, error) { return loadWith(path, PathsFor(path)) }
 
-func loadWith(path, projectsPath string) (*Config, error) {
+func loadWith(path string, paths Paths) (*Config, error) {
 	var c Config
 	if err := configfile.Load(path, &c); err != nil {
 		return nil, err
 	}
-	f, err := readAdded(projectsPath)
+	c.fileAccess, c.appBundles = map[string]Grant{}, map[string]bool{}
+	for name, p := range c.Projects {
+		if p != nil {
+			c.fileAccess[name] = Grant{Capabilities: slices.Clone(p.Capabilities), Allow: slices.Clone(p.Allow)}
+		}
+	}
+	f, err := readAdded(paths.Projects)
 	if err != nil {
 		return nil, err
 	}
-	if err := c.merge(f, projectsPath); err != nil {
+	if err := c.merge(f, paths.Projects); err != nil {
 		return nil, err
 	}
+	var a Access
+	if err := readJSON(paths.Access, &a); err != nil {
+		return nil, err
+	}
+	if err := c.mergeAccess(a, paths.Access); err != nil {
+		return nil, err
+	}
+	c.AppSecretsFile = paths.Secrets
 	if err := c.init(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -230,6 +255,11 @@ func (c *Config) validate() error {
 	}
 	if len(c.Users) == 0 {
 		bad("users: list at least one tailnet login allowed to use the UI")
+	}
+	for _, a := range c.Admins {
+		if !slices.ContainsFunc(c.Users, func(u string) bool { return strings.EqualFold(u, a) }) {
+			bad("admins: %s is not in users", a)
+		}
 	}
 	if c.Tailscale.Disabled {
 		host, _, err := net.SplitHostPort(c.Tailscale.DevListen)

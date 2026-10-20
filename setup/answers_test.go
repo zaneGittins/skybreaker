@@ -90,6 +90,33 @@ func TestRenderedConfigPassesServerCheck(t *testing.T) {
 	}
 }
 
+// Without an App, the install leaves it to Skybreaker's Settings: the
+// secret's hosts are bound now, and the server starts without one.
+func TestGitHubAppLater(t *testing.T) {
+	l := testLayout(t)
+	a := testAnswers(t)
+	a.AppID, a.AppKey = "", ""
+	if err := a.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, a, l)
+	if err := controld.Check(l.Config()); err != nil {
+		t.Fatalf("the server rejects an install without an App: %v", err)
+	}
+	sec, _ := os.ReadFile(l.Secrets())
+	if !strings.Contains(string(sec), "from_app: true") || strings.Contains(string(sec), "key_file") {
+		t.Fatalf("secrets:\n%s", sec)
+	}
+	if _, err := os.Stat(l.AppKey()); err == nil {
+		t.Fatal("wrote a key file without a key")
+	}
+	half := testAnswers(t)
+	half.AppKey = ""
+	if half.ValidateGitHub() == nil {
+		t.Fatal("an App ID without its key")
+	}
+}
+
 func TestRenderedConfigOnlyNamesChosenLogins(t *testing.T) {
 	l := testLayout(t)
 	a := testAnswers(t)

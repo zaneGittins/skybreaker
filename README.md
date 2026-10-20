@@ -56,7 +56,7 @@ More in [ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [security model](docs/se
 
 ## Get started
 
-You need a Linux host with Docker, a Tailscale tailnet and a GitHub App for your repos. Then:
+You need a Linux host with Docker, a Tailscale tailnet and a GitHub account for your repos. Then:
 
 ```sh
 curl -fsSL https://github.com/zaneGittins/skybreaker/releases/latest/download/install.sh | sh

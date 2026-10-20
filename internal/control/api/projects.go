@@ -13,7 +13,7 @@ import (
 
 // ProjectAdder creates projects from the app (see config.AddProject).
 type ProjectAdder interface {
-	AddProject(ctx context.Context, name string, a config.Added) (AddedProject, error)
+	AddProject(ctx context.Context, by, name string, a config.Added) (AddedProject, error)
 }
 
 // AddedProject is what creating a project did.
@@ -33,6 +33,10 @@ type GitHubAccess struct {
 }
 
 func (s *server) createProject(w http.ResponseWriter, r *http.Request) {
+	by, ok := s.admin(w, r)
+	if !ok {
+		return
+	}
 	if s.Projects == nil {
 		webutil.Error(w, http.StatusNotFound, "projects can't be created here")
 		return
@@ -49,7 +53,7 @@ func (s *server) createProject(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, http.StatusBadRequest, "bad project: "+err.Error())
 		return
 	}
-	out, err := s.Projects.AddProject(r.Context(), in.Name, in.Added)
+	out, err := s.Projects.AddProject(r.Context(), by, in.Name, in.Added)
 	if err != nil {
 		webutil.Error(w, http.StatusBadRequest, err.Error())
 		return

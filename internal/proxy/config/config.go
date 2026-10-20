@@ -6,6 +6,7 @@
 package config
 
 import (
+	"cmp"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -108,6 +109,7 @@ type HostRule struct {
 	Rules      *policy.Set // nil for tunnel
 	Inject     *Inject
 	Capability string // "" for the project's own allow list
+	reach      Reach
 }
 
 func (h *HostRule) AllowsPort(p int) bool { return slices.Contains(h.Ports, p) }
@@ -121,6 +123,7 @@ type RouteRule struct {
 	AllowPrivate []netip.Prefix
 	RootCAs      *x509.CertPool // nil: system roots
 	Capability   string
+	reach        Reach
 }
 
 // Strip returns the upstream path for a request path under the route.
@@ -325,6 +328,7 @@ func buildHost(capName string, e *Entry, vars map[string]string) (*HostRule, err
 		if len(e.Methods) > 0 || len(e.Rules) > 0 || e.Inject != nil {
 			return nil, errors.New("a tunnel is opaque: methods, rules and inject need mode mitm")
 		}
+		h.reach = describeHost(e, h, vars)
 		return h, nil
 	case ModeMITM:
 	default:
@@ -340,6 +344,7 @@ func buildHost(capName string, e *Entry, vars map[string]string) (*HostRule, err
 	if h.Rules, err = policy.Compile(rules, vars); err != nil {
 		return nil, err
 	}
+	h.reach = describeHost(e, h, vars)
 	return h, nil
 }
 
@@ -436,6 +441,7 @@ func buildRoute(capName string, e *Entry, vars map[string]string, p *Project) (*
 		}
 		r.AllowPrivate = append(r.AllowPrivate, pfx)
 	}
+	r.reach = describeRoute(e, r, vars)
 	return r, nil
 }
 
@@ -464,6 +470,24 @@ func (c *Config) CheckSecrets(hostsOf func(name string) ([]string, bool)) error 
 		}
 		if !slices.Contains(hosts, normHost(host)) {
 			errs = append(errs, fmt.Errorf("%s: secret %q is not bound to %s (its hosts: %v)", where, secret, host, hosts))
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Capabilities)) {
+		for _, e := range c.Capabilities[name] {
+			if e == nil {
+				continue
+			}
+			if s := e.Inject.SecretName(); s != "" {
+				host := e.Host
+				if e.Route != "" {
+					u, err := url.Parse(e.Upstream)
+					if err != nil {
+						continue // resolve reported it
+					}
+					host = u.Hostname()
+				}
+				check("capability "+name+" "+cmp.Or(e.Host, e.Route), s, host)
+			}
 		}
 	}
 	for _, name := range c.ProjectNames() {

@@ -70,12 +70,13 @@ func NewWizard(defaults Answers, checks []Check) *Wizard {
 			name: "GitHub", title: "Connect a GitHub App",
 			intro: []string{
 				"Agents reach GitHub only through the broker, with a GitHub App's tokens.",
-				"Create one at github.com/settings/apps/new with Contents, Pull requests",
-				"and Issues read and write, and Metadata read. Install it on your repos",
-				"and generate a private key. Copy the .pem to this host.",
+				"Leave both fields empty to create the App in one click from Skybreaker's",
+				"Settings once it's running (recommended). Or use an App you made at",
+				"github.com/settings/apps/new with Contents, Pull requests and Issues read",
+				"and write, and Metadata read: copy its private key .pem to this host.",
 			},
 			fields: []field{
-				{label: "App ID", hint: "on the App's settings page",
+				{label: "App ID", hint: "on the App's settings page; empty to create it in Settings",
 					get: func(a *Answers) string { return a.AppID }, set: func(a *Answers, s string) { a.AppID = strings.TrimSpace(s) }},
 				{label: "Private key file", hint: "path to the .pem on this host; it's copied to /etc/skybreaker",
 					get: func(a *Answers) string { return a.AppKey }, set: func(a *Answers, s string) { a.AppKey = strings.TrimSpace(s) }},
@@ -312,7 +313,11 @@ func (w *Wizard) viewSummary() string {
 	b.WriteString(row("Address", a.UIURL()))
 	b.WriteString(row("Logins", list(a.Users)))
 	b.WriteString(row("Auth key", key))
-	b.WriteString(row("GitHub App", a.AppID+"  "+a.AppKey))
+	if a.AppLater() {
+		b.WriteString(row("GitHub App", "create it in Skybreaker's Settings"))
+	} else {
+		b.WriteString(row("GitHub App", a.AppID+"  "+a.AppKey))
+	}
 	b.WriteString(row("Project", ProjectName(a.Repo)+"  ("+a.Repo+", "+a.Branch+")"))
 	b.WriteString(row("Harnesses", list(a.Harnesses)))
 	if len(a.Block) > 0 {
