@@ -65,3 +65,28 @@ func TestPiConfig(t *testing.T) {
 		t.Fatalf("after removal %v", providers)
 	}
 }
+
+// skybreaker-pi adds every agent's instructions to pi's prompt when there
+// are any, after taking its own flag off.
+func TestPiWrapperInstructions(t *testing.T) {
+	etc, bin := t.TempDir(), t.TempDir()
+	os.WriteFile(filepath.Join(bin, "pi"), []byte("#!/bin/sh\nprintf '%s|' \"$@\"\n"), 0o755)
+	os.WriteFile(filepath.Join(bin, "node"), []byte("#!/bin/sh\nexit 0\n"), 0o755)
+	run := func() string {
+		t.Helper()
+		cmd := exec.Command("sh", "skybreaker-pi.sh", "--skybreaker-mcp", "/x/mcp.json", "--print", "hi")
+		cmd.Env = append(os.Environ(), "SKYBREAKER_ETC="+etc, "PATH="+bin+":/usr/bin:/bin")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	if got := run(); got != "--print|hi|" {
+		t.Errorf("without instructions %q", got)
+	}
+	os.WriteFile(filepath.Join(etc, "instructions.md"), []byte("Be brief."), 0o644)
+	if got, want := run(), "--append-system-prompt|"+filepath.Join(etc, "instructions.md")+"|--print|hi|"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

@@ -24,6 +24,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/board"
 	"github.com/zaneGittins/skybreaker/internal/control/api"
 	"github.com/zaneGittins/skybreaker/internal/control/app"
+	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/hooks"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
@@ -35,6 +36,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/sshkeys"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 	"github.com/zaneGittins/skybreaker/internal/control/terminal"
+	"github.com/zaneGittins/skybreaker/internal/control/usage"
 	"github.com/zaneGittins/skybreaker/internal/notify"
 	"github.com/zaneGittins/skybreaker/internal/notify/webpush"
 	"github.com/zaneGittins/skybreaker/internal/proxy/broker"
@@ -155,13 +157,25 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	n = notify.Multi{n, notify.Dedup(push, 10*time.Minute)}
+	// The tokens chats and runs report, for the home page.
+	tokensUsed, err := usage.Open(filepath.Join(cfg.DataDir, "usage.json"))
+	if err != nil {
+		return err
+	}
+	defer tokensUsed.Flush()
 	a, err := app.New(app.Deps{
 		Config: cfg, Store: st, Sandbox: sandboxes, Broker: tokens{brk},
 		HookKey: hookKey, Notify: n, UIURL: cfg.UIURL,
-		ChatDir: filepath.Join(cfg.DataDir, "chats"), Spawn: o.Spawn,
+		ChatDir: filepath.Join(cfg.DataDir, "chats"), Spawn: o.Spawn, Usage: tokensUsed,
 	})
 	if err != nil {
 		return err
+	}
+	// Every agent's instructions, set in the app.
+	if text, err := config.ReadInstructions(cfg.Instructions()); err != nil {
+		log.Printf("skybreaker: instructions: %v", err)
+	} else if err := a.SetInstructions(text); err != nil {
+		log.Printf("skybreaker: instructions: %v", err)
 	}
 	defer a.CloseChats()
 	a.RecoverChats()
@@ -206,6 +220,10 @@ func Run(ctx context.Context, o Options) error {
 	sched := scheduler.New(scheduler.Deps{
 		Config: cfg, Store: st, Backend: a, Notify: n, UIURL: cfg.UIURL,
 		OnUpdate: func(r store.Run) { a.Publish(app.Event{Type: "run", Project: r.Project, Data: r}) },
+		OnUsage: func(harness string, u chat.Usage) {
+			tokensUsed.Add(harness, u)
+			a.Publish(app.Event{Type: "usage"})
+		},
 	})
 
 	// A project or setting changed in the app lands on a restart, once no
@@ -230,10 +248,10 @@ func Run(ctx context.Context, o Options) error {
 		})
 	}
 
-	changes := &settings{configPath: o.ConfigPath, secrets: cfg.SecretsFile, app: a, broker: brk, boards: boards, restart: requestRestart}
+	changes := &settings{configPath: o.ConfigPath, secrets: cfg.SecretsFile, instructions: cfg.Instructions(), app: a, broker: brk, boards: boards, restart: requestRestart}
 	apiHandler, err := api.New(api.Deps{
 		Config: cfg, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews, SSHKeys: sshKeys,
-		Projects: changes, Settings: changes,
+		Projects: changes, Settings: changes, Usage: tokensUsed,
 		Static: web.Skybreaker(), Version: o.Version,
 		Upgrade: func(w http.ResponseWriter, r *http.Request) (terminal.Conn, error) { return wsock.Accept(w, r) },
 		Bridge: func(ctx context.Context, c terminal.Conn, argv []string) error {

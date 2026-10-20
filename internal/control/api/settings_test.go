@@ -28,6 +28,8 @@ type fakeSettings struct {
 	log     []string
 	pending bool
 	key     string
+
+	instructions string
 }
 
 func (s *fakeSettings) Apply(_ context.Context, by, what string, change func(*config.AppFiles) error, dry bool) (Applied, error) {
@@ -424,4 +426,60 @@ func d0(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return filepath.Dir(c.AppPaths().Access)
+}
+
+func (s *fakeSettings) Instructions() (string, error) { return s.instructions, nil }
+func (s *fakeSettings) SetInstructions(by, text string) error {
+	if err := config.CheckInstructions(text); err != nil {
+		return err
+	}
+	s.instructions = text
+	s.log = append(s.log, by+": changed the agents' instructions")
+	return nil
+}
+
+// Every agent's instructions: anyone may read them, admins change them.
+func TestInstructionsAPI(t *testing.T) {
+	s := &fakeSettings{instructions: "Be brief."}
+	f := newFixture(t, you, withSettings(t, s, ""))
+	get := func(f *fixture) (string, bool) {
+		t.Helper()
+		code, body := f.do(t, "GET", "/api/instructions", "", nil)
+		var out struct {
+			Text     string `json:"text"`
+			Editable bool   `json:"editable"`
+		}
+		if err := json.Unmarshal([]byte(body), &out); err != nil || code != 200 {
+			t.Fatalf("%d %s", code, body)
+		}
+		return out.Text, out.Editable
+	}
+	if text, editable := get(f); text != "Be brief." || !editable {
+		t.Fatalf("%q %v", text, editable)
+	}
+	if code, out := f.do(t, "PUT", "/api/instructions", `{"text":"Use British spelling.\r\nRun the tests."}`, nil); code != 200 {
+		t.Fatalf("save: %d %s", code, out)
+	}
+	if s.instructions != "Use British spelling.\nRun the tests." || len(s.log) != 1 || s.log[0] != "zane@example.com: changed the agents' instructions" {
+		t.Fatalf("saved %q, log %q", s.instructions, s.log)
+	}
+	for name, body := range map[string]string{
+		"nul":     `{"text":"a\u0000b"}`,
+		"unknown": `{"text":"a","extra":1}`,
+		"long":    `{"text":"` + strings.Repeat("x", config.MaxInstructions+1) + `"}`,
+	} {
+		if code, _ := f.do(t, "PUT", "/api/instructions", body, nil); code != 400 {
+			t.Errorf("%s: %d", name, code)
+		}
+	}
+
+	kim := you
+	kim.Login = "kim@example.com"
+	f = newFixture(t, kim, withSettings(t, s, `"admins": ["zane@example.com"],`))
+	if text, editable := get(f); text == "" || editable {
+		t.Errorf("kim: %q %v", text, editable)
+	}
+	if code, _ := f.do(t, "PUT", "/api/instructions", `{"text":"x"}`, nil); code != 403 {
+		t.Errorf("kim saved: %d", code)
+	}
 }

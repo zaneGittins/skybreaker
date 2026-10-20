@@ -1029,3 +1029,47 @@ func TestSSHConnDialsTheSandbox(t *testing.T) {
 		t.Fatal("SSH to a project that doesn't exist")
 	}
 }
+
+// Every agent's instructions reach each sandbox's etc/: as written for
+// Claude Code and pi, and as Codex's managed config. A sandbox started
+// later gets them too, and they're rewritten in place, since each file is
+// mounted on its own.
+func TestInstructions(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := f.app.StartSandbox(ctx, "orbit"); err != nil {
+		t.Fatal(err)
+	}
+	etc := filepath.Join(f.dir, "projects", "orbit", "etc")
+	before, _ := os.Stat(filepath.Join(etc, sandbox.InstructionsFile))
+	if err := f.app.SetInstructions("Say \"hi\" \\ then\n\ttab\x01 and é"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(etc, sandbox.InstructionsFile))
+	if string(b) != "Say \"hi\" \\ then\n\ttab\x01 and é" {
+		t.Errorf("instructions.md %q", b)
+	}
+	after, _ := os.Stat(filepath.Join(etc, sandbox.InstructionsFile))
+	if before == nil || !os.SameFile(before, after) {
+		t.Error("instructions.md was replaced, not rewritten")
+	}
+	toml, _ := os.ReadFile(filepath.Join(etc, sandbox.CodexConfigFile))
+	if !strings.Contains(string(toml), `developer_instructions = "Say \"hi\" \\ then\n\ttab\u0001 and é"`+"\n") {
+		t.Errorf("codex config %s", toml)
+	}
+
+	if err := f.app.StartSandbox(ctx, "bifract"); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(f.dir, "projects", "bifract", "etc", sandbox.InstructionsFile)); !strings.HasPrefix(string(b), "Say") {
+		t.Errorf("a later sandbox got %q", b)
+	}
+
+	// None leaves both empty.
+	f.app.SetInstructions("")
+	for _, name := range []string{sandbox.InstructionsFile, sandbox.CodexConfigFile} {
+		if b, _ := os.ReadFile(filepath.Join(etc, name)); len(b) != 0 {
+			t.Errorf("%s %q", name, b)
+		}
+	}
+}

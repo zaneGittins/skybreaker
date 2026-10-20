@@ -39,6 +39,10 @@ type Out struct {
 	Write  [][]byte // lines for the harness's stdin
 	// Resume is the harness's conversation ID once it reports one.
 	Resume string
+	// Usage is the tokens used since the last report; Limits, when not
+	// nil, the account's usage windows as they stand now.
+	Usage  *Usage
+	Limits []Limit
 }
 
 // A Driver translates between Skybreaker and one harness's structured protocol.

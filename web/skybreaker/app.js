@@ -79,7 +79,7 @@ async function go() {
 // then waits rather than wiping what they were doing.
 function busy() {
   const a = document.activeElement;
-  return !!$('#sheet-root').firstChild || !!(a && a.tagName === 'INPUT' && a.value);
+  return !!$('#sheet-root').firstChild || !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.value);
 }
 
 // refresh re-renders the current view in place after a live event, except
@@ -100,7 +100,7 @@ function renderNotFound() {
 // --- home: the inbox -----------------------------------------------------------
 
 async function renderHome(seq) {
-  const d = await api('GET', '/api/inbox');
+  const [d, use] = await Promise.all([api('GET', '/api/inbox'), api('GET', '/api/usage').catch(() => null)]);
   if (seq !== state.seq) return;
   crumb(null);
   state.projects = d.projects;
@@ -144,7 +144,9 @@ async function renderHome(seq) {
       el('div.row-list', null, earlier.map(row))) : null);
   const rail = el('aside.home-rail.desk-only', null,
     review.length ? el('section.rail-card', null, el('h2', null, 'Ready for review'), review.map(it => railItem(it))) : null,
-    next.length ? el('section.rail-card', null, el('h2', null, 'Up next'), next.map(it => railItem(it))) : null);
+    next.length ? el('section.rail-card', null, el('h2', null, 'Up next'), next.map(it => railItem(it))) : null,
+    use ? limitsCard(use.limits) : null,
+    use ? tokensCard(use.hours) : null);
   $('#app').replaceChildren(el('div.page.home', null, main, rail),
     el('button.fab', { type: 'button', onclick: () => newSessionSheet(d.projects), 'aria-label': 'New chat' }, svg(ICON.plus)));
 }
@@ -163,6 +165,63 @@ function projectTile(p, review) {
   const sub = [p.live ? plural(p.live, 'chat') : p.running ? 'running' : 'stopped', r ? `${r} to review` : p.open ? `${p.open} on the board` : ''].filter(Boolean).join(' · ');
   return el('a.tile.tint-' + p.tint, { href: '/p/' + encodeURIComponent(p.name), 'data-link': true },
     el('span.tile-name', null, el('span.pdot'), p.name), el('span.tile-sub', null, sub));
+}
+
+const HARNESS_NAMES = { claude: 'Claude', codex: 'Codex', pi: 'pi' };
+const harnessName = h => HARNESS_NAMES[h] || h;
+const harnessClass = h => HARNESS_NAMES[h] ? h : 'other';
+
+// tokensCard is the tokens chats and scheduled runs reported each day,
+// by harness. Terminal sessions report nothing, so they aren't in it.
+function tokensCard(hours) {
+  const { days, harnesses } = usageSeries(hours);
+  if (!harnesses.length) return null;
+  const sum = h => days.reduce((n, d) => n + d[h], 0);
+  const fresh = (hours || []).reduce((n, h) => n + h.input + h.output, 0);
+  return el('section.rail-card.use-card', null, el('h2', null, 'Tokens'),
+    dayChart(days, {
+      label: `Tokens used per day by ${harnesses.map(harnessName).join(' and ')}, last ${days.length} days`,
+      stack: harnesses.map(h => [h, 'bc-' + harnessClass(h)]),
+      title: d => harnesses.map(h => `${harnessName(h)} ${compactCount(d[h])}`).join(', '),
+      stats: harnesses.map(h => [sum(h), harnessName(h), harnessClass(h)]),
+      format: compactCount,
+    }),
+    el('p.use-note', null, `${compactCount(fresh)} of them fresh input and output; the rest read from cache. From chats and scheduled runs.`));
+}
+
+// limitsCard is how much of each account's usage windows is used, as
+// Claude and Codex last said. A window past its reset starts over.
+function limitsCard(limits) {
+  const names = Object.keys(limits || {}).filter(h => (limits[h].windows || []).length).sort((a, b) => harnessName(a).localeCompare(harnessName(b)));
+  if (!names.length) return null;
+  const ns = 'http://www.w3.org/2000/svg';
+  const bar = used => {
+    const s = document.createElementNS(ns, 'svg');
+    s.setAttribute('viewBox', '0 0 100 6');
+    s.setAttribute('preserveAspectRatio', 'none');
+    s.setAttribute('class', 'use-bar');
+    s.setAttribute('aria-hidden', 'true');
+    for (const [cls, w] of [['use-track', 100], ['use-fill ' + (used >= 90 ? 'hot' : used >= 70 ? 'warm' : 'ok'), Math.max(used ? 1.5 : 0, used)]]) {
+      const r = document.createElementNS(ns, 'rect');
+      for (const [k, v] of Object.entries({ class: cls, x: 0, y: 0, width: w, height: 6, rx: 3 })) r.setAttribute(k, v);
+      s.append(r);
+    }
+    return s;
+  };
+  return el('section.rail-card.use-card', null, el('h2', null, 'Plan usage'),
+    names.map(h => {
+      const l = limits[h];
+      return el('div.use-harness', null,
+        el('div.use-head', null, el('span.bc-key.' + harnessClass(h), null, harnessName(h)), el('span.use-when', null, 'as of ' + ago(l.at))),
+        l.windows.map(w => {
+          const over = w.resets && Date.parse(w.resets) <= Date.now();
+          const used = over ? 0 : Math.round(w.used);
+          return el('div.use-win', { title: `${limitLabel(w)} limit: ${used}% used` },
+            el('div.use-row', null, el('span', null, limitLabel(w)), el('b', null, over ? 'reset' : `${used}% used`)),
+            bar(used),
+            w.resets && !over ? el('span.use-reset', null, 'resets ' + until(w.resets)) : null);
+        }));
+    }));
 }
 
 // railItem is a board item in the desktop home's side rail.
@@ -1244,10 +1303,13 @@ function sidebar(d) {
   count.hidden = !needs;
   count.textContent = String(needs);
   $('#side-user').textContent = state.meta?.user || '';
-  $('#side-projects').replaceChildren(...d.projects.map(p => el('a.side-link.side-project.tint-' + p.tint, { href: '/p/' + encodeURIComponent(p.name), 'data-link': true, 'data-project': p.name },
+  $('#side-projects').replaceChildren(...d.projects.map(p => el('a.side-link.side-project.tint-' + p.tint + (p.running ? '.running' : ''), {
+    href: '/p/' + encodeURIComponent(p.name), 'data-link': true, 'data-project': p.name,
+    title: p.name + (p.running ? ' · ' + (p.live ? plural(p.live, 'live chat') : 'sandbox running') : ''),
+  },
     el('span.pdot'), el('span', null, p.name),
-    p.running ? el('span.side-live', { title: p.live ? plural(p.live, 'live chat') : 'Sandbox running' }, el('span.dot'), p.live ? String(p.live) : '') : null)),
-    el('button.side-link.side-new', { type: 'button', onclick: newProjectSheet }, svg(ICON.plus), el('span', null, 'New project')));
+    p.running ? el('span.side-live', null, el('span.dot'), p.live ? String(p.live) : '') : null)),
+    el('button.side-link.side-new', { type: 'button', onclick: newProjectSheet, title: 'New project' }, svg(ICON.plus), el('span', null, 'New project')));
   markSidebar();
 }
 
@@ -1277,10 +1339,34 @@ function startNewChat() {
   p ? pickHarness(p) : newSessionSheet(projects);
 }
 
+// setupSideToggle collapses the desktop sidebar to its icons and back, and
+// remembers which in this browser.
+function setupSideToggle() {
+  const btn = $('#side-toggle');
+  const root = document.documentElement;
+  const apply = collapsed => {
+    if (collapsed) root.dataset.side = 'collapsed';
+    else delete root.dataset.side;
+    const label = collapsed ? 'Expand the sidebar' : 'Collapse the sidebar';
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+    btn.setAttribute('aria-expanded', String(!collapsed));
+  };
+  apply(root.dataset.side === 'collapsed');
+  btn.addEventListener('click', () => {
+    const collapsed = root.dataset.side !== 'collapsed';
+    prefs.set('side', collapsed ? 'collapsed' : 'open');
+    apply(collapsed);
+    // A terminal fits itself to the window; the sidebar moved its edge.
+    setTimeout(() => dispatchEvent(new Event('resize')), 220);
+  });
+}
+
 // --- start ------------------------------------------------------------------
 
 async function boot() {
   setupTheme();
+  setupSideToggle();
   try {
     state.meta = await api('GET', '/api/meta');
   } catch (e) { toast(e.message, 'error') }
@@ -1307,6 +1393,7 @@ async function boot() {
     }
     if (ev.type === 'request') { state.chat?.refreshRequests?.(); activityBadge() }
     if (ev.type === 'board' && state.itemSheet && state.itemSheet.ref === ev.data) state.itemSheet.reload();
+    if (ev.type === 'usage') { if (state.route?.name === 'home') refresh(); return }
     if (here && state.chat) state.chat.refreshMeta();
     refreshSidebar();
     refresh();

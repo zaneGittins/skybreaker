@@ -349,7 +349,7 @@ function dayChart(days, o) {
   const short = d => d.day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   return el('div.bchart', null,
     el('div.bc-head', null,
-      o.stats.map(([n, text, key]) => el('span.bc-stat', null, el('b', null, n.toLocaleString()), el('span.bc-key.' + key, null, text))),
+      o.stats.map(([n, text, key]) => el('span.bc-stat', null, el('b', null, o.format ? o.format(n) : n.toLocaleString()), el('span.bc-key.' + key, null, text))),
       el('span.bc-when', null, 'last ' + days.length + ' days')),
     chart,
     el('div.bc-axis', null, el('span', null, short(days[0])), el('span', null, 'Today')));

@@ -46,6 +46,11 @@ type Settings interface {
 	// ConvertGitHubApp trades the code GitHub sends back for the App it
 	// created from a manifest.
 	ConvertGitHubApp(ctx context.Context, code string) (githubapp.Created, error)
+	// Instructions are what every agent is told, as saved.
+	Instructions() (string, error)
+	// SetInstructions saves them, records by in the audit log and gives
+	// them to every sandbox at once; no restart is needed.
+	SetInstructions(by, text string) error
 }
 
 // Applied is what a change did.
@@ -84,6 +89,8 @@ func (s *server) settingsRoutes(m *http.ServeMux) {
 	m.HandleFunc("PUT /api/projects/{p}/access", s.saveAccess)
 	m.HandleFunc("POST /api/github-app/manifest", s.githubManifest)
 	m.HandleFunc("GET "+githubapp.CreatedPath, s.githubCreated)
+	m.HandleFunc("GET /api/instructions", s.instructions)
+	m.HandleFunc("PUT /api/instructions", s.saveInstructions)
 }
 
 // admin admits a listed admin where the config file lets the app change
@@ -235,6 +242,44 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		out.Projects = append(out.Projects, v)
 	}
 	webutil.WriteJSON(w, http.StatusOK, out)
+}
+
+// instructions are every agent's, for anyone to read.
+func (s *server) instructions(w http.ResponseWriter, r *http.Request) {
+	if s.Settings == nil {
+		webutil.Error(w, http.StatusNotFound, "settings can't be changed here")
+		return
+	}
+	text, err := s.Settings.Instructions()
+	if err != nil {
+		webutil.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	p, _ := tsauth.FromContext(r.Context())
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"text": text, "editable": s.Config.Admin(p.Login) && s.Config.SettingsInApp(), "max": config.MaxInstructions})
+}
+
+func (s *server) saveInstructions(w http.ResponseWriter, r *http.Request) {
+	by, ok := s.editor(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Text string `json:"text"`
+	}
+	if !decodeStrict(w, r, &in) {
+		return
+	}
+	text := config.CleanInstructions(in.Text)
+	if err := config.CheckInstructions(text); err != nil {
+		webutil.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.Settings.SetInstructions(by, text); err != nil {
+		webutil.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"text": text})
 }
 
 // secretUsers names, for each secret, the bundles and projects that send it.

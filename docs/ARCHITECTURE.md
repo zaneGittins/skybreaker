@@ -23,6 +23,7 @@ Skybreaker is one Go binary, `skybreaker`, running on one Linux host. It serves 
 | `internal/control/scheduler`, `hooks`, `terminal` | Scheduled runs, Claude Code hooks, WebSocket terminals. |
 | `internal/control/preview` | Previews of a sandbox's web server, each on its project's own origin. |
 | `internal/control/sshkeys` | SSH keys allowed into sandboxes, for VS Code. |
+| `internal/control/usage` | Tokens chats and runs report, by hour, and each harness's plan limits. |
 | `internal/proxy/broker` | The broker, assembled in-process. |
 | `internal/proxy/server` | The request path: tunnel, MITM and routes. |
 | `internal/proxy/policy`, `gitproto`, `graphql`, `k8s` | Rule matching, git push ref checks, GraphQL operations, Kubernetes attributes. |
@@ -77,6 +78,12 @@ Run without a server command, `skybreaker` is a client for your own machine. It 
 ## VS Code over SSH
 
 Each sandbox runs sshd. `skybreaker vscode setup` makes the computer a key, adds it through `POST /api/ssh-keys` (`sshkeys.Store`, which rewrites it in canonical form) and puts a `Host *.skybreaker` block first in `~/.ssh/config`, whose `ProxyCommand` is `skybreaker ssh-proxy`. That carries ssh's bytes over a WebSocket to `/api/projects/{p}/ssh`, which starts the sandbox and relays to its sshd on `sandbox.Addr:22`. `app.SetAuthorizedKeys` writes the keys into every project's `etc/`, and sshd reads them on each login through `AuthorizedKeysCommand`. Deleting a key cuts the open relays.
+
+## Instructions and usage
+
+Every agent's instructions are `settings/instructions.md`, set in Settings by admins (`PUT /api/instructions`, audited). `app.SetInstructions` writes them into each project's `etc/` as `instructions.md` and as `codex-managed-config.toml` (`developer_instructions`), each mounted read-only on its own: at `/etc/claude-code/CLAUDE.md` for Claude Code and `/etc/codex/managed_config.toml` for Codex. They're rewritten in place, since a rename would leave the mount on the old file. `skybreaker-pi` passes the file to pi with `--append-system-prompt`.
+
+The chat drivers report tokens (`Out.Usage`: Claude's per-model result usage as it grows, Codex's `thread/tokenUsage/updated`) and plan limits (`Out.Limits`: Claude's `rate_limit_event`, Codex's `account/rateLimits/read` and updates). `usage.Store` keeps them by UTC hour for a month in `usage.json`, with scheduled runs' totals from their logs, and `/api/usage` serves the home page's rail.
 
 ## Boards and MCP
 

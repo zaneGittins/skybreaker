@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 )
@@ -251,6 +252,18 @@ func TestParseClaudeResult(t *testing.T) {
 	r := ParseResult("claude-stream-json", []byte(claudeLog))
 	if r.CostUSD != 0.37 || r.SessionID != "c-123" || r.IsError || r.Summary != "Opened PR #12" {
 		t.Fatalf("%+v", r)
+	}
+	// A run's tokens: Claude's result counts every model the run used;
+	// codex exec reports each turn's.
+	r = ParseResult("claude-stream-json", []byte(`{"type":"result","modelUsage":{"a":{"inputTokens":1,"cacheCreationInputTokens":2,"cacheReadInputTokens":3,"outputTokens":4},"b":{"inputTokens":10,"outputTokens":1}}}`))
+	if r.Tokens != (chat.Usage{Input: 13, Cached: 3, Output: 5}) {
+		t.Errorf("claude tokens %+v", r.Tokens)
+	}
+	r = ParseResult("codex-json", []byte(`{"type":"thread.started","thread_id":"t1"}
+{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":60,"output_tokens":7}}
+{"type":"turn.completed","usage":{"input_tokens":-5,"cached_input_tokens":0,"output_tokens":1}}`))
+	if r.Tokens != (chat.Usage{Input: 40, Cached: 60, Output: 7}) {
+		t.Errorf("codex tokens %+v", r.Tokens)
 	}
 	if r := ParseResult("text", []byte("hello\n")); r.CostUSD != 0 || r.Summary != "hello" {
 		t.Fatalf("text: %+v", r)

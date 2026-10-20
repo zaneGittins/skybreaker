@@ -106,6 +106,12 @@ To see what an agent is building, open the project's menu (or **Preview** on a d
 
 A preview page loads only from its own server, so fonts or scripts from CDNs don't load there. Its cookies are `HttpOnly`, so frameworks that read a CSRF cookie from script (Django's `csrftoken`, `XSRF-TOKEN`) need it sent another way while previewed.
 
+## Usage
+
+On a desktop, the home page shows the tokens your chats and scheduled runs used each day for the last two weeks, by harness, and how much of your Claude and Codex plans' 5-hour and weekly limits is used, as each last reported it. Only harnesses that reported anything appear. Terminal sessions report nothing to Skybreaker, so they aren't counted. The counts are kept for a month in `usage.json` in the data directory.
+
+The sidebar collapses to icons with the button beside the logo; each browser remembers which you chose.
+
 ## Configuration
 
 The base is `/etc/skybreaker/skybreaker.yaml` (users, projects, policy) and `secrets.yaml`. Each project lists what its sandbox may reach in `allow` and `capabilities` (bundles); anything else is denied. Restart `skybreaker` after editing. [deploy/skybreaker.example.yaml](../deploy/skybreaker.example.yaml) is a commented example.
@@ -114,6 +120,7 @@ Most of it can also be changed in the app, by the users in `admins` (everyone in
 
 - **Settings** creates the GitHub App, adds secrets (each bound to the hosts you list, and never shown again), makes bundles, and adds bundles and hosts to any project. Every change to what a project reaches is shown as the broker compiles it before you save.
 - **New project** on the home page creates a project from the bundles there are.
+- **Instructions** in Settings are what every agent in every project is told, in Markdown: Claude Code reads them as its managed `CLAUDE.md`, Codex as developer instructions and pi as part of its system prompt. A project's own `CLAUDE.md` or `AGENTS.md` still applies. They're saved in `settings/instructions.md`, mounted read-only into each sandbox, and reach sessions started after a save, with no restart.
 
 The app saves in the data directory, in `settings/` (`projects.json`, `access.json` and `app-secrets.json`), and only ever adds to the config file: what the file says is shown read-only, and a name in both is an error. Changes apply when Skybreaker restarts itself, once no agent is working. `app_settings: false` in the config file turns changes in the app off.
 

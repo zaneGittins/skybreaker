@@ -30,6 +30,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 	"github.com/zaneGittins/skybreaker/internal/control/tmux"
+	"github.com/zaneGittins/skybreaker/internal/control/usage"
 	"github.com/zaneGittins/skybreaker/internal/notify"
 )
 
@@ -63,6 +64,8 @@ type Deps struct {
 	ChatDir string
 	// Spawn starts a chat harness's exec; nil uses SpawnExec.
 	Spawn Spawn
+	// Usage counts the tokens chats report; nil counts nothing.
+	Usage *usage.Store
 }
 
 // Event is what the UI's live stream carries.
@@ -84,6 +87,7 @@ type App struct {
 	uiURL     string
 	now       func() time.Time
 	readyPoll time.Duration // how often waitReady checks the sandbox
+	usage     *usage.Store
 
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex // per project: serialises its starts and stops
@@ -100,7 +104,10 @@ type App struct {
 
 	sshMu   sync.Mutex
 	sshKeys []byte // authorized_keys for every sandbox's sshd
-	dial    func(ctx context.Context, addr string) (net.Conn, error)
+
+	instrMu      sync.Mutex
+	instructions string // every agent's, set in the app
+	dial         func(ctx context.Context, addr string) (net.Conn, error)
 }
 
 const (
@@ -129,7 +136,7 @@ func New(d Deps) (*App, error) {
 	a := &App{
 		cfg: d.Config, store: d.Store, sandbox: d.Sandbox, broker: d.Broker, hookKey: d.HookKey,
 		notify: d.Notify, uiURL: strings.TrimSuffix(d.UIURL, "/"), now: time.Now, readyPoll: time.Second, subs: map[chan Event]struct{}{},
-		locks: map[string]*sync.Mutex{}, spawn: d.Spawn,
+		locks: map[string]*sync.Mutex{}, spawn: d.Spawn, usage: d.Usage,
 		dial: func(ctx context.Context, addr string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", addr)
 		},
@@ -372,6 +379,9 @@ func (a *App) writeEtc(ctx context.Context, project string, p *config.Project) e
 		files[piModels] = b
 	} else if err := os.Remove(filepath.Join(etc, piModels)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
+	}
+	for name, b := range instructionFiles(a.currentInstructions()) {
+		files[name] = b
 	}
 	for name, b := range files {
 		if err := os.WriteFile(filepath.Join(etc, name), b, 0o644); err != nil {

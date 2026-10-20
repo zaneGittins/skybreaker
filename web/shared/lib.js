@@ -19,7 +19,8 @@ function until(iso, now = Date.now()) {
   if (!(s > 0)) return 'now';
   if (s < 60) return 'in under a minute';
   if (s < 3600) return 'in ' + Math.round(s / 60) + 'm';
-  return 'in ' + Math.round(s / 3600) + 'h';
+  if (s < 36 * 3600) return 'in ' + Math.round(s / 3600) + 'h';
+  return 'in ' + Math.round(s / 86400) + 'd';
 }
 
 function duration(from, to) {
@@ -224,19 +225,59 @@ function boardSeries(h, now = new Date(), days = 14) {
   return out;
 }
 
-// activitySeries adds the broker's hourly counts up into the last `days`
-// days in local time.
-function activitySeries(hours, now = new Date(), days = 14) {
+// daySeries is the last `days` days in local time, each starting as
+// zero(), with add(day, hour) putting each hour's counts into its day.
+function daySeries(hours, zero, add, now, days) {
   const out = [];
   for (let i = days - 1; i >= 0; i--) {
-    out.push({ day: new Date(now.getFullYear(), now.getMonth(), now.getDate() - i), allowed: 0, asked: 0, blocked: 0 });
+    out.push({ day: new Date(now.getFullYear(), now.getMonth(), now.getDate() - i), ...zero() });
   }
   for (const h of hours || []) {
     const t = new Date(h.t);
     const d = out.find(x => x.day.getFullYear() === t.getFullYear() && x.day.getMonth() === t.getMonth() && x.day.getDate() === t.getDate());
-    if (d) { d.allowed += h.allowed || 0; d.asked += h.asked || 0; d.blocked += h.blocked || 0 }
+    if (d) add(d, h);
   }
   return out;
 }
 
-if (typeof module !== 'undefined') module.exports = { activitySeries, boardSeries, rulesToText, rulesFromText, hostsFromText, ago, until, duration, route, auditRow, dropPosition, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal };
+// activitySeries adds the broker's hourly counts up into the last `days`
+// days in local time.
+function activitySeries(hours, now = new Date(), days = 14) {
+  return daySeries(hours, () => ({ allowed: 0, asked: 0, blocked: 0 }),
+    (d, h) => { d.allowed += h.allowed || 0; d.asked += h.asked || 0; d.blocked += h.blocked || 0 }, now, days);
+}
+
+// usageSeries adds the tokens harnesses reported each hour up into days,
+// a count per harness that reported any in them (Claude, then Codex, then
+// the rest by name).
+function usageSeries(hours, now = new Date(), days = 14) {
+  const series = daySeries(hours, () => ({}), (d, h) => {
+    d[h.harness] = (d[h.harness] || 0) + (h.input || 0) + (h.cached || 0) + (h.output || 0);
+  }, now, days);
+  const order = ['claude', 'codex'];
+  const rank = h => order.includes(h) ? order.indexOf(h) : order.length;
+  const harnesses = [...new Set(series.flatMap(d => Object.keys(d).filter(k => k !== 'day')))]
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  for (const d of series) for (const h of harnesses) d[h] = d[h] || 0;
+  return { days: series, harnesses };
+}
+
+// compactCount writes a big count short: 12.4K, 3.3M.
+function compactCount(n) {
+  for (const [v, s] of [[1e9, 'B'], [1e6, 'M'], [1e3, 'K']]) {
+    if (n >= v) return (n / v).toFixed(1).replace(/\.0$/, '') + s;
+  }
+  return String(n);
+}
+
+// limitLabel names an account usage window by its length, or failing
+// that by what the harness calls it.
+function limitLabel(l) {
+  const named = { 300: '5-hour', 1440: 'Daily', 10080: 'Weekly', 43200: 'Monthly' }[l.minutes];
+  if (named) return named;
+  if (l.minutes && l.minutes % 60 === 0) return `${l.minutes / 60}-hour`;
+  const words = String(l.name || '').replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+if (typeof module !== 'undefined') module.exports = { activitySeries, usageSeries, compactCount, limitLabel, boardSeries, rulesToText, rulesFromText, hostsFromText, ago, until, duration, route, auditRow, dropPosition, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal };

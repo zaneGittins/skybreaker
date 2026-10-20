@@ -156,6 +156,11 @@ func (s Spec) Mounts() []Mount {
 		// Managed settings outrank user and project settings, so the
 		// control plane's hooks can't be overridden from inside.
 		{Source: filepath.Join(d, "etc", settingsFile), Target: "/etc/claude-code/managed-settings.json", ReadOnly: true},
+		// Every agent's instructions, set in the app: Claude Code reads its
+		// managed CLAUDE.md, Codex its managed config's developer
+		// instructions (and pi gets /etc/skybreaker/instructions.md).
+		{Source: filepath.Join(d, "etc", InstructionsFile), Target: "/etc/claude-code/CLAUDE.md", ReadOnly: true},
+		{Source: filepath.Join(d, "etc", CodexConfigFile), Target: "/etc/codex/managed_config.toml", ReadOnly: true},
 		{Source: filepath.Join(d, "runs"), Target: "/skybreaker/runs"},
 		// The inner dockerd's images and build cache, on disk rather than a
 		// tmpfs, which would take them out of the sandbox's memory. overlay2
@@ -166,6 +171,15 @@ func (s Spec) Mounts() []Mount {
 }
 
 const settingsFile = "claude-managed-settings.json"
+
+// The files in a sandbox's etc/ that hold every agent's instructions: as
+// written, and as Codex's managed config. They are mounted on their own,
+// so they're rewritten in place: a rename would leave the mount on the old
+// file.
+const (
+	InstructionsFile = "instructions.md"
+	CodexConfigFile  = "codex-managed-config.toml"
+)
 
 // env returns the sandbox environment, sorted by name.
 func (s Spec) env() []string {

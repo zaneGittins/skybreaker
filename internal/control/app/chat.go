@@ -95,6 +95,7 @@ func (a *App) newChatManager(dir string) (*chat.Manager, error) {
 			return chat.New(m.Chat)
 		},
 		OnChange: a.chatChanged,
+		OnUsage:  a.chatUsage,
 	}), nil
 }
 
@@ -397,6 +398,22 @@ func (a *App) killChat(ctx context.Context, s store.Session) {
 			x.State = store.ChatIdle
 		}
 	})
+}
+
+// chatUsage counts what a chat's harness reports using, under the
+// harness's name, and tells the UI.
+func (a *App) chatUsage(id string, u *chat.Usage, limits []chat.Limit) {
+	s, ok := a.store.Session(id)
+	if a.usage == nil || !ok {
+		return
+	}
+	if u != nil {
+		a.usage.Add(s.Harness, *u)
+	}
+	if limits != nil {
+		a.usage.SetLimits(s.Harness, limits)
+	}
+	a.Publish(Event{Type: "usage", Project: s.Project})
 }
 
 // chatChanged tells the UI a chat's state moved, and buzzes the phone when

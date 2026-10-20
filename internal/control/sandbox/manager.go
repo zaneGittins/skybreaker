@@ -239,27 +239,33 @@ func (m *Manager) Start(ctx context.Context, s Spec) error {
 	return nil
 }
 
-// ensureDataDir creates the host directories the mounts need, plus an empty
-// managed-settings file so the read-only file mount has a source. An
-// existing settings file is kept: the control plane writes the real one.
+// ensureDataDir creates the host directories the mounts need, plus the
+// files mounted on their own (managed settings, instructions) so each
+// read-only file mount has a source. Existing files are kept: the control
+// plane writes the real ones.
 func ensureDataDir(dir string) error {
 	for _, d := range []string{"workspace", "home", "etc", "runs", "docker"} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o700); err != nil {
 			return fmt.Errorf("sandbox data dir: %w", err)
 		}
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "etc", settingsFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if errors.Is(err, os.ErrExist) {
-		return nil
+	for name, body := range map[string]string{settingsFile: "{}\n", InstructionsFile: "", CodexConfigFile: ""} {
+		f, err := os.OpenFile(filepath.Join(dir, "etc", name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("sandbox %s: %w", name, err)
+		}
+		_, err = f.WriteString(body)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return err
+		}
 	}
-	if err != nil {
-		return fmt.Errorf("sandbox settings: %w", err)
-	}
-	_, err = f.WriteString("{}\n")
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	return err
+	return nil
 }
 
 // Stop stops and removes the sandbox. Its data directory stays.

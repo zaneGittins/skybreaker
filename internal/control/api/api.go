@@ -32,6 +32,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/sshkeys"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 	"github.com/zaneGittins/skybreaker/internal/control/terminal"
+	"github.com/zaneGittins/skybreaker/internal/control/usage"
 	"github.com/zaneGittins/skybreaker/internal/notify/webpush"
 	"github.com/zaneGittins/skybreaker/internal/proxy/approval"
 	"github.com/zaneGittins/skybreaker/internal/proxy/audit"
@@ -105,6 +106,11 @@ type Push interface {
 	Unsubscribe(endpoint string) error
 }
 
+// Usage is the tokens harnesses reported using, and their account limits.
+type Usage interface {
+	Report(days int) usage.Report
+}
+
 type Runs interface {
 	Trigger(ctx context.Context, job string) (store.Run, error)
 }
@@ -123,6 +129,7 @@ type Deps struct {
 	Projects   ProjectAdder      // nil when projects can't be created here
 	SSHKeys    *sshkeys.Store    // nil when SSH into sandboxes is off
 	Settings   Settings          // nil when settings can't be changed here
+	Usage      Usage             // nil when tokens aren't counted
 	Identifier tsauth.Identifier
 	Static     fs.FS
 	Version    string
@@ -195,6 +202,7 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("POST /api/requests/{id}/{verb}", s.decideRequest)
 	m.HandleFunc("GET /api/activity", s.activity)
 	m.HandleFunc("GET /api/activity/chart", s.activityChart)
+	m.HandleFunc("GET /api/usage", s.usage)
 	m.HandleFunc("POST /api/tokens/{id}/revoke", s.revokeToken)
 	m.HandleFunc("POST /api/kill", s.kill)
 	m.HandleFunc("POST /api/jobs/{name}/run", s.runJob)

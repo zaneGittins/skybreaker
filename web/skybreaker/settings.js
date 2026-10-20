@@ -13,7 +13,7 @@ Object.assign(ICON, {
 const githubLink = u => typeof u === 'string' && /^https:\/\/github\.com\//.test(u) ? u : null;
 
 async function renderSettings(seq) {
-  const d = await api('GET', '/api/settings');
+  const [d, ins] = await Promise.all([api('GET', '/api/settings'), api('GET', '/api/instructions').catch(() => null)]);
   if (seq !== state.seq) return;
   crumb(null);
   // GitHub sends you back here after creating the App.
@@ -31,6 +31,7 @@ async function renderSettings(seq) {
       : !ed ? el('p.set-banner', null, 'Changes here are off: the config file sets app_settings: false.') : null,
   ];
   $('#app').replaceChildren(el('div.wrap.activity.settings', null, head, banners,
+    ins ? instructionsSection(ins) : null,
     githubSection(d.github, ed), secretsSection(d.secrets, ed), bundlesSection(d.bundles, ed, d),
     accessSection(d.projects, ed, d)));
 }
@@ -42,6 +43,43 @@ function setSection(title, note, action, body) {
 }
 
 const sourceTag = src => el('span.tag' + (src === 'app' ? '.ok' : ''), null, src === 'app' ? 'Added here' : 'Config file');
+
+// --- instructions ------------------------------------------------------------------
+
+// instrDraft keeps what you typed across a redraw, against the text it
+// started from.
+let instrDraft = null;
+
+function instructionsSection(ins) {
+  if (instrDraft && instrDraft.base !== ins.text) instrDraft = null;
+  const box = el('textarea.np-input.set-instr', {
+    rows: 8, maxlength: ins.max, readOnly: !ins.editable, spellcheck: 'true', 'aria-label': 'Instructions for every agent',
+    placeholder: ins.editable ? 'Conventions every agent should follow, in Markdown. For example: use pnpm, not npm. Write commit messages in the imperative.' : 'None set.',
+  });
+  box.value = instrDraft ? instrDraft.text : ins.text;
+  const count = el('span.set-count');
+  const save = el('button.btn.primary.sm', { type: 'submit' }, 'Save');
+  const sync = () => {
+    const n = new TextEncoder().encode(box.value).length;
+    count.textContent = n ? `${n < 1024 ? plural(n, 'byte') : (n / 1024).toFixed(1) + ' KiB'} of ${ins.max >> 10} KiB` : '';
+    save.disabled = box.value === ins.text || n > ins.max;
+  };
+  box.addEventListener('input', () => { instrDraft = { base: ins.text, text: box.value }; sync() });
+  sync();
+  const form = el('form.set-instr-form', {
+    onsubmit: async e => {
+      e.preventDefault();
+      save.disabled = true;
+      try {
+        await api('PUT', '/api/instructions', { text: box.value });
+        instrDraft = null;
+        toast('Saved. New sessions in every project get them.');
+        go();
+      } catch (err) { toast(err.message, 'error'); sync() }
+    },
+  }, box, ins.editable ? el('div.set-instr-acts', null, count, save) : null);
+  return setSection('Instructions', 'Every agent in every project reads these: Claude Code as its managed CLAUDE.md, Codex as developer instructions, pi as part of its system prompt. A project\'s own CLAUDE.md or AGENTS.md still applies alongside them. Sessions started after a save get them; no restart.', null, form);
+}
 
 // --- GitHub ----------------------------------------------------------------------
 

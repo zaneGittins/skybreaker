@@ -10,7 +10,11 @@
 package chat
 
 import (
+	"cmp"
 	"encoding/json"
+	"regexp"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -155,6 +159,42 @@ type Info struct {
 type Context struct {
 	Used   int64 `json:"used"`
 	Window int64 `json:"window,omitempty"`
+}
+
+// Usage is the tokens a harness reports it used: fresh input (cache
+// writes included), input read from the cache, and output.
+type Usage struct {
+	Input  int64 `json:"input"`
+	Cached int64 `json:"cached"`
+	Output int64 `json:"output"`
+}
+
+// Limit is how much of one of the account's usage windows is used, as the
+// harness reports it. Minutes is the window's length when known.
+type Limit struct {
+	Name    string    `json:"name"`
+	Minutes int64     `json:"minutes,omitempty"`
+	Used    float64   `json:"used"` // percent
+	Resets  time.Time `json:"resets,omitzero"`
+}
+
+var limitNameRe = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
+
+func unixTime(sec int64) time.Time {
+	if sec <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0).UTC()
+}
+
+// sortLimits puts the shortest window first.
+func sortLimits(ls []Limit) {
+	slices.SortFunc(ls, func(a, b Limit) int {
+		if c := cmp.Compare(a.Minutes, b.Minutes); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
 }
 
 // Model is one the harness offers, as it describes it.

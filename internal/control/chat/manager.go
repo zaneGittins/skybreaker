@@ -47,6 +47,9 @@ type Config struct {
 	Driver func(s store.Session) Driver
 	// OnChange hears every change of a session's State.
 	OnChange func(before, after store.Session)
+	// OnUsage hears the tokens a session's harness reports using, and the
+	// account limits it reports (either may be nil).
+	OnUsage func(id string, u *Usage, limits []Limit)
 	// IdleStop is how long an idle harness process lives (default 20m).
 	IdleStop time.Duration
 }
@@ -318,6 +321,9 @@ func (m *Manager) read(r *run, gen int, p *Proc, exited chan struct{}) {
 			}
 			if out.Resume != "" {
 				m.c.Sessions.UpdateSession(r.id, func(x *store.Session) { x.Resume, x.Fork = out.Resume, false })
+			}
+			if (out.Usage != nil || out.Limits != nil) && m.c.OnUsage != nil {
+				m.c.OnUsage(r.id, out.Usage, out.Limits)
 			}
 			r.mu.Unlock()
 		}

@@ -24,13 +24,14 @@ var ErrRestart = errors.New("skybreaker: restarting to apply a change made in th
 
 // settings saves what admins change in the app, and creates projects.
 type settings struct {
-	configPath string
-	secrets    string // the secrets file
-	app        *app.App
-	broker     *broker.Broker
-	boards     *board.Store
-	restart    func() // when no agent is working
-	pending    atomic.Bool
+	configPath   string
+	secrets      string // the secrets file
+	instructions string // every agent's instructions
+	app          *app.App
+	broker       *broker.Broker
+	boards       *board.Store
+	restart      func() // when no agent is working
+	pending      atomic.Bool
 }
 
 // check is what a change must pass before it's saved: the broker's secret
@@ -101,6 +102,18 @@ func (d *settings) SecretsUsed() map[string]time.Time { return d.broker.SecretsU
 
 func (d *settings) GitHubInstallURL(ctx context.Context) (string, error) {
 	return d.broker.GitHubInstallURL(ctx)
+}
+
+func (d *settings) Instructions() (string, error) {
+	return config.ReadInstructions(d.instructions)
+}
+
+func (d *settings) SetInstructions(by, text string) error {
+	if err := config.WriteInstructions(d.instructions, text); err != nil {
+		return err
+	}
+	d.broker.LogConfig(by, "changed the agents' instructions")
+	return d.app.SetInstructions(config.CleanInstructions(text))
 }
 
 func (d *settings) ConvertGitHubApp(ctx context.Context, code string) (githubapp.Created, error) {

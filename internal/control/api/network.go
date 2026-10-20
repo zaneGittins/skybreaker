@@ -175,6 +175,17 @@ func (s *server) activityChart(w http.ResponseWriter, r *http.Request) {
 	webutil.WriteJSONGzip(w, r, http.StatusOK, map[string]any{"days": chartDays, "hours": c.hours})
 }
 
+// usage is the tokens harnesses reported over the activity chart's days,
+// by UTC hour for the page to put in its own days, and their limits.
+func (s *server) usage(w http.ResponseWriter, r *http.Request) {
+	if s.Usage == nil {
+		webutil.Error(w, http.StatusNotFound, "tokens aren't counted here")
+		return
+	}
+	rep := s.Usage.Report(chartDays)
+	webutil.WriteJSONGzip(w, r, http.StatusOK, map[string]any{"days": chartDays, "hours": rep.Hours, "limits": rep.Limits})
+}
+
 func (s *server) revokeToken(w http.ResponseWriter, r *http.Request) {
 	p, _ := tsauth.FromContext(r.Context())
 	if err := s.Network.RevokeToken(r.PathValue("id"), p.Name()); err != nil {

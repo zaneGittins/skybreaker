@@ -113,6 +113,8 @@ func TestRunArgsMounts(t *testing.T) {
 		"type=bind,source=" + d + "/home,target=/root",
 		"type=bind,source=" + d + "/etc,target=/etc/skybreaker,readonly",
 		"type=bind,source=" + d + "/etc/claude-managed-settings.json,target=/etc/claude-code/managed-settings.json,readonly",
+		"type=bind,source=" + d + "/etc/instructions.md,target=/etc/claude-code/CLAUDE.md,readonly",
+		"type=bind,source=" + d + "/etc/codex-managed-config.toml,target=/etc/codex/managed_config.toml,readonly",
 		"type=bind,source=" + d + "/runs,target=/skybreaker/runs",
 		"type=bind,source=" + d + "/docker,target=/var/lib/docker",
 	}
@@ -348,8 +350,10 @@ func TestStartMissing(t *testing.T) {
 			t.Errorf("%s mode %v, want 0700", d, fi.Mode().Perm())
 		}
 	}
-	if _, err := os.Stat(filepath.Join(s.DataDir, "etc", "claude-managed-settings.json")); err != nil {
-		t.Errorf("managed settings placeholder missing: %v", err)
+	for _, f := range []string{"claude-managed-settings.json", "instructions.md", "codex-managed-config.toml"} {
+		if _, err := os.Stat(filepath.Join(s.DataDir, "etc", f)); err != nil {
+			t.Errorf("%s placeholder missing: %v", f, err)
+		}
 	}
 }
 

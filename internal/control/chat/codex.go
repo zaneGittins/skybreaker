@@ -3,6 +3,8 @@ package chat
 import (
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +30,8 @@ type codex struct {
 	model   string  // the model the user chose; empty leaves it to codex
 	models  []Model // model/list pages so far
 	pages   int
+	counted int64            // the thread's total tokens as last counted
+	limits  map[string]Limit // the account's windows, primary and secondary
 }
 
 type codexAsk struct {
@@ -242,6 +246,18 @@ func (c *codex) read(b []byte) Out {
 	case l.Method != "" && len(l.ID) > 0:
 		return c.serverRequest(l, now)
 	case l.Method != "":
+		switch l.Method {
+		case "thread/tokenUsage/updated":
+			return c.tokenUsage(l, now)
+		case "account/rateLimits/updated":
+			var p struct {
+				RateLimits codexLimits `json:"rateLimits"`
+			}
+			if json.Unmarshal(l.Params, &p) != nil {
+				return Out{}
+			}
+			return Out{Limits: c.mergeLimits(p.RateLimits)}
+		}
 		return Out{Events: c.notification(l, now)}
 	case len(l.ID) > 0:
 		return c.response(l, now)
@@ -288,7 +304,19 @@ func (c *codex) response(l codexLine, now time.Time) Out {
 	switch method {
 	case "initialize":
 		out.Write = append(out.Write, line(map[string]any{"method": "initialized"}), c.startThread(), c.request("account/read", map[string]any{}),
-			c.request("model/list", map[string]any{}))
+			c.request("model/list", map[string]any{}), c.request("account/rateLimits/read", nil))
+	case "account/rateLimits/read":
+		var r struct {
+			RateLimits codexLimits             `json:"rateLimits"`
+			ByID       map[string]*codexLimits `json:"rateLimitsByLimitId"`
+		}
+		if json.Unmarshal(l.Result, &r) != nil {
+			return out
+		}
+		if l := r.ByID["codex"]; l != nil {
+			r.RateLimits = *l
+		}
+		out.Limits = c.mergeLimits(r.RateLimits)
 	case "model/list":
 		var r struct {
 			Data []struct {
@@ -371,6 +399,83 @@ func (c *codex) response(l codexLine, now time.Time) Out {
 	return out
 }
 
+// tokenUsage reads what a request used. The last request's tokens are
+// also what the context holds now. A report whose thread total hasn't
+// moved, as on a resume, adds nothing.
+func (c *codex) tokenUsage(l codexLine, now time.Time) Out {
+	type breakdown struct {
+		Total  int64 `json:"totalTokens"`
+		Input  int64 `json:"inputTokens"`
+		Cached int64 `json:"cachedInputTokens"`
+		Output int64 `json:"outputTokens"`
+	}
+	var p struct {
+		ThreadID   string `json:"threadId"`
+		TokenUsage struct {
+			Total  breakdown `json:"total"`
+			Last   breakdown `json:"last"`
+			Window *int64    `json:"modelContextWindow"`
+		} `json:"tokenUsage"`
+	}
+	if json.Unmarshal(l.Params, &p) != nil || p.ThreadID != c.thread || c.thread == "" {
+		return Out{}
+	}
+	ctx := &Context{Used: p.TokenUsage.Last.Total}
+	if p.TokenUsage.Window != nil {
+		ctx.Window = *p.TokenUsage.Window
+	}
+	out := Out{Events: []Event{{Time: now, Kind: KindInfo, Info: &Info{Context: ctx}}}}
+	last := p.TokenUsage.Last
+	if total := p.TokenUsage.Total.Total; total != c.counted && last.Input >= last.Cached && last.Cached >= 0 && last.Output >= 0 {
+		c.counted = total
+		if u := (Usage{Input: last.Input - last.Cached, Cached: last.Cached, Output: last.Output}); u != (Usage{}) {
+			out.Usage = &u
+		}
+	}
+	return out
+}
+
+// codexLimits is a rate limit snapshot: the account's primary window (five
+// hours) and secondary (a week). An update may leave one out.
+type codexLimits struct {
+	Primary   *codexWindow `json:"primary"`
+	Secondary *codexWindow `json:"secondary"`
+}
+
+type codexWindow struct {
+	UsedPercent float64 `json:"usedPercent"`
+	Minutes     *int64  `json:"windowDurationMins"`
+	ResetsAt    *int64  `json:"resetsAt"`
+}
+
+// mergeLimits takes in a snapshot's windows and returns them all, or nil
+// when it had none.
+func (c *codex) mergeLimits(s codexLimits) []Limit {
+	if c.limits == nil {
+		c.limits = map[string]Limit{}
+	}
+	took := false
+	for name, w := range map[string]*codexWindow{"primary": s.Primary, "secondary": s.Secondary} {
+		if w == nil || w.UsedPercent < 0 || w.UsedPercent > 100 {
+			continue
+		}
+		l := Limit{Name: name, Used: w.UsedPercent}
+		if w.Minutes != nil && *w.Minutes > 0 {
+			l.Minutes = *w.Minutes
+		}
+		if w.ResetsAt != nil {
+			l.Resets = unixTime(*w.ResetsAt)
+		}
+		c.limits[name], took = l, true
+	}
+	if !took {
+		return nil
+	}
+	out := slices.Collect(maps.Values(c.limits))
+	sortLimits(out)
+	return out
+}
+
 // codexItem is the union of the thread items we draw.
 type codexItem struct {
 	Type    string   `json:"type"`
@@ -410,25 +515,6 @@ func (c *codex) notification(l codexLine, now time.Time) []Event {
 		}
 	case "turn/completed":
 		return c.turnCompleted(l, now)
-	case "thread/tokenUsage/updated":
-		// The last request's tokens are what the context holds now.
-		var p struct {
-			ThreadID   string `json:"threadId"`
-			TokenUsage struct {
-				Last struct {
-					Total int64 `json:"totalTokens"`
-				} `json:"last"`
-				Window *int64 `json:"modelContextWindow"`
-			} `json:"tokenUsage"`
-		}
-		if json.Unmarshal(l.Params, &p) != nil || p.ThreadID != c.thread || c.thread == "" {
-			return nil
-		}
-		ctx := &Context{Used: p.TokenUsage.Last.Total}
-		if p.TokenUsage.Window != nil {
-			ctx.Window = *p.TokenUsage.Window
-		}
-		return []Event{{Time: now, Kind: KindInfo, Info: &Info{Context: ctx}}}
 	case "item/agentMessage/delta":
 		var p struct {
 			Delta  string `json:"delta"`

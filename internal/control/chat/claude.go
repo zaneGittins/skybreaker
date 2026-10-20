@@ -28,6 +28,7 @@ type claude struct {
 	counted     string            // the last message whose usage was reported
 	used        int64             // tokens in the context as of the last message
 	window      int64             // the model's context window, once a result says
+	spent       map[string]Usage  // per model, the tokens results have counted
 }
 
 type claudeAsk struct {
@@ -211,7 +212,17 @@ type claudeLine struct {
 	TerminalReason string   `json:"terminal_reason"`
 	ModelUsage     map[string]struct {
 		ContextWindow int64 `json:"contextWindow"`
+		Input         int64 `json:"inputTokens"`
+		Output        int64 `json:"outputTokens"`
+		CacheRead     int64 `json:"cacheReadInputTokens"`
+		CacheCreation int64 `json:"cacheCreationInputTokens"`
 	} `json:"modelUsage"`
+	RateLimit *struct {
+		Windows map[string]struct {
+			Utilization *float64 `json:"utilization"`
+			ResetsAt    int64    `json:"resetsAt"`
+		} `json:"unifiedWindows"`
+	} `json:"rate_limit_info"`
 
 	CompactMetadata *struct {
 		Trigger    string `json:"trigger"`
@@ -283,6 +294,9 @@ func (c *claude) Read(b []byte) Out {
 		out.Events = append(out.Events, c.user(l, now)...)
 	case "result":
 		out.Events = append(out.Events, c.result(l, now)...)
+		out.Usage = c.usage(l)
+	case "rate_limit_event":
+		out.Limits = claudeLimits(l)
 	case "control_request":
 		e, w := c.request(l, now)
 		out.Events = append(out.Events, e...)
@@ -593,6 +607,50 @@ func (c *claude) result(l claudeLine, now time.Time) []Event {
 	}
 	return append(out, Event{Time: now, Kind: KindTurn, Turn: turn})
 }
+
+// usage is what a result adds to the tokens counted so far. Its per-model
+// usage covers subagents and compaction and grows over the process's
+// life; a count that went down is a new process starting again.
+func (c *claude) usage(l claudeLine) *Usage {
+	if c.spent == nil {
+		c.spent = map[string]Usage{}
+	}
+	var sum Usage
+	for m, u := range l.ModelUsage {
+		now := Usage{Input: u.Input + u.CacheCreation, Cached: u.CacheRead, Output: u.Output}
+		before := c.spent[m]
+		if now.Input < before.Input || now.Cached < before.Cached || now.Output < before.Output {
+			before = Usage{}
+		}
+		c.spent[m] = now
+		sum.Input += now.Input - before.Input
+		sum.Cached += now.Cached - before.Cached
+		sum.Output += now.Output - before.Output
+	}
+	if sum == (Usage{}) {
+		return nil
+	}
+	return &sum
+}
+
+// claudeLimits reads the account's usage windows from a rate limit event:
+// utilization is a fraction, resetsAt a Unix time. Junk is dropped.
+func claudeLimits(l claudeLine) []Limit {
+	if l.RateLimit == nil {
+		return nil
+	}
+	var out []Limit
+	for name, w := range l.RateLimit.Windows {
+		if w.Utilization == nil || *w.Utilization < 0 || *w.Utilization > 1 || !limitNameRe.MatchString(name) {
+			continue
+		}
+		out = append(out, Limit{Name: name, Minutes: claudeWindows[name], Used: *w.Utilization * 100, Resets: unixTime(w.ResetsAt)})
+	}
+	sortLimits(out)
+	return out
+}
+
+var claudeWindows = map[string]int64{"five_hour": 5 * 60, "seven_day": 7 * 24 * 60}
 
 // contextWindow reads the window of the model Claude runs from a result's
 // per-model usage, which subagents' models share. An alias the user chose

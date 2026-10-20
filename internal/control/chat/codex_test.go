@@ -31,7 +31,7 @@ func handshake(t *testing.T, o Options) (*codex, []Event) {
 			}
 		}
 	}
-	want := []string{"initialized", "thread/start", "account/read", "model/list"}
+	want := []string{"initialized", "thread/start", "account/read", "model/list", "account/rateLimits/read"}
 	switch {
 	case o.Resume != "" && o.Fork:
 		want[1] = "thread/fork"

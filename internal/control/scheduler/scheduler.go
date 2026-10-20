@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/zaneGittins/skybreaker/internal/control/app"
+	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/harness"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
@@ -46,9 +47,11 @@ type Deps struct {
 	Backend  Backend
 	Notify   notify.Notifier
 	OnUpdate func(store.Run) // live updates for the UI
-	UIURL    string
-	Poll     time.Duration // how often a run's exit file is checked, default 2s
-	Grace    time.Duration // time between SIGINT and killing an overrun, default 30s
+	// OnUsage hears the tokens a finished run reports, by harness.
+	OnUsage func(harness string, u chat.Usage)
+	UIURL   string
+	Poll    time.Duration // how often a run's exit file is checked, default 2s
+	Grace   time.Duration // time between SIGINT and killing an overrun, default 30s
 }
 
 type Scheduler struct {
@@ -57,6 +60,7 @@ type Scheduler struct {
 	backend  Backend
 	notify   notify.Notifier
 	onUpdate func(store.Run)
+	onUsage  func(string, chat.Usage)
 	uiURL    string
 	poll     time.Duration
 	grace    time.Duration
@@ -72,7 +76,7 @@ type Scheduler struct {
 const runsRoot = "/skybreaker/runs" // the host's <project>/runs inside the sandbox
 
 func New(d Deps) *Scheduler {
-	s := &Scheduler{cfg: d.Config, store: d.Store, backend: d.Backend, notify: d.Notify, onUpdate: d.OnUpdate,
+	s := &Scheduler{cfg: d.Config, store: d.Store, backend: d.Backend, notify: d.Notify, onUpdate: d.OnUpdate, onUsage: d.OnUsage,
 		uiURL: strings.TrimSuffix(d.UIURL, "/"), poll: d.Poll, grace: d.Grace, running: map[string]bool{}, base: context.Background()}
 	if s.notify == nil {
 		s.notify = notify.Nop{}
@@ -300,6 +304,9 @@ func (s *Scheduler) execute(ctx, parent context.Context, job *config.Job, run st
 	s.backend.Exec(ctx, job.Project, tmux.KillWindow(app.RunsSession, run.ID)...)
 	logData, _ := ReadRunFile(filepath.Join(host, "log.jsonl"), 32<<20)
 	res := ParseResult(m.Result, logData)
+	if s.onUsage != nil {
+		s.onUsage(m.Name, res.Tokens)
+	}
 	var exitPtr *int
 	if ok {
 		exitPtr = &exit
@@ -386,6 +393,7 @@ type Result struct {
 	SessionID string
 	IsError   bool
 	Summary   string
+	Tokens    chat.Usage
 }
 
 // ParseResult reads a headless run's output. For Claude's stream-json it
@@ -404,6 +412,19 @@ func ParseResult(format string, data []byte) Result {
 				Cost      float64 `json:"total_cost_usd"`
 				IsError   bool    `json:"is_error"`
 				Result    string  `json:"result"`
+				// Claude's per-model usage covers the whole run.
+				ModelUsage map[string]struct {
+					Input         int64 `json:"inputTokens"`
+					CacheCreation int64 `json:"cacheCreationInputTokens"`
+					CacheRead     int64 `json:"cacheReadInputTokens"`
+					Output        int64 `json:"outputTokens"`
+				} `json:"modelUsage"`
+				// codex exec reports each turn's.
+				Usage *struct {
+					Input  int64 `json:"input_tokens"`
+					Cached int64 `json:"cached_input_tokens"`
+					Output int64 `json:"output_tokens"`
+				} `json:"usage"`
 			}
 			if json.Unmarshal(l, &ev) != nil {
 				continue
@@ -415,6 +436,19 @@ func ParseResult(format string, data []byte) Result {
 			}
 			if ev.Type == "result" {
 				r.CostUSD, r.IsError, r.Summary = ev.Cost, ev.IsError, ev.Result
+				r.Tokens = chat.Usage{}
+				for _, u := range ev.ModelUsage {
+					if u.Input >= 0 && u.CacheCreation >= 0 && u.CacheRead >= 0 && u.Output >= 0 {
+						r.Tokens.Input += u.Input + u.CacheCreation
+						r.Tokens.Cached += u.CacheRead
+						r.Tokens.Output += u.Output
+					}
+				}
+			}
+			if u := ev.Usage; ev.Type == "turn.completed" && u != nil && u.Cached >= 0 && u.Input >= u.Cached && u.Output >= 0 {
+				r.Tokens.Input += u.Input - u.Cached
+				r.Tokens.Cached += u.Cached
+				r.Tokens.Output += u.Output
 			}
 		}
 	default:

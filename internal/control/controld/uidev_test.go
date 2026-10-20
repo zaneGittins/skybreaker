@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,6 +53,7 @@ func TestUIDev(t *testing.T) {
 	}`, filepath.Join(dir, "data"), addr)
 	path := filepath.Join(dir, "skybreaker.json")
 	os.WriteFile(path, []byte(cfg), 0o600)
+	devUsage(filepath.Join(dir, "data"))
 	// A change saved in Settings restarts Skybreaker, as serve does.
 	for {
 		err := Run(context.Background(), Options{
@@ -254,7 +256,42 @@ func devClaude(m map[string]any, say func(any), raw func(string)) {
 	raw(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4-` + msg + `","content":"ok"}]},"tool_use_result":{"stdout":"✔ sessionTone and inboxGroups (3.8ms)\nℹ tests 14\nℹ pass 14\nℹ fail 0","stderr":""}}`)
 	pause()
 	stream(say, msg+"e", "Done. Approvals now sort to the top:\n\n```js\ng.forYou.sort((a, b) => urgency(a) - urgency(b) || newest(a, b));\n```\n\n| Group | Order |\n|---|---|\n| For you | urgency, then newest |\n| Working | newest |\n\nAll 14 tests pass. Want me to open a PR?")
-	raw(`{"type":"result","subtype":"success","is_error":false,"duration_ms":8200,"session_id":"dev-conv","modelUsage":{"claude-opus-5-5":{"contextWindow":400000}}}`)
+	// Tokens and limits for the home page: the count grows over the
+	// process's life, as Claude's does.
+	n := devTokens.Add(1)
+	raw(fmt.Sprintf(`{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":%.2f,"resetsAt":%d},"seven_day":{"utilization":0.46,"resetsAt":%d}}}}`,
+		min(0.95, 0.3+0.07*float64(n)), time.Now().Add(150*time.Minute).Unix(), time.Now().Add(80*time.Hour).Unix()))
+	raw(fmt.Sprintf(`{"type":"result","subtype":"success","is_error":false,"duration_ms":8200,"session_id":"dev-conv","modelUsage":{"claude-opus-5-5":{"contextWindow":400000,"inputTokens":%d,"cacheCreationInputTokens":%d,"cacheReadInputTokens":%d,"outputTokens":%d}}}`,
+		n*40, n*9000, n*180000, n*2500))
+}
+
+var devTokens atomic.Int64
+
+// devUsage is two weeks of tokens and both accounts' limits, for the home
+// page's rail.
+func devUsage(dataDir string) {
+	os.MkdirAll(dataDir, 0o700)
+	var hours []map[string]any
+	now := time.Now().UTC().Truncate(time.Hour)
+	for d := 13; d >= 0; d-- {
+		for _, h := range []struct {
+			name  string
+			scale int64
+		}{{"claude", 1 + int64((d*7)%5)}, {"codex", int64((d * 3) % 4)}} {
+			if h.scale == 0 || (d%6 == 2 && h.name == "claude") {
+				continue
+			}
+			hours = append(hours, map[string]any{"t": now.Add(-time.Duration(d*24+3) * time.Hour), "harness": h.name,
+				"input": 20000 * h.scale, "cached": 900000 * h.scale, "output": 45000 * h.scale})
+		}
+	}
+	b, _ := json.Marshal(map[string]any{"hours": hours, "limits": map[string]any{
+		"codex": map[string]any{"at": time.Now().Add(-20 * time.Minute).UTC(), "windows": []map[string]any{
+			{"name": "primary", "minutes": 300, "used": 18, "resets": time.Now().Add(3 * time.Hour).UTC()},
+			{"name": "secondary", "minutes": 10080, "used": 72, "resets": time.Now().Add(5 * 24 * time.Hour).UTC()},
+		}},
+	}})
+	os.WriteFile(filepath.Join(dataDir, "usage.json"), b, 0o600)
 }
 
 // devUsed is the scripted conversation's context, which each message grows.

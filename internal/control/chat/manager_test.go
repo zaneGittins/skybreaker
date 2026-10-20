@@ -526,3 +526,42 @@ func TestManagerHarnessAnswersBeforeReading(t *testing.T) {
 	h.m.Send(context.Background(), s.ID, "go")
 	waitFor(t, "every line echoed", func() bool { return len(find(h.events(s.ID), KindNotice)) >= 4 })
 }
+
+// What a harness reports using reaches OnUsage with the session's ID.
+func TestManagerUsage(t *testing.T) {
+	h := newHarness(t)
+	type report struct {
+		id     string
+		u      *Usage
+		limits []Limit
+	}
+	got := make(chan report, 4)
+	h.m.c.OnUsage = func(id string, u *Usage, limits []Limit) { got <- report{id, u, limits} }
+	h.script = func(f *fakeClaude, m map[string]any) {
+		if m["type"] != "user" {
+			return
+		}
+		f.say(`{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.25,"resetsAt":1792473000}}}}`)
+		f.say(`{"type":"result","subtype":"success","duration_ms":5,"modelUsage":{"m":{"inputTokens":3,"outputTokens":4,"cacheReadInputTokens":5}}}`)
+	}
+	s := h.session("claude")
+	if err := h.m.Send(context.Background(), s.ID, "hi"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"limits", "usage"} {
+		select {
+		case r := <-got:
+			if r.id != s.ID {
+				t.Errorf("id %q", r.id)
+			}
+			if want == "limits" && (len(r.limits) != 1 || r.limits[0].Used != 25) {
+				t.Errorf("limits %+v", r.limits)
+			}
+			if want == "usage" && (r.u == nil || *r.u != (Usage{Input: 3, Cached: 5, Output: 4})) {
+				t.Errorf("usage %+v", r.u)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("no %s", want)
+		}
+	}
+}

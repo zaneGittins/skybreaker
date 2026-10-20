@@ -194,3 +194,43 @@ test('activitySeries', () => {
   assert.deepEqual(s[13], { day: new Date(2026, 9, 19), allowed: 7, asked: 0, blocked: 1 });
   assert.equal(s.slice(0, 12).every(x => !x.allowed && !x.asked && !x.blocked), true);
 });
+
+test('until in days', () => {
+  const now = Date.parse('2026-10-17T12:00:00Z');
+  assert.equal(until('2026-10-18T10:00:00Z', now), 'in 22h');
+  assert.equal(until('2026-10-20T12:00:00Z', now), 'in 3d');
+});
+
+test('usageSeries', () => {
+  const { usageSeries } = require('./lib.js');
+  const now = new Date(2026, 9, 19, 15);
+  const hr = (d, h) => new Date(2026, 9, d, h).toISOString();
+  const { days, harnesses } = usageSeries([
+    { t: hr(1, 10), harness: 'claude', input: 9, cached: 9, output: 9 }, // before the window
+    { t: hr(18, 1), harness: 'codex', input: 10, cached: 80, output: 10 },
+    { t: hr(18, 3), harness: 'claude', input: 1, cached: 2, output: 3 },
+    { t: hr(19, 9), harness: 'claude', input: 100, cached: 0, output: 0 },
+    { t: hr(19, 10), harness: 'pi', input: 1, cached: 0, output: 0 },
+  ], now);
+  assert.deepEqual(harnesses, ['claude', 'codex', 'pi']);
+  assert.equal(days.length, 14);
+  assert.deepEqual(days[12], { day: new Date(2026, 9, 18), claude: 6, codex: 100, pi: 0 });
+  assert.deepEqual(days[13], { day: new Date(2026, 9, 19), claude: 100, codex: 0, pi: 1 });
+  assert.equal(usageSeries([], now).harnesses.length, 0);
+});
+
+test('compactCount', () => {
+  const { compactCount } = require('./lib.js');
+  assert.equal(compactCount(950), '950');
+  assert.equal(compactCount(12400), '12.4K');
+  assert.equal(compactCount(3_250_000), '3.3M');
+  assert.equal(compactCount(1_200_000_000), '1.2B');
+});
+
+test('limitLabel', () => {
+  const { limitLabel } = require('./lib.js');
+  assert.equal(limitLabel({ name: 'five_hour', minutes: 300 }), '5-hour');
+  assert.equal(limitLabel({ name: 'seven_day', minutes: 10080 }), 'Weekly');
+  assert.equal(limitLabel({ name: 'primary', minutes: 1440 }), 'Daily');
+  assert.equal(limitLabel({ name: 'seven_day_opus' }), 'Seven day opus');
+});
