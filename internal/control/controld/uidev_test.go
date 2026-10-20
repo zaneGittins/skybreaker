@@ -29,7 +29,8 @@ import (
 //	SKYBREAKER_UIDEV=127.0.0.1:8099 go test -run TestUIDev -timeout 0 ./internal/control/controld/
 //
 // Then open http://localhost:8099. Messages to Claude get a scripted turn;
-// one containing "approve" asks for approval, "ask" asks a question and
+// one containing "approve" asks for approval, "ask" asks a question,
+// "agents" starts two background subagents that outlast the turn, and
 // "fail" fails. Codex asks you to sign in.
 func TestUIDev(t *testing.T) {
 	addr := os.Getenv("SKYBREAKER_UIDEV")
@@ -237,6 +238,9 @@ func devClaude(m map[string]any, say func(any), raw func(string)) {
 	case strings.Contains(text, "ask"):
 		raw(`{"type":"control_request","request_id":"q-` + msg + `","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","input":{"questions":[{"question":"Where should finished sessions go?","header":"Inbox","multiSelect":false,"options":[{"label":"For you","description":"Until you've looked at them"},{"label":"Recent","description":"Straight away"}]}]}}}`)
 		return
+	case strings.Contains(text, "agents"):
+		devAgents(msg, say, raw)
+		return
 	case strings.Contains(text, "fail"):
 		raw(`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: 529 Overloaded. The service is busy; try again in a moment.","duration_ms":900}`)
 		return
@@ -263,6 +267,49 @@ func devClaude(m map[string]any, say func(any), raw func(string)) {
 		min(0.95, 0.3+0.07*float64(n)), time.Now().Add(150*time.Minute).Unix(), time.Now().Add(80*time.Hour).Unix()))
 	raw(fmt.Sprintf(`{"type":"result","subtype":"success","is_error":false,"duration_ms":8200,"session_id":"dev-conv","modelUsage":{"claude-opus-5-5":{"contextWindow":400000,"inputTokens":%d,"cacheCreationInputTokens":%d,"cacheReadInputTokens":%d,"outputTokens":%d}}}`,
 		n*40, n*9000, n*180000, n*2500))
+}
+
+// devAgents plays what Claude Code does with background subagents: the
+// turn ends at once, their steps carry on, and each one's report back
+// starts a turn of Claude's own.
+func devAgents(msg string, say func(any), raw func(string)) {
+	stream(say, msg, "I'll split this across two agents and keep you posted.")
+	agents := []struct{ id, task, desc string }{{"ag1-" + msg, "k1-" + msg, "Audit the inbox sort"}, {"ag2-" + msg, "k2-" + msg, "Check the chat on a narrow screen"}}
+	for _, a := range agents {
+		raw(`{"type":"assistant","message":{"id":"` + a.id + `m","content":[{"type":"tool_use","id":"` + a.id + `","name":"Agent","input":{"description":"` + a.desc + `","prompt":"…","run_in_background":true}}]},"parent_tool_use_id":null}`)
+		raw(`{"type":"system","subtype":"task_started","task_id":"` + a.task + `","tool_use_id":"` + a.id + `","description":"` + a.desc + `","is_backgrounded":true,"task_type":"local_agent"}`)
+		raw(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + a.id + `","content":"Async agent launched successfully."}]},"tool_use_result":{"isAsync":true,"status":"async_launched"}}`)
+	}
+	stream(say, msg+"w", "Both are running in the background. I'll report back when they're done.")
+	raw(`{"type":"result","subtype":"success","is_error":false,"duration_ms":2100,"session_id":"dev-conv"}`)
+	step := func(a, id, tool, input, result string, d time.Duration) {
+		raw(`{"type":"assistant","message":{"id":"` + id + `m","content":[{"type":"tool_use","id":"` + id + `","name":"` + tool + `","input":` + input + `}]},"parent_tool_use_id":"` + a + `"}`)
+		time.Sleep(d)
+		raw(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + id + `","content":"` + result + `"}]},"parent_tool_use_id":"` + a + `"}`)
+	}
+	report := func(i int, summary, reply string) {
+		a := agents[i]
+		raw(`{"type":"system","subtype":"task_notification","task_id":"` + a.task + `","tool_use_id":"` + a.id + `","status":"completed","summary":"` + summary + `"}`)
+		raw(`{"type":"system","subtype":"init","session_id":"dev-conv","model":"claude-opus-5-5","permissionMode":"default"}`)
+		time.Sleep(400 * time.Millisecond)
+		stream(say, a.id+"r", reply)
+		raw(`{"type":"result","subtype":"success","is_error":false,"duration_ms":1500,"session_id":"dev-conv"}`)
+	}
+	go func() {
+		a := agents[0].id
+		time.Sleep(time.Second)
+		step(a, a+"s1", "Grep", `{"pattern":"inboxGroups","path":"/workspace/web"}`, "web/skybreaker/chatlib.js:470", 3*time.Second)
+		step(a, a+"s2", "Read", `{"file_path":"/workspace/web/skybreaker/chatlib.js"}`, "ok", 2*time.Second)
+		step(a, a+"s3", "Bash", `{"command":"node --test web/skybreaker/chatlib.test.js"}`, "ok", 8*time.Second)
+		report(0, "The sort is stable: approvals, then problems, then finished work. 27 tests pass.", "The inbox audit is back: the sort holds up and all 27 tests pass. Still waiting on the layout check.")
+	}()
+	go func() {
+		a := agents[1].id
+		time.Sleep(2 * time.Second)
+		step(a, a+"s1", "Read", `{"file_path":"/workspace/web/skybreaker/shell.css"}`, "ok", 4*time.Second)
+		step(a, a+"s2", "Bash", `{"command":"npx playwright test --project=mobile"}`, "ok", 22*time.Second)
+		report(1, "At 375px the chat fits: no horizontal scroll, and the composer clears the home bar.", "The layout check is back too: at 375px nothing scrolls sideways and the composer clears the home bar. Both agents are done.")
+	}()
 }
 
 var devTokens atomic.Int64

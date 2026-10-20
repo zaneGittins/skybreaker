@@ -12,6 +12,23 @@ import (
 // replay feeds a recorded session to a driver and collects what it says.
 func replay(t *testing.T, d Driver, file string) (events []Event, writes [][]byte, resume string) {
 	t.Helper()
+	return replaySent(t, d, file, 0)
+}
+
+// replaySent replays a session whose first sent turns came from messages
+// the user sent: one goes in before the recording, and another after each
+// of those turns' results. Later turns are the harness's own.
+func replaySent(t *testing.T, d Driver, file string, sent int) (events []Event, writes [][]byte, resume string) {
+	t.Helper()
+	send := func() {
+		if sent > 0 {
+			sent--
+			if _, err := d.Send("go"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	send()
 	f, err := os.Open("testdata/" + file)
 	if err != nil {
 		t.Fatal(err)
@@ -21,6 +38,9 @@ func replay(t *testing.T, d Driver, file string) (events []Event, writes [][]byt
 	sc.Buffer(nil, 4<<20)
 	for sc.Scan() {
 		out := d.Read(sc.Bytes())
+		if slices.ContainsFunc(out.Events, func(e Event) bool { return e.Kind == KindTurn && e.Turn.State != TurnWorking }) {
+			send()
+		}
 		events = append(events, out.Events...)
 		writes = append(writes, out.Write...)
 		if out.Resume != "" {

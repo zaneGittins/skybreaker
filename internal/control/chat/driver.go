@@ -111,6 +111,15 @@ func validModel(m string) error {
 	return nil
 }
 
+// stepEnd is what becomes of a subagent's step still open when the
+// subagent ends with status: failed if it failed, else stopped.
+func stepEnd(status string) string {
+	if status == StatusFailed {
+		return StatusFailed
+	}
+	return StatusDeclined
+}
+
 // rel shows a path in the workspace relative to it.
 func rel(p string) string {
 	if r, ok := strings.CutPrefix(p, "/workspace/"); ok && r != "" {

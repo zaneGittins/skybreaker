@@ -196,6 +196,7 @@ async function renderChat(seq, d) {
   let session = d.session, project = d.project;
   const chat = newChat();
   const nodes = new Map(); // item id → its element
+  const openAgents = new Set(); // subagent cards opened, kept open as they redraw
   const modes = state.meta?.chat?.[session.harness] || ['ask'];
   // The prompts saved in Settings, for /prompt.
   let prompts = [];
@@ -203,7 +204,11 @@ async function renderChat(seq, d) {
   const title = el('span.title');
   const sub = el('span.sub');
   const log = el('div.chat-log');
-  const working = el('div.chat-working', { hidden: true, role: 'status' }, sunMark(), el('span.wtext', null, 'Working'), el('span.wtime'));
+  // The agents chip shows while subagents run, which can outlast the turn;
+  // it takes you to the newest.
+  const agentsBtn = el('button.wagents', { type: 'button', hidden: true, onclick: () => showAgent() });
+  const working = el('div.chat-working', { hidden: true }, sunMark(),
+    el('span.wtext', { role: 'status' }, 'Working'), el('span.wtime'), agentsBtn);
   const jump = el('button.jump', { type: 'button', hidden: true, onclick: () => toBottom(true) }, svg(ICON.down), 'Latest');
   const scroller = el('div.chat-scroll', null, el('div.chat-col', null, log, working));
   const dock = el('div.dock');
@@ -333,7 +338,7 @@ async function renderChat(seq, d) {
     after();
   };
   const after = () => {
-    working.hidden = !chat.working || chat.asks.size > 0;
+    drawWorking();
     drawDock();
     if (stick) toBottom();
     else if (!nearBottom()) jump.hidden = false;
@@ -350,6 +355,7 @@ async function renderChat(seq, d) {
     if (r.changed && nodes.has(r.changed.id)) redraw(r.changed);
     if (e.kind === 'info') head();
     if (e.kind === 'turn' && e.turn?.state !== 'working') { markSeen(); v.refreshMeta() }
+    if (e.kind === 'tool' && e.tool?.kind === 'agent' && e.tool.status !== 'running' && !chat.working) { markSeen(); v.refreshMeta() }
     if (e.kind === 'turn' && e.turn?.state === 'working') v.refreshMeta();
     if (e.kind === 'ask' || e.kind === 'answered' || e.kind === 'login') v.refreshMeta();
   };
@@ -617,14 +623,19 @@ async function renderChat(seq, d) {
       command: running ? 'Running' : 'Ran', edit: running ? 'Editing' : 'Edited', read: running ? 'Reading' : 'Read',
       search: running ? 'Searching' : 'Searched', web: running ? 'Fetching' : 'Fetched', agent: 'Agent', todo: 'Updated the plan', mcp: t.name, other: t.name,
     }[t.kind] || t.name;
+    const agent = t.kind === 'agent';
     const status = running ? el('span.spinner')
       : t.status === 'failed' ? el('span.tstat.bad', { title: 'Failed' }, svg(ICON.x))
-        : t.status === 'declined' ? el('span.tstat.muted', null, 'declined') : null;
+        : t.status === 'declined' ? el('span.tstat.muted', null, agent ? 'stopped' : 'declined') : null;
     const n = it.children?.length;
+    const title = t.kind === 'todo' ? '' : reveal(t.title || '');
     return [
       el('span.ticon', null, svg(ICON[TOOL_ICON[t.kind] || 'bolt'])),
       el('span.tverb', null, verb),
-      el('span.ttitle' + (t.kind === 'command' || t.kind === 'edit' || t.kind === 'read' ? '.mono' : ''), null, t.kind === 'todo' ? '' : reveal(t.title || '')),
+      // A running subagent says what it's doing under its name.
+      agent && running && !it.parent
+        ? el('span.ttitle.tstack', null, el('span', null, title), el('span.tnow', null, reveal(agentActivity(it))))
+        : el('span.ttitle' + (t.kind === 'command' || t.kind === 'edit' || t.kind === 'read' ? '.mono' : ''), null, title),
       n ? el('span.tcount', null, `${n} step${n === 1 ? '' : 's'}`) : null,
       t.added || t.removed ? el('span.tdiff', null, el('span.plus', null, '+' + (t.added || 0)), el('span.minus', null, '−' + (t.removed || 0))) : null,
       t.exit ? el('span.tstat.bad', null, 'exit ' + t.exit) : null,
@@ -644,12 +655,15 @@ async function renderChat(seq, d) {
         })));
     }
     if (t.diff) body = diffView(t.diff, { open: 1, limit: 120 });
+    else if (t.kind === 'agent' && t.output && !it.children?.length) body = el('div.tagent-out', null, markdown(t.output));
     else if (t.kind === 'command') body = el('pre.tout', null, '$ ' + reveal(t.title) + (t.output ? '\n' + plainOut(t.output) : ''));
     else if (t.output) body = el('pre.tout', null, plainOut(t.output));
     else if (t.input && t.kind !== 'read' && t.kind !== 'search') body = el('pre.tout', null, toolInput(t.input));
-    if (it.children?.length) body = el('div.tchildren', null, it.children.map(c => el('div.tool.child', null, el('div.tline', null, toolLine(c)))));
-    if (!body) return el('div.tool.' + t.status, null, el('div.tline', null, toolLine(it)));
-    return el('details.tool.' + t.status, { open: t.status === 'failed' && t.kind === 'command' ? true : null },
+    if (it.children?.length) body = el('div.tchildren', null, it.children.map(c => el('div.tool.child.' + c.tool.status, null, el('div.tline', null, toolLine(c)))),
+      t.kind === 'agent' && t.output ? el('div.tagent-out', null, markdown(t.output)) : null);
+    const cls = 'tool.' + t.status + (t.kind === 'agent' ? '.agent' : '');
+    if (!body) return el('div.' + cls, null, el('div.tline', null, toolLine(it)));
+    return el('details.' + cls, { open: (t.status === 'failed' && t.kind === 'command') || openAgents.has(it.id) ? true : null, ontoggle: t.kind === 'agent' ? e => { if (e.currentTarget.open) openAgents.add(it.id); else openAgents.delete(it.id) } : null },
       el('summary.tline', null, toolLine(it), svg(ICON.chevron, 'chev')), body);
   }
 
@@ -846,17 +860,44 @@ async function renderChat(seq, d) {
       }, svg(ICON.key), 'Sign in')));
   }
 
+  // --- the working line ---
+  // It shows while the turn runs, and while subagents do after it: what's
+  // happening now, and for how long.
+  const drawWorking = () => {
+    const agents = runningAgents(chat);
+    working.hidden = !(chat.working || agents.length) || chat.asks.size > 0;
+    const lead = agents[agents.length - 1];
+    agentsBtn.hidden = !lead;
+    if (lead) {
+      agentsBtn.textContent = agents.length === 1 ? '1 agent' : agents.length + ' agents';
+      agentsBtn.setAttribute('aria-label', `${agentsBtn.textContent} working: show ${lead.tool.title ? reveal(lead.tool.title) : 'it'}`);
+    }
+    if (working.hidden) return;
+    const text = reveal(chat.working ? activityLabel(chat) : [lead.tool.title, agentActivity(lead)].filter(Boolean).join(' · '));
+    const since = chat.working ? chat.turnStart : agents[0].since;
+    const wtext = working.querySelector('.wtext');
+    if (wtext.textContent !== text) wtext.textContent = text;
+    const secs = since ? Math.max(0, Math.round((Date.now() - Date.parse(since)) / 1000)) : -1;
+    working.querySelector('.wtime').textContent = secs < 0 ? '' : secs < 60 ? secs + 's' : Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+  };
+  // showAgent opens the newest running subagent's card and brings it into view.
+  const showAgent = () => {
+    let it = runningAgents(chat).pop();
+    while (it?.parent) it = chat.byId.get(it.parent);
+    const node = it && nodes.get(it.id);
+    if (!node) return;
+    if (node.tagName === 'DETAILS') { node.open = true; openAgents.add(it.id) }
+    node.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+    node.classList.remove('flash');
+    void node.offsetWidth;
+    node.classList.add('flash');
+  };
+
   // --- go ---
   head();
   connect();
   markSeen();
-  v.timer = setInterval(() => {
-    // What it's doing now, in the agent's own words, and for how long.
-    working.querySelector('.wtext').textContent = reveal(activityLabel(chat));
-    if (!chat.working || !chat.turnStart) { working.querySelector('.wtime').textContent = ''; return }
-    const s = Math.max(0, Math.round((Date.now() - Date.parse(chat.turnStart)) / 1000));
-    working.querySelector('.wtime').textContent = s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's';
-  }, 1000);
+  v.timer = setInterval(drawWorking, 1000);
   if (!coarse()) input.focus({ preventScroll: true });
 }
 
