@@ -59,6 +59,10 @@ type session struct {
 // sessionTTL ends sessions from clients that went away without saying so.
 const sessionTTL = 24 * time.Hour
 
+// maxSessions bounds the sessions one mount (a project's sandbox, or you)
+// holds: a sandbox can initialize in a loop.
+const maxSessions = 64
+
 const maxBody = 1 << 20
 
 var versions = []string{"2025-06-18", "2025-03-26", "2024-11-05"}
@@ -197,10 +201,21 @@ func (s *Server) initialize(w http.ResponseWriter, req request, caller Caller) {
 		s.sessions = map[string]*session{}
 	}
 	now := time.Now()
+	mine, oldest := 0, ""
 	for k, x := range s.sessions {
 		if now.Sub(x.seen) > sessionTTL {
 			delete(s.sessions, k)
+			continue
 		}
+		if x.caller.Project == caller.Project && x.caller.User == caller.User {
+			mine++
+			if oldest == "" || x.seen.Before(s.sessions[oldest].seen) {
+				oldest = k
+			}
+		}
+	}
+	if mine >= maxSessions {
+		delete(s.sessions, oldest)
 	}
 	s.sessions[id] = &session{caller: caller, seen: now}
 	s.mu.Unlock()

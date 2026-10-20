@@ -270,13 +270,21 @@ func writer(p *Proc, in <-chan []byte) {
 	}
 }
 
-// write queues lines for the harness. Callers hold r.mu.
+// write queues lines for the harness, never waiting: callers hold r.mu,
+// and a harness that has stopped reading its input would hold it, and
+// then everything that takes it, for good. Its input is closed instead,
+// which ends a harness that's well.
 func (m *Manager) write(r *run, lines [][]byte) {
-	if r.in == nil {
-		return
-	}
 	for _, l := range lines {
-		r.in <- append(l, '\n')
+		if r.in == nil {
+			return
+		}
+		select {
+		case r.in <- append(l, '\n'):
+		default:
+			log.Printf("skybreaker: chat %s: the harness isn't reading its input; closing it", r.id)
+			r.closeInput()
+		}
 	}
 }
 

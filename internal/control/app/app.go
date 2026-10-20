@@ -139,6 +139,9 @@ func New(d Deps) (*App, error) {
 		return nil, err
 	}
 	a.chat = m
+	// A session dropped as too old takes its chat log and kept files with
+	// it. Apart from the caller, which may hold locks Forget would take.
+	d.Store.OnPrune(func(id string) { go m.Forget(id) })
 	return a, nil
 }
 

@@ -39,8 +39,6 @@ type Out struct {
 	Write  [][]byte // lines for the harness's stdin
 	// Resume is the harness's conversation ID once it reports one.
 	Resume string
-	// Exit asks the manager to stop the process, after writing.
-	Exit bool
 }
 
 // A Driver translates between Skybreaker and one harness's structured protocol.

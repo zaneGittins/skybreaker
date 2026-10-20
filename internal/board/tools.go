@@ -324,7 +324,11 @@ func (t *tools) updateItem() mcp.Tool {
 			}
 			patch.Labels = in.Labels
 			patch.Priority = prio
-			it, err := t.s.UpdateItem(in.Ref, patch, who)
+			update := func() (Item, error) { return t.s.UpdateItem(in.Ref, patch, who) }
+			if !t.user() {
+				update = func() (Item, error) { return t.s.UpdateAs(in.Ref, patch, t.claim(in.Agent, false)) }
+			}
+			it, err := update()
 			if err != nil {
 				return "", err
 			}

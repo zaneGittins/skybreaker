@@ -186,29 +186,80 @@ var validKey = regexp.MustCompile(`^[A-Z][A-Z0-9]{0,7}$`)
 func (s *Store) Sync(specs []Spec) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	keys, err := s.plan(specs)
+	if err != nil {
+		return err
+	}
 	s.active = nil
 	for _, sp := range specs {
 		s.active = append(s.active, sp.Slug)
-		key := strings.ToUpper(strings.TrimSpace(sp.Key))
-		if key != "" && !validKey.MatchString(key) {
-			return invalid("board key %q: use one letter then up to seven letters or digits", sp.Key)
-		}
 		p, ok := s.st.Projects[sp.Slug]
 		if !ok {
-			if key == "" {
-				key = s.suggestKey(sp.Slug)
-			}
 			p = &Project{Slug: sp.Slug, Next: 1}
 			s.st.Projects[sp.Slug] = p
 		}
-		if key != "" && key != p.Key {
-			if other := s.keyOwner(key); other != "" && other != sp.Slug {
-				return fmt.Errorf("%w: board key %s is %s's", ErrConflict, key, other)
-			}
-			p.Key = key
-		}
+		p.Key = keys[sp.Slug]
 	}
 	return s.save()
+}
+
+// CheckSync reports whether Sync would take specs, changing nothing: a
+// project created in the app is checked with it before it's saved, so a key
+// clash is refused there rather than failing the restart.
+func (s *Store) CheckSync(specs []Spec) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.plan(specs)
+	return err
+}
+
+// plan picks each spec's board key without changing anything: explicit
+// keys first, so a derived one never takes a key a project asks for, and
+// in slug order, so the result doesn't depend on the order specs come in.
+// Callers hold s.mu.
+func (s *Store) plan(specs []Spec) (map[string]string, error) {
+	owner := map[string]string{} // key → slug
+	for slug, p := range s.st.Projects {
+		if p.Key != "" {
+			owner[strings.ToUpper(p.Key)] = slug
+		}
+	}
+	sorted := slices.Clone(specs)
+	slices.SortFunc(sorted, func(a, b Spec) int {
+		if (a.Key == "") != (b.Key == "") {
+			if a.Key != "" {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.Slug, b.Slug)
+	})
+	out := map[string]string{}
+	for _, sp := range sorted {
+		key := strings.ToUpper(strings.TrimSpace(sp.Key))
+		if key != "" && !validKey.MatchString(key) {
+			return nil, invalid("board key %q: use one letter then up to seven letters or digits", sp.Key)
+		}
+		cur := ""
+		if p, ok := s.st.Projects[sp.Slug]; ok {
+			cur = strings.ToUpper(p.Key)
+		}
+		switch {
+		case key == "" && cur != "":
+			key = cur // a board keeps its key
+		case key == "":
+			key = suggestKey(sp.Slug, func(k string) bool { return owner[k] != "" })
+		}
+		if other := owner[key]; other != "" && other != sp.Slug {
+			return nil, fmt.Errorf("%w: board key %s is %s's", ErrConflict, key, other)
+		}
+		if cur != "" && cur != key {
+			delete(owner, cur)
+		}
+		owner[key] = sp.Slug
+		out[sp.Slug] = key
+	}
+	return out, nil
 }
 
 // Slugs lists the configured projects' boards, sorted.
@@ -229,8 +280,9 @@ func (s *Store) keyOwner(key string) string {
 	return ""
 }
 
-// suggestKey derives a short unused key from a slug: "bifract" → "BIF".
-func (s *Store) suggestKey(slug string) string {
+// suggestKey derives a short key from a slug that taken doesn't hold:
+// "bifract" → "BIF".
+func suggestKey(slug string, taken func(string) bool) string {
 	var letters []rune
 	for _, r := range strings.ToUpper(slug) {
 		if (r >= 'A' && r <= 'Z') || (len(letters) > 0 && r >= '0' && r <= '9') {
@@ -242,7 +294,7 @@ func (s *Store) suggestKey(slug string) string {
 		base = "P"
 	}
 	base = base[:min(3, len(base))]
-	if s.keyOwner(base) == "" {
+	if !taken(base) {
 		return base
 	}
 	for i := 2; ; i++ {
@@ -250,7 +302,7 @@ func (s *Store) suggestKey(slug string) string {
 		if len(k) > 8 {
 			k = "P" + strconv.Itoa(i)
 		}
-		if s.keyOwner(k) == "" {
+		if !taken(k) {
 			return k
 		}
 	}
@@ -584,6 +636,21 @@ func (s *Store) CreateItem(project string, in ItemInput, actor string) (Item, er
 
 func (s *Store) UpdateItem(ref string, patch ItemPatch, actor string) (Item, error) {
 	return s.inItem(ref, func(*Item) (ItemPatch, error) { return patch, nil }, actor)
+}
+
+// UpdateAs is UpdateItem for an agent under claim c: it refuses an item
+// that another session holds in progress, so moving it back to Todo can't
+// be a way to take it.
+func (s *Store) UpdateAs(ref string, patch ItemPatch, c Claim) (Item, error) {
+	if err := c.normalize(); err != nil {
+		return Item{}, err
+	}
+	return s.inItem(ref, func(it *Item) (ItemPatch, error) {
+		if it.Status == "in_progress" && it.Assignee != "" && it.ClaimedBy != c.Claimant {
+			return ItemPatch{}, fmt.Errorf("%w: %s is in progress with %s; leave it to them, or add a note", ErrConflict, it.Ref, it.Assignee)
+		}
+		return patch, nil
+	}, c.Agent)
 }
 
 // inItem loads an item under the lock, lets decide inspect it and choose the

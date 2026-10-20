@@ -380,3 +380,42 @@ func TestCodexLoginBeforeAccountRead(t *testing.T) {
 		t.Errorf("account/read after the code: %+v", l)
 	}
 }
+
+// A message sent before codex says which turn it started waits for that
+// turn's ID, then steers it; codex refuses a steer for any other turn.
+func TestCodexSteersOnlyAKnownTurn(t *testing.T) {
+	d, _ := handshake(t, Options{Cwd: "/workspace"})
+	lines, _ := d.Send("first")
+	startID := decodeLine(t, lines[0])["id"]
+	if lines, _ := d.Send("second"); len(lines) != 0 {
+		t.Fatalf("steered a turn with no ID yet: %s", lines)
+	}
+	out := d.Read(line(map[string]any{"id": startID, "result": map[string]any{"turn": map[string]any{"id": "turn-7"}}}))
+	if len(out.Write) != 1 {
+		t.Fatalf("held message not sent: %q", out.Write)
+	}
+	m := decodeLine(t, out.Write[0])
+	if m["method"] != "turn/steer" || m["params"].(map[string]any)["expectedTurnId"] != "turn-7" || !strings.Contains(string(out.Write[0]), "second") {
+		t.Fatalf("flushed = %s", out.Write[0])
+	}
+
+	// If the turn never starts, what was held starts the next one.
+	lines, _ = d.Send("third")
+	if len(lines) != 1 || decodeLine(t, lines[0])["method"] != "turn/steer" {
+		t.Fatalf("steer the running turn = %q", lines)
+	}
+	d2, _ := handshake(t, Options{Cwd: "/workspace"})
+	lines, _ = d2.Send("a")
+	startID = decodeLine(t, lines[0])["id"]
+	d2.Send("b")
+	out = d2.Read(line(map[string]any{"id": startID, "error": map[string]any{"code": -1, "message": "busy"}}))
+	var started bool
+	for _, w := range out.Write {
+		if m := decodeLine(t, w); m["method"] == "turn/start" && strings.Contains(string(w), `"b"`) {
+			started = true
+		}
+	}
+	if !started {
+		t.Fatalf("held message lost when the turn failed: %q", out.Write)
+	}
+}

@@ -53,17 +53,23 @@ func Generate(in Input) (string, error) {
 	line("\t\telements = { %s }", strings.Join(elems, ", "))
 	line("\t}")
 	line("")
+	// A sandbox can write raw packets (runsc's --net-raw) with any source
+	// address, so what arrives on a sandbox bridge is judged by the bridge:
+	// nothing from one is forwarded, and the host takes only the two ports
+	// from a sandbox address, and replies. The address rules stay as a
+	// second fence.
 	line("\tchain forward {")
 	line("\t\ttype filter hook forward priority -10; policy accept;")
-	line("\t\tiifname \"sky-*\" meta nfproto ipv6 drop")
+	line("\t\tiifname \"sky-*\" counter drop")
 	line("\t\tip saddr @sandboxes counter drop")
 	line("\t}")
 	line("")
 	line("\tchain input {")
 	line("\t\ttype filter hook input priority -10; policy accept;")
 	line("\t\tiifname \"sky-*\" meta nfproto ipv6 drop")
-	line("\t\tip saddr @sandboxes tcp dport %s accept", ports)
-	line("\t\tip saddr @sandboxes ct state established,related accept")
+	line("\t\tiifname \"sky-*\" ip saddr @sandboxes tcp dport %s accept", ports)
+	line("\t\tiifname \"sky-*\" ip saddr @sandboxes ct state established,related accept")
+	line("\t\tiifname \"sky-*\" counter drop")
 	line("\t\tip saddr @sandboxes counter drop")
 	line("\t\ttcp dport %s counter drop", ports)
 	line("\t}")

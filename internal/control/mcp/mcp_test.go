@@ -163,3 +163,24 @@ func TestArgs(t *testing.T) {
 		t.Fatalf("%v %v", a, err)
 	}
 }
+
+// A sandbox can open sessions in a loop; each mount keeps a bounded number,
+// dropping the one least recently used.
+func TestSessionsAreBoundedPerMount(t *testing.T) {
+	ts := mount(echoServer())
+	defer ts.Close()
+	first := initialize(t, ts.URL, "bifract")
+	other := initialize(t, ts.URL, "skybreaker")
+	var last string
+	for range maxSessions + 5 {
+		last = initialize(t, ts.URL, "bifract")
+	}
+	if code, _, _ := rpc(t, ts.URL, "bifract", first, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`); code != 404 {
+		t.Fatalf("the oldest session outlived the cap: %d", code)
+	}
+	for _, c := range [][2]string{{"bifract", last}, {"skybreaker", other}} {
+		if code, _, _ := rpc(t, ts.URL, c[0], c[1], `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`); code != 200 {
+			t.Fatalf("%s's session went: %d", c[0], code)
+		}
+	}
+}

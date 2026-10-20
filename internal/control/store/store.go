@@ -119,6 +119,7 @@ type Store struct {
 	path     string
 	maxRuns  int
 	maxEnded int // ended sessions kept; running ones always are
+	onPrune  func(id string)
 
 	mu sync.Mutex
 	st state
@@ -188,17 +189,34 @@ func (s *Store) save() error {
 
 func (s *Store) CreateSession(x Session) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if slices.ContainsFunc(s.st.Sessions, func(o Session) bool { return o.ID == x.ID }) {
+		s.mu.Unlock()
 		return fmt.Errorf("session %s: %w", x.ID, ErrExists)
 	}
 	s.st.Sessions = append(s.st.Sessions, x)
-	s.pruneSessionsLocked()
-	return s.save()
+	gone := s.pruneSessionsLocked()
+	err := s.save()
+	onPrune := s.onPrune
+	s.mu.Unlock()
+	if onPrune != nil {
+		for _, id := range gone {
+			onPrune(id)
+		}
+	}
+	return err
 }
 
-// pruneSessionsLocked drops the oldest ended sessions beyond maxEnded.
-func (s *Store) pruneSessionsLocked() {
+// OnPrune has f hear of each session dropped as too old, so what it kept
+// for one (a chat's log and files) goes with it.
+func (s *Store) OnPrune(f func(id string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onPrune = f
+}
+
+// pruneSessionsLocked drops the oldest ended sessions beyond maxEnded and
+// returns their IDs.
+func (s *Store) pruneSessionsLocked() []string {
 	ended := 0
 	for _, x := range s.st.Sessions {
 		if x.Status != StatusRunning {
@@ -206,17 +224,20 @@ func (s *Store) pruneSessionsLocked() {
 		}
 	}
 	if ended <= s.maxEnded {
-		return
+		return nil
 	}
 	slices.SortStableFunc(s.st.Sessions, func(a, b Session) int { return a.Created.Compare(b.Created) })
 	drop := ended - s.maxEnded
+	var gone []string
 	s.st.Sessions = slices.DeleteFunc(s.st.Sessions, func(x Session) bool {
 		if drop > 0 && x.Status != StatusRunning {
 			drop--
+			gone = append(gone, x.ID)
 			return true
 		}
 		return false
 	})
+	return gone
 }
 
 func (s *Store) UpdateSession(id string, f func(*Session)) error {

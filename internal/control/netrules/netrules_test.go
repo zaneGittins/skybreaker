@@ -21,15 +21,16 @@ table inet skybreaker {
 
 	chain forward {
 		type filter hook forward priority -10; policy accept;
-		iifname "sky-*" meta nfproto ipv6 drop
+		iifname "sky-*" counter drop
 		ip saddr @sandboxes counter drop
 	}
 
 	chain input {
 		type filter hook input priority -10; policy accept;
 		iifname "sky-*" meta nfproto ipv6 drop
-		ip saddr @sandboxes tcp dport { 7701, 8080 } accept
-		ip saddr @sandboxes ct state established,related accept
+		iifname "sky-*" ip saddr @sandboxes tcp dport { 7701, 8080 } accept
+		iifname "sky-*" ip saddr @sandboxes ct state established,related accept
+		iifname "sky-*" counter drop
 		ip saddr @sandboxes counter drop
 		tcp dport { 7701, 8080 } counter drop
 	}
@@ -59,6 +60,26 @@ func TestGenerateGolden(t *testing.T) {
 	}
 	if got != golden {
 		t.Errorf("got:\n%s\nwant:\n%s", got, golden)
+	}
+}
+
+// A sandbox can write raw packets (runsc runs with --net-raw), so it can put
+// any source address on them: what comes in on a sandbox bridge is judged by
+// the bridge, not by the address it claims.
+func TestSpoofedSourcesAreDropped(t *testing.T) {
+	got, _ := Generate(input())
+	forward := got[strings.Index(got, "chain forward"):strings.Index(got, "chain input")]
+	if !strings.Contains(forward, "iifname \"sky-*\" counter drop") {
+		t.Fatalf("forward lets a forged source off a sandbox bridge:\n%s", forward)
+	}
+	in := got[strings.Index(got, "chain input"):]
+	for _, l := range strings.Split(in, "\n") {
+		if strings.HasSuffix(l, " accept") && !strings.Contains(l, "iifname \"sky-*\"") {
+			t.Fatalf("input accepts by address alone: %q", l)
+		}
+	}
+	if !strings.Contains(in, "iifname \"sky-*\" counter drop") {
+		t.Fatal("input doesn't drop the rest from sandbox bridges")
 	}
 }
 

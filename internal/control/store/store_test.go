@@ -133,6 +133,21 @@ func TestEndedSessionsPruned(t *testing.T) {
 	}
 }
 
+// Whoever keeps a session's chat log hears when the session is dropped.
+func TestPrunedSessionsAreReported(t *testing.T) {
+	s, _ := open(t)
+	s.maxEnded = 1
+	var gone []string
+	s.OnPrune(func(id string) { gone = append(gone, id) })
+	t0 := time.Unix(0, 0)
+	for i := range 3 {
+		s.CreateSession(Session{ID: string(rune('a' + i)), Project: "p", Status: StatusExited, Created: t0.Add(time.Duration(i) * time.Minute)})
+	}
+	if !slices.Equal(gone, []string{"a", "b"}) {
+		t.Fatalf("pruned %v", gone)
+	}
+}
+
 func TestTokens(t *testing.T) {
 	s, p := open(t)
 	if _, ok := s.Token("orbit"); ok {

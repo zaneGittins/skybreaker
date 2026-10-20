@@ -90,6 +90,19 @@ func TestAgentLimits(t *testing.T) {
 	if out, ok := call(t, s, other, "claim_item", `{"ref":"SKY-1","force":true}`); ok {
 		t.Errorf("agent forced a claim: %s", out)
 	}
+	// Nor take it by moving it back to Todo first, or edit it under them;
+	// a note is fine.
+	for _, args := range []string{`{"ref":"SKY-1","status":"todo"}`, `{"ref":"SKY-1","status":"backlog"}`, `{"ref":"SKY-1","title":"mine now"}`, `{"ref":"SKY-1","status":"review"}`} {
+		if out, ok := call(t, s, other, "update_item", args); ok {
+			t.Errorf("another session changed a claimed item with %s: %s", args, out)
+		}
+	}
+	if out, ok := call(t, s, other, "add_note", `{"ref":"SKY-1","body":"I can help with the tests"}`); !ok {
+		t.Errorf("note on a claimed item: %s", out)
+	}
+	if out, ok := call(t, s, agentSky, "update_item", `{"ref":"SKY-1","title":"still mine"}`); !ok {
+		t.Errorf("the holder edits its own item: %s", out)
+	}
 	if out, ok := call(t, s, agentSky, "get_item", `{"ref":"SKY-1","sneaky":1}`); ok {
 		t.Errorf("unknown argument accepted: %s", out)
 	}

@@ -180,11 +180,7 @@ func Run(ctx context.Context, o Options) error {
 	if err != nil {
 		return err
 	}
-	var specs []board.Spec
-	for name, p := range cfg.Projects {
-		specs = append(specs, board.Spec{Slug: name, Key: p.Key})
-	}
-	if err := boards.Sync(specs); err != nil {
+	if err := boards.Sync(boardSpecs(cfg)); err != nil {
 		return err
 	}
 	boards.OnChange = func(project, ref string) { a.Publish(app.Event{Type: "board", Project: project, Data: ref}) }
@@ -234,7 +230,7 @@ func Run(ctx context.Context, o Options) error {
 		})
 	}
 
-	changes := &settings{configPath: o.ConfigPath, secrets: cfg.SecretsFile, app: a, broker: brk, restart: requestRestart}
+	changes := &settings{configPath: o.ConfigPath, secrets: cfg.SecretsFile, app: a, broker: brk, boards: boards, restart: requestRestart}
 	apiHandler, err := api.New(api.Deps{
 		Config: cfg, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews, SSHKeys: sshKeys,
 		Projects: changes, Settings: changes,
@@ -315,7 +311,7 @@ func Run(ctx context.Context, o Options) error {
 				return
 			case <-t.C:
 				a.ReapChats()
-				a.SweepContainers(ctx)
+				within(ctx, 2*time.Minute, a.SweepContainers)
 			}
 		}
 	}()
@@ -323,8 +319,8 @@ func Run(ctx context.Context, o Options) error {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for {
-			a.RenewTokens(ctx)
-			a.RefreshSandboxes(ctx)
+			within(ctx, 2*time.Minute, a.RenewTokens)
+			within(ctx, 15*time.Minute, a.RefreshSandboxes)
 			select {
 			case <-ctx.Done():
 				return
@@ -447,4 +443,22 @@ func listenHost(cfg *config.Config) string {
 		return h
 	}
 	return ""
+}
+
+// boardSpecs are the boards cfg's projects need.
+func boardSpecs(cfg *config.Config) []board.Spec {
+	var specs []board.Spec
+	for name, p := range cfg.Projects {
+		specs = append(specs, board.Spec{Slug: name, Key: p.Key})
+	}
+	return specs
+}
+
+// within runs f with a deadline. The maintenance loops run commands in
+// sandboxes, which control what those commands do: one that never returns
+// must not stop the loop, and with it token renewal for every project.
+func within(ctx context.Context, d time.Duration, f func(context.Context)) {
+	ctx, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
+	f(ctx)
 }

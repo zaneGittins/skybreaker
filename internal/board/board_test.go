@@ -679,3 +679,31 @@ func TestHistory(t *testing.T) {
 		t.Error("history of a project that isn't there")
 	}
 }
+
+// A board key a project asks for that another board holds is refused before
+// anything changes, and explicit keys go first, whatever order specs come in.
+func TestSyncKeyClash(t *testing.T) {
+	s := open(t)
+	if err := s.Sync([]Spec{{Slug: "bifract"}}); err != nil {
+		t.Fatal(err)
+	}
+	clash := []Spec{{Slug: "bifract"}, {Slug: "other", Key: "BIF"}}
+	if err := s.CheckSync(clash); !errors.Is(err, ErrConflict) {
+		t.Fatalf("check: %v", err)
+	}
+	if err := s.Sync(clash); !errors.Is(err, ErrConflict) {
+		t.Fatalf("sync: %v", err)
+	}
+	if _, err := s.GetProject("other"); err == nil {
+		t.Fatal("a refused sync made a board")
+	}
+	for range 20 {
+		fresh := open(t)
+		if err := fresh.Sync([]Spec{{Slug: "bifract"}, {Slug: "other", Key: "BIF"}}); err != nil {
+			t.Fatalf("fresh store: %v", err)
+		}
+		if p, _ := fresh.GetProject("other"); p.Key != "BIF" {
+			t.Fatalf("other got %s", p.Key)
+		}
+	}
+}

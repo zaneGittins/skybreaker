@@ -19,6 +19,7 @@ type codex struct {
 	thread  string
 	turn    string
 	queue   []string // messages sent before the thread exists
+	held    []string // messages sent while a turn starts, steered into it once codex names it
 	asks    map[string]codexAsk
 	items   map[string]*Tool // item ID → its card
 	resumed bool
@@ -107,6 +108,10 @@ func (c *codex) Send(text string) ([][]byte, error) {
 	switch {
 	case c.thread == "":
 		c.queue = append(c.queue, text)
+		return nil, nil
+	case c.turn == "pending":
+		// codex steers only the turn it names; until it has, wait.
+		c.held = append(c.held, text)
 		return nil, nil
 	case c.turn != "":
 		return [][]byte{c.request("turn/steer", map[string]any{"threadId": c.thread, "expectedTurnId": c.turn, "input": input(text)})}, nil
@@ -215,6 +220,18 @@ type codexLine struct {
 }
 
 func (c *codex) Read(b []byte) Out {
+	out := c.read(b)
+	// Once codex has named the turn, what waited for it steers it.
+	if c.turn != "" && c.turn != "pending" {
+		for _, text := range c.held {
+			out.Write = append(out.Write, c.request("turn/steer", map[string]any{"threadId": c.thread, "expectedTurnId": c.turn, "input": input(text)}))
+		}
+		c.held = nil
+	}
+	return out
+}
+
+func (c *codex) read(b []byte) Out {
 	var l codexLine
 	if json.Unmarshal(b, &l) != nil {
 		return Out{}
@@ -255,6 +272,12 @@ func (c *codex) response(l codexLine, now time.Time) Out {
 		case "turn/start", "turn/steer":
 			c.turn = ""
 			out.Events = append(out.Events, Event{Time: now, Kind: KindTurn, Turn: &Turn{State: TurnFailed, Error: l.Error.Message}})
+			if len(c.held) > 0 {
+				// What waited for the failed turn starts the next one.
+				first := c.held[0]
+				c.held = c.held[1:]
+				out.Write = append(out.Write, c.startTurn(first))
+			}
 		case "account/login/start":
 			c.signing = false
 			out.Events = append(out.Events, Event{Time: now, Kind: KindLogin, Login: &Login{Needed: true, Error: l.Error.Message}})
@@ -311,12 +334,9 @@ func (c *codex) response(l codexLine, now time.Time) Out {
 		}
 		queued := c.queue
 		c.queue = nil
-		for i, text := range queued {
-			if i == 0 {
-				out.Write = append(out.Write, c.startTurn(text))
-			} else {
-				out.Write = append(out.Write, c.request("turn/steer", map[string]any{"threadId": c.thread, "expectedTurnId": c.turn, "input": input(text)}))
-			}
+		if len(queued) > 0 {
+			out.Write = append(out.Write, c.startTurn(queued[0]))
+			c.held = append(c.held, queued[1:]...)
 		}
 	case "turn/start":
 		var r struct {

@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zaneGittins/skybreaker/internal/board"
 	"github.com/zaneGittins/skybreaker/internal/control/api"
 	"github.com/zaneGittins/skybreaker/internal/control/app"
 	"github.com/zaneGittins/skybreaker/internal/control/config"
@@ -27,12 +28,19 @@ type settings struct {
 	secrets    string // the secrets file
 	app        *app.App
 	broker     *broker.Broker
+	boards     *board.Store
 	restart    func() // when no agent is working
 	pending    atomic.Bool
 }
 
+// check is what a change must pass before it's saved: the broker's secret
+// bindings, and board keys that every project's board can take (a clash
+// would otherwise only fail the restart).
 func (d *settings) check(c *config.Config) error {
-	return broker.Check(c.Policy, c.SecretsFile, c.AppSecretsFile)
+	if err := broker.Check(c.Policy, c.SecretsFile, c.AppSecretsFile); err != nil {
+		return err
+	}
+	return d.boards.CheckSync(boardSpecs(c))
 }
 
 // saved records a change and restarts to apply it once no agent is working.
