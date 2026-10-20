@@ -396,8 +396,12 @@ function foldChat(c, e) {
     }
     case 'tool': {
       const it = c.byId.get(e.id);
-      if (it) { it.tool = e.tool; return { changed: it.parent ? c.byId.get(it.parent) || it : it } }
-      const item = { type: 'tool', id: e.id, tool: e.tool, children: [], parent: '' };
+      if (it) {
+        if (e.tool.status === 'running' && it.tool.status !== 'running') it.since = e.time || null;
+        it.tool = e.tool;
+        return { changed: it.parent ? c.byId.get(it.parent) || it : it };
+      }
+      const item = { type: 'tool', id: e.id, tool: e.tool, children: [], parent: '', since: e.time || null };
       const parent = e.tool.parent && c.byId.get(e.tool.parent);
       if (parent) {
         item.parent = parent.id;
@@ -474,7 +478,7 @@ function sessionTone(s) {
     case 'waiting': return { tone: 'wait', label: s.note || 'Waiting for you' };
     case 'login': return { tone: 'wait', label: 'Sign-in needed' };
     case 'failed': return { tone: 'bad', label: s.note || 'Hit a problem' };
-    case 'working': return { tone: 'work', label: 'Working' };
+    case 'working': return { tone: 'work', label: s.note || 'Working' };
   }
   const unseen = s.updated && (!s.seen || Date.parse(s.updated) > Date.parse(s.seen));
   return unseen ? { tone: 'done', label: 'Finished' } : { tone: 'idle', label: 'Idle' };
@@ -569,4 +573,27 @@ function activityLabel(c) {
   return 'Working';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel, contextUse, fmtTokens };
+// runningAgents lists the subagents still at work, the longest-running
+// first. A subagent can outlast the turn that started it.
+function runningAgents(c) {
+  const out = [];
+  const walk = items => {
+    for (const it of items) {
+      if (it.type !== 'tool') continue;
+      if (it.tool.kind === 'agent' && it.tool.status === 'running') out.push(it);
+      if (it.children?.length) walk(it.children);
+    }
+  };
+  walk(c.items);
+  const at = it => Date.parse(it.since || 0) || 0;
+  return out.sort((a, b) => at(a) - at(b));
+}
+
+// agentActivity says what a subagent is doing: its newest running step.
+function agentActivity(it) {
+  const step = [...(it.children || [])].reverse().find(x => x.tool.status === 'running');
+  if (step) return clipLabel((ACTIVITY[step.tool.kind] || (x => firstLine(x) || 'Working'))(step.tool.title) || 'Working');
+  return it.children?.length ? 'Thinking' : 'Starting';
+}
+
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens };

@@ -389,6 +389,16 @@ summary.tline:hover { background: var(--surface-2); }
 .tool.child { border: 0; }
 .tool.child .tline { min-height: 34px; padding: 4px 10px; font-size: 13px; }
 .tool .diffs { padding: 8px; border-top: 1px solid var(--border); background: var(--bg); }
+/* A subagent: what it's doing now under its name, and its reply below its steps. */
+.ttitle.tstack { display: flex; flex-direction: column; gap: 1px; }
+.tstack > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tnow { font-size: 12px; font-weight: 600; color: var(--muted); }
+.tool.agent.declined .tverb, .tool.agent.declined .ttitle { text-decoration: none; }
+.tagent-out { padding: 10px 14px 12px; border-top: 1px solid var(--border); background: var(--bg); font-size: 14px; color: var(--text-2); max-height: 360px; overflow: auto; }
+.tchildren .tagent-out { margin-left: -18px; padding-left: 32px; }
+.tool.flash { animation: tool-flash 1.4s ease-out; }
+@keyframes tool-flash { from { background: var(--working-bg); } }
+@media (prefers-reduced-motion: reduce) { .tool.flash { animation: none; } }
 .todos { list-style: none; margin: 0; padding: 4px 14px 12px 45px; display: grid; gap: 6px; font-size: 14px; }
 .todos li { display: flex; align-items: flex-start; gap: 9px; color: var(--text); }
 .todos .box { flex-shrink: 0; display: grid; place-items: center; width: 17px; height: 17px; margin-top: 2px; border-radius: 6px; border: 1.5px solid var(--border-strong); }

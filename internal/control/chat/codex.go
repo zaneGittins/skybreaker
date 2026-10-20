@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,7 +24,9 @@ type codex struct {
 	queue   []string // messages sent before the thread exists
 	held    []string // messages sent while a turn starts, steered into it once codex names it
 	asks    map[string]codexAsk
-	items   map[string]*Tool // item ID → its card
+	items   map[string]*Tool  // item ID → its card
+	agents  map[string]*Tool  // a subagent's card ID → its card, running until its thread's turn ends
+	threads map[string]string // a subagent's thread ID → its card ID
 	resumed bool
 	compact bool    // a compaction asked for before the thread exists
 	signing bool    // a sign-in is under way
@@ -39,10 +42,12 @@ type codexAsk struct {
 	method    string
 	questions []Question
 	request   json.RawMessage // a permissions request's profile, granted as asked
+	thread    string          // the thread asking: the conversation's or a subagent's
 }
 
 func newCodex() *codex {
-	return &codex{sent: map[int]string{}, asks: map[string]codexAsk{}, items: map[string]*Tool{}}
+	return &codex{sent: map[int]string{}, asks: map[string]codexAsk{}, items: map[string]*Tool{},
+		agents: map[string]*Tool{}, threads: map[string]string{}}
 }
 
 var codexPolicies = map[string]string{ModeAsk: "untrusted", ModeEdits: "on-request", ModeAuto: "never"}
@@ -500,9 +505,21 @@ type codexItem struct {
 	Prompt    string          `json:"prompt"`
 	Error     json.RawMessage `json:"error"`
 	Result    json.RawMessage `json:"result"`
+	// A subagent: kind is started or completed.
+	Kind        string `json:"kind"`
+	AgentThread string `json:"agentThreadId"`
+	AgentPath   string `json:"agentPath"`
 }
 
 func (c *codex) notification(l codexLine, now time.Time) []Event {
+	var th struct {
+		ThreadID string `json:"threadId"`
+	}
+	json.Unmarshal(l.Params, &th)
+	if th.ThreadID != "" && c.thread != "" && th.ThreadID != c.thread {
+		// Subagents run in threads of their own on the same connection.
+		return c.subagent(c.threads[th.ThreadID], l, now)
+	}
 	switch l.Method {
 	case "turn/started":
 		var p struct {
@@ -511,7 +528,12 @@ func (c *codex) notification(l codexLine, now time.Time) []Event {
 			} `json:"turn"`
 		}
 		if json.Unmarshal(l.Params, &p) == nil && p.Turn.ID != "" {
+			unasked := c.turn == ""
 			c.turn = p.Turn.ID
+			if unasked {
+				// A turn nobody sent, as when codex picks up after its subagents.
+				return []Event{{Time: now, Kind: KindTurn, Turn: &Turn{State: TurnWorking}}}
+			}
 		}
 	case "turn/completed":
 		return c.turnCompleted(l, now)
@@ -530,7 +552,7 @@ func (c *codex) notification(l codexLine, now time.Time) []Event {
 		if json.Unmarshal(l.Params, &p) != nil || p.Item.ID == "" {
 			return nil
 		}
-		return c.item(p.Item, l.Method == "item/completed", now)
+		return c.item(p.Item, "", l.Method == "item/completed", now)
 	case "account/login/completed":
 		var p struct {
 			Success bool    `json:"success"`
@@ -550,7 +572,9 @@ func (c *codex) notification(l codexLine, now time.Time) []Event {
 	return nil
 }
 
-func (c *codex) item(it codexItem, done bool, now time.Time) []Event {
+// item draws one of a thread's items; parent is the subagent card a
+// subagent's items nest in.
+func (c *codex) item(it codexItem, parent string, done bool, now time.Time) []Event {
 	switch it.Type {
 	case "agentMessage", "plan":
 		if done && strings.TrimSpace(it.Text) != "" {
@@ -569,10 +593,16 @@ func (c *codex) item(it codexItem, done bool, now time.Time) []Event {
 		return nil
 	case "userMessage", "hookPrompt", "":
 		return nil
+	case "subAgentActivity":
+		return c.spawned(it, now)
+	case "collabAgentToolCall":
+		if it.Tool == "wait" {
+			return nil // the subagents' own cards show what it waits on
+		}
 	}
 	t := c.items[it.ID]
 	if t == nil {
-		t = &Tool{Name: it.Type, Kind: ToolOther, Title: it.Type}
+		t = &Tool{Name: it.Type, Kind: ToolOther, Title: it.Type, Parent: parent}
 		c.items[it.ID] = t
 	}
 	t.Status = codexStatus(it.Status, done)
@@ -619,7 +649,7 @@ func (c *codex) item(it codexItem, done bool, now time.Time) []Event {
 		}
 	case "webSearch":
 		t.Kind, t.Title = ToolWeb, it.Query
-	case "collabAgentToolCall", "subAgentActivity":
+	case "collabAgentToolCall":
 		t.Kind, t.Title = ToolAgent, firstLine(it.Prompt)
 	}
 	cp := *t
@@ -627,6 +657,130 @@ func (c *codex) item(it codexItem, done bool, now time.Time) []Event {
 		delete(c.items, it.ID)
 	}
 	return []Event{{Time: now, Kind: KindTool, ID: it.ID, Tool: &cp}}
+}
+
+// spawned follows a subagent's start, and its end when codex reports
+// that before the subagent's own turn ends. Its card runs until then,
+// whatever its item says.
+func (c *codex) spawned(it codexItem, now time.Time) []Event {
+	switch {
+	case it.AgentThread == "":
+		return nil
+	case it.Kind == "completed":
+		return c.agentDone(c.threads[it.AgentThread], StatusDone, now)
+	case it.Kind != "started":
+		return nil // something else it did: its own thread says how it's going
+	}
+	if id, ok := c.threads[it.AgentThread]; ok && id != it.ID {
+		return nil
+	}
+	t := c.agents[it.ID]
+	if t == nil {
+		name := strings.ReplaceAll(path.Base(it.AgentPath), "_", " ")
+		if name == "." || name == "/" {
+			name = ""
+		}
+		t = &Tool{Name: "agent", Kind: ToolAgent, Title: name}
+		c.agents[it.ID] = t
+		c.threads[it.AgentThread] = it.ID
+	}
+	t.Status = StatusRunning
+	cp := *t
+	return []Event{{Time: now, Kind: KindTool, ID: it.ID, Tool: &cp}}
+}
+
+// agentDone ends a subagent's card, and any of its steps still running.
+func (c *codex) agentDone(id, status string, now time.Time) []Event {
+	t := c.agents[id]
+	if t == nil || t.Status != StatusRunning {
+		return nil
+	}
+	var out []Event
+	for ask, a := range c.asks {
+		if a.thread != "" && c.threads[a.thread] == id {
+			delete(c.asks, ask)
+			out = append(out, Event{Time: now, Kind: KindAnswered, ID: ask, Text: "withdrawn"})
+		}
+	}
+	for sid, st := range c.items {
+		if st.Parent != id {
+			continue
+		}
+		if st.Status == StatusRunning {
+			st.Status = stepEnd(status)
+			cp := *st
+			out = append(out, Event{Time: now, Kind: KindTool, ID: sid, Tool: &cp})
+		}
+		delete(c.items, sid)
+	}
+	t.Status = status
+	cp := *t
+	return append(out, Event{Time: now, Kind: KindTool, ID: id, Tool: &cp})
+}
+
+// subagent reads what happens in a subagent's thread: its steps nest in
+// its card, its last message is the card's output, and its turn is the
+// card's status. A thread that isn't a known subagent's is ignored.
+func (c *codex) subagent(id string, l codexLine, now time.Time) []Event {
+	t := c.agents[id]
+	if t == nil {
+		return nil
+	}
+	switch l.Method {
+	case "turn/started":
+		if t.Status != StatusRunning {
+			t.Status = StatusRunning // given more to do
+			cp := *t
+			return []Event{{Time: now, Kind: KindTool, ID: id, Tool: &cp}}
+		}
+	case "turn/completed":
+		var p struct {
+			Turn struct {
+				Status string `json:"status"`
+			} `json:"turn"`
+		}
+		json.Unmarshal(l.Params, &p)
+		status := StatusDone
+		switch p.Turn.Status {
+		case "failed":
+			status = StatusFailed
+		case "interrupted":
+			status = StatusDeclined
+		}
+		return c.agentDone(id, status, now)
+	case "item/started", "item/completed":
+		var p struct {
+			Item codexItem `json:"item"`
+		}
+		if json.Unmarshal(l.Params, &p) != nil || p.Item.ID == "" {
+			return nil
+		}
+		it := p.Item
+		switch it.Type {
+		case "agentMessage":
+			if l.Method == "item/completed" && strings.TrimSpace(it.Text) != "" {
+				t.Output = clip(it.Text, maxOutput)
+			}
+			return nil
+		case "plan", "reasoning", "contextCompaction":
+			return nil
+		}
+		if it.Type == "subAgentActivity" {
+			// A subagent of a subagent nests in its parent's card.
+			out := c.spawned(it, now)
+			if a := c.agents[it.ID]; a != nil && a.Parent == "" {
+				a.Parent = id
+				for _, e := range out {
+					if e.ID == it.ID {
+						e.Tool.Parent = id
+					}
+				}
+			}
+			return out
+		}
+		return c.item(it, id, l.Method == "item/completed", now)
+	}
+	return nil
 }
 
 func codexStatus(s string, done bool) string {
@@ -676,11 +830,17 @@ func (c *codex) turnCompleted(l codexLine, now time.Time) []Event {
 			turn.Error = "The turn failed."
 		}
 	}
-	for id := range c.asks {
+	for id, a := range c.asks {
+		if a.thread != "" && a.thread != c.thread {
+			continue // a subagent's, which its own turn settles
+		}
 		delete(c.asks, id)
 		out = append(out, Event{Time: now, Kind: KindAnswered, ID: id, Text: "withdrawn"})
 	}
 	for id, t := range c.items {
+		if c.agents[t.Parent] != nil {
+			continue // a subagent's step: its own turn settles it
+		}
 		if t.Status == StatusRunning {
 			t.Status = StatusFailed
 			if turn.State == TurnInterrupted {
@@ -705,10 +865,11 @@ func (c *codex) serverRequest(l codexLine, now time.Time) Out {
 		Reason      string          `json:"reason"`
 		Questions   json.RawMessage `json:"questions"`
 		Permissions json.RawMessage `json:"permissions"`
+		ThreadID    string          `json:"threadId"`
 	}
 	json.Unmarshal(l.Params, &p)
 	a := &Ask{Kind: AskPermission, ToolID: p.ItemID, Reason: p.Reason, Always: true}
-	ask := codexAsk{rpcID: l.ID, method: l.Method}
+	ask := codexAsk{rpcID: l.ID, method: l.Method, thread: p.ThreadID}
 	switch l.Method {
 	case "item/commandExecution/requestApproval":
 		a.Tool, a.Title, a.Detail = "command", "Run "+firstLine(p.Command), clip(p.Command, maxOutput)

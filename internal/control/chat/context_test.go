@@ -22,7 +22,7 @@ func contexts(events []Event) []Context {
 
 func TestClaudeReplayCompact(t *testing.T) {
 	// A real session: one short turn, then /compact.
-	events, _, _ := replay(t, newClaude(), "claude-compact.jsonl")
+	events, _, _ := replaySent(t, newClaude(), "claude-compact.jsonl", 2)
 	cs := contexts(events)
 	if len(cs) == 0 {
 		t.Fatalf("no context usage in %+v", events)

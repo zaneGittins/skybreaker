@@ -180,6 +180,11 @@ details.earlier .row-list { margin-top: 4px; }
 .chat-working { gap: 10px; color: var(--text-2); }
 .chat-working .wtext { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .chat-working .wtime { flex-shrink: 0; font: 600 12px var(--mono); color: var(--muted); }
+/* Subagents still at work: a quiet chip that takes you to them. */
+.wagents { margin-left: auto; flex-shrink: 0; height: 28px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-2); font: 650 12.5px var(--font); cursor: pointer; }
+.wagents:hover { background: var(--surface-2); color: var(--text); }
+.wagents[hidden] { display: none; }
+@media (pointer: coarse) { .wagents { height: 34px; padding: 0 14px; } }
 /* The halo: a small sun in a ring broken into three arcs that chase round
    at different speeds, stretching and shrinking. */
 .sunwork { width: 18px; height: 18px; flex-shrink: 0; overflow: visible; }

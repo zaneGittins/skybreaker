@@ -17,6 +17,11 @@ import (
 type claude struct {
 	asks        map[string]claudeAsk // control request ID → what it asked
 	tools       map[string]*Tool     // tool_use ID → its card
+	agents      map[string]*Tool     // a background subagent's tool_use ID → its card, running past the turn
+	ended       map[string]*Tool     // background subagents ended by the task list, for a notification that comes late
+	tasks       map[string]string    // Claude's task ID for a background subagent → its tool_use ID
+	inTurn      bool                 // a turn runs: between a message going in and its result
+	ran         bool                 // a turn has ended in this process
 	blocks      map[string]int       // message ID → text blocks finished in it
 	message     string               // the message streaming now
 	draft       string               // the text block streaming now, if any
@@ -36,10 +41,12 @@ type claudeAsk struct {
 	input       json.RawMessage
 	suggestions json.RawMessage
 	questions   []Question
+	toolID      string // the tool call it asks about
 }
 
 func newClaude() *claude {
-	return &claude{asks: map[string]claudeAsk{}, tools: map[string]*Tool{}, blocks: map[string]int{}, sent: map[string]string{}}
+	return &claude{asks: map[string]claudeAsk{}, tools: map[string]*Tool{}, agents: map[string]*Tool{}, ended: map[string]*Tool{}, tasks: map[string]string{},
+		blocks: map[string]int{}, sent: map[string]string{}}
 }
 
 var claudeModes = map[string]string{ModeAsk: "default", ModeEdits: "acceptEdits", ModeAuto: "bypassPermissions", ModePlan: "plan"}
@@ -116,6 +123,7 @@ func (c *claude) Send(text string) ([][]byte, error) {
 		return nil, errors.New("empty message")
 	}
 	c.interrupted = false
+	c.inTurn = true
 	return [][]byte{line(map[string]any{
 		"type": "user", "message": map[string]any{"role": "user", "content": text}, "parent_tool_use_id": nil,
 	})}, nil
@@ -224,6 +232,17 @@ type claudeLine struct {
 		} `json:"unifiedWindows"`
 	} `json:"rate_limit_info"`
 
+	// Background tasks: task_started, task_notification and
+	// background_tasks_changed.
+	TaskID    string `json:"task_id"`
+	ToolUseID string `json:"tool_use_id"`
+	TaskType  string `json:"task_type"`
+	Status    string `json:"status"`
+	Summary   string `json:"summary"`
+	Tasks     []struct {
+		TaskID string `json:"task_id"`
+	} `json:"tasks"`
+
 	CompactMetadata *struct {
 		Trigger    string `json:"trigger"`
 		PostTokens int64  `json:"post_tokens"`
@@ -263,6 +282,12 @@ func (c *claude) Read(b []byte) Out {
 	var out Out
 	switch l.Type {
 	case "system":
+		if l.Subtype == "init" && c.ran && !c.inTurn {
+			// Claude took a turn nobody sent it, as when a background
+			// subagent reports back.
+			c.inTurn = true
+			out.Events = append(out.Events, ev(Event{Kind: KindTurn, Turn: &Turn{State: TurnWorking}}))
+		}
 		if l.Subtype == "init" {
 			out.Resume = l.SessionID
 			mode := ModeAsk
@@ -285,6 +310,10 @@ func (c *claude) Read(b []byte) Out {
 			}
 			out.Events = append(out.Events, ev(Event{Kind: KindNotice, Text: text}),
 				ev(Event{Kind: KindInfo, Info: &Info{Context: &Context{Used: c.used, Window: c.window}}}))
+		}
+		switch l.Subtype {
+		case "task_started", "task_notification", "background_tasks_changed":
+			out.Events = append(out.Events, c.task(l, now)...)
 		}
 	case "stream_event":
 		out.Events = append(out.Events, c.stream(l, now)...)
@@ -469,6 +498,13 @@ func (c *claude) user(l claudeLine, now time.Time) []Event {
 			continue
 		}
 		text := blockText(b.Content)
+		if t.Kind == ToolAgent && !b.IsError && launched(l.ToolUseResult) {
+			// A background subagent: its result says only that it
+			// started. It runs until a task_notification ends it.
+			c.agents[b.ToolUseID] = t
+			delete(c.tools, b.ToolUseID)
+			continue
+		}
 		switch {
 		case b.IsError && strings.Contains(text, "doesn't want to proceed"):
 			t.Status = StatusDeclined
@@ -483,6 +519,114 @@ func (c *claude) user(l claudeLine, now time.Time) []Event {
 		delete(c.tools, b.ToolUseID)
 	}
 	return out
+}
+
+// launched reports whether an Agent tool's result is a background
+// launch rather than the subagent's answer.
+func launched(result json.RawMessage) bool {
+	var r struct {
+		IsAsync bool   `json:"isAsync"`
+		Status  string `json:"status"`
+	}
+	json.Unmarshal(result, &r)
+	return r.IsAsync || r.Status == "async_launched"
+}
+
+// task follows background subagents: a notification ends one, with its
+// summary, and the list of background tasks ends any whose notification
+// hasn't come. One that comes late still corrects the card.
+func (c *claude) task(l claudeLine, now time.Time) []Event {
+	switch l.Subtype {
+	case "task_started":
+		if l.TaskID != "" && l.ToolUseID != "" && l.TaskType == "local_agent" {
+			c.tasks[l.TaskID] = l.ToolUseID
+		}
+	case "task_notification":
+		status := StatusDone
+		switch l.Status {
+		case "completed":
+		case "failed":
+			status = StatusFailed
+		default: // stopped, killed
+			status = StatusDeclined
+		}
+		id := l.ToolUseID
+		if id == "" {
+			id = c.tasks[l.TaskID]
+		}
+		if t := c.ended[id]; t != nil {
+			delete(c.ended, id)
+			t.Status = status
+			if l.Summary != "" {
+				t.Output = clip(l.Summary, maxOutput)
+			}
+			cp := *t
+			return []Event{{Time: now, Kind: KindTool, ID: id, Tool: &cp}}
+		}
+		return c.finish(id, status, l.Summary, now)
+	case "background_tasks_changed":
+		live := map[string]bool{}
+		for _, t := range l.Tasks {
+			live[t.TaskID] = true
+		}
+		var out []Event
+		for task, id := range c.tasks {
+			if !live[task] {
+				delete(c.tasks, task)
+				if c.agents[id] != nil {
+					c.ended[id] = c.agents[id]
+				}
+				out = append(out, c.finish(id, StatusDone, "", now)...)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// finish ends a background subagent's card. Steps of it still open and
+// asks it was waiting on end with it.
+func (c *claude) finish(id, status, summary string, now time.Time) []Event {
+	t := c.agents[id]
+	if t == nil {
+		return nil
+	}
+	var out []Event
+	for ask, a := range c.asks {
+		if c.agentOf(a.toolID) == id {
+			delete(c.asks, ask)
+			out = append(out, Event{Time: now, Kind: KindAnswered, ID: ask, Text: "withdrawn"})
+		}
+	}
+	for sid, st := range c.tools {
+		if st.Parent != id {
+			continue
+		}
+		st.Status = stepEnd(status)
+		cp := *st
+		out = append(out, Event{Time: now, Kind: KindTool, ID: sid, Tool: &cp})
+		delete(c.tools, sid)
+	}
+	delete(c.agents, id)
+	for k, v := range c.tasks {
+		if v == id {
+			delete(c.tasks, k)
+		}
+	}
+	t.Status = status
+	if summary != "" {
+		t.Output = clip(summary, maxOutput)
+	}
+	cp := *t
+	return append(out, Event{Time: now, Kind: KindTool, ID: id, Tool: &cp})
+}
+
+// agentOf is the background subagent a tool call belongs to, if any.
+func (c *claude) agentOf(toolID string) string {
+	if t := c.tools[toolID]; t != nil && c.agents[t.Parent] != nil {
+		return t.Parent
+	}
+	return ""
 }
 
 // blockText reads a tool result's content: a string, or text blocks.
@@ -555,6 +699,17 @@ func (c *claude) finishTool(t *Tool, text string, result json.RawMessage) {
 			t.Output = clip(text, maxOutput)
 		}
 	case ToolTodo:
+	case ToolAgent:
+		// The subagent's reply, without the frame Claude wraps it in for
+		// the model.
+		var a struct {
+			Content json.RawMessage `json:"content"`
+		}
+		json.Unmarshal(result, &a)
+		if reply := blockText(a.Content); strings.TrimSpace(reply) != "" {
+			text = reply
+		}
+		t.Output = clip(text, maxOutput)
 	default:
 		t.Output = clip(text, maxOutput)
 	}
@@ -583,12 +738,19 @@ func (c *claude) result(l claudeLine, now time.Time) []Event {
 		}
 	}
 	c.interrupted = false
-	// Asks the harness gave up on are void.
-	for id := range c.asks {
+	// Asks the harness gave up on are void; a background subagent's go on.
+	for id, a := range c.asks {
+		if c.agentOf(a.toolID) != "" {
+			continue
+		}
 		delete(c.asks, id)
 		out = append(out, Event{Time: now, Kind: KindAnswered, ID: id, Text: "withdrawn"})
 	}
+	c.inTurn, c.ran = false, true
 	for id, t := range c.tools {
+		if c.agents[t.Parent] != nil {
+			continue // a step of a background subagent, which outlives the turn
+		}
 		if t.Status == StatusRunning {
 			t.Status = StatusFailed
 			if turn.State == TurnInterrupted {
@@ -687,7 +849,7 @@ func (c *claude) request(l claudeLine, now time.Time) ([]Event, [][]byte) {
 			"subtype": "error", "request_id": l.RequestID, "error": "skybreaker does not handle " + r.Subtype,
 		}})}
 	}
-	ask := claudeAsk{tool: r.ToolName, input: r.Input, suggestions: r.Suggestions}
+	ask := claudeAsk{tool: r.ToolName, input: r.Input, suggestions: r.Suggestions, toolID: r.ToolUseID}
 	a := &Ask{Kind: AskPermission, Tool: r.ToolName, ToolID: r.ToolUseID, Reason: r.Reason}
 	if r.ToolName == "AskUserQuestion" {
 		var in struct {

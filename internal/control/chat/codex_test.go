@@ -260,7 +260,7 @@ func TestCodexRefusesUnknownRequests(t *testing.T) {
 func TestCodexReplayUnauthorized(t *testing.T) {
 	d := newCodex()
 	d.Open(Options{Cwd: "/workspace"})
-	events, _, resume := replay(t, d, "codex-unauthorized.jsonl")
+	events, _, resume := replaySent(t, d, "codex-unauthorized.jsonl", 1)
 	if resume != "01a15221-7d7b-7d21-beea-e02f01455ed8" {
 		t.Errorf("resume = %q", resume)
 	}

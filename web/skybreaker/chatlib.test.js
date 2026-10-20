@@ -367,3 +367,29 @@ test('signInHost', () => {
   assert.deepEqual(signInHost('https://user@auth.openai.com@evil.example/'), { host: 'evil.example', known: false });
   assert.equal(signInHost('javascript:alert(1)'), null);
 });
+
+test('runningAgents: subagents at work, past the turn that started them', () => {
+  const { runningAgents, agentActivity } = require('./chatlib.js');
+  const c = newChat();
+  const tool = (seq, id, t, time) => foldChat(c, { seq, time, kind: 'tool', id, tool: { status: 'running', ...t } });
+  foldChat(c, { seq: 1, kind: 'turn', turn: { state: 'working' } });
+  tool(2, 'a1', { kind: 'agent', title: 'Nap A' }, '2026-10-20T10:00:00Z');
+  tool(3, 'a2', { kind: 'agent', title: 'Nap B' }, '2026-10-20T10:00:05Z');
+  foldChat(c, { seq: 4, kind: 'turn', turn: { state: 'done' } });
+  assert.equal(c.working, false);
+  assert.deepEqual(runningAgents(c).map(x => x.id), ['a1', 'a2']);
+  assert.equal(agentActivity(c.byId.get('a1')), 'Starting');
+  tool(5, 's1', { kind: 'command', title: 'sleep 12', parent: 'a1' });
+  assert.equal(agentActivity(c.byId.get('a1')), 'Running sleep 12');
+  tool(6, 's1', { kind: 'command', title: 'sleep 12', parent: 'a1', status: 'done' });
+  assert.equal(agentActivity(c.byId.get('a1')), 'Thinking');
+  tool(7, 'a1', { kind: 'agent', title: 'Nap A', status: 'done', output: 'a' });
+  assert.deepEqual(runningAgents(c).map(x => x.id), ['a2']);
+  // A subagent of a subagent counts too.
+  tool(8, 'a3', { kind: 'agent', title: 'Deeper', parent: 'a2' }, '2026-10-20T10:00:09Z');
+  assert.deepEqual(runningAgents(c).map(x => x.id), ['a2', 'a3']);
+  // Given more to do, a finished one runs again, timed from then.
+  tool(9, 'a1', { kind: 'agent', title: 'Nap A' }, '2026-10-20T10:01:00Z');
+  assert.equal(c.byId.get('a1').since, '2026-10-20T10:01:00Z');
+  assert.equal(sessionTone({ mode: 'chat', status: 'running', state: 'working', note: '2 agents working' }).label, '2 agents working');
+});
