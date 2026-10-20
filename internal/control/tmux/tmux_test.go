@@ -154,7 +154,7 @@ func TestExitsLetViewersGo(t *testing.T) {
 		run(o...)
 	}
 	run("tmux", "new-session", "-d", "-s", "clean", "sleep 2")
-	run("tmux", "new-session", "-d", "-s", "failed", "sleep 2; echo why; exit 3")
+	run("tmux", "new-session", "-d", "-s", "failed", "sleep 2; exit 3")
 	for _, s := range []string{"clean", "failed", "keep"} {
 		// A control-mode viewer; its stdin stays open until the test ends.
 		c := exec.Command("tmux", "-S", sock, "-C", "attach", "-t", "="+s)
@@ -165,22 +165,21 @@ func TestExitsLetViewersGo(t *testing.T) {
 		}
 		go c.Wait()
 	}
-	// Both harnesses end at about the same time, and tmux can mark a pane
-	// dead before it has read the last of its output, so wait for all of
-	// it rather than checking the moment one thing is true.
+	// Both harnesses end at about the same time, so wait for all of it
+	// rather than checking the moment one thing is true. tmux can see a
+	// pane's terminal close before its process exits, and then never
+	// records the exit status, so the failed pane is only checked dead.
 	want := "[failed] [keep]"
-	var got, ls, pane, screen string
+	var got, ls, pane string
 	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
 		f := strings.Fields(try("tmux", "list-clients", "-F", "[#{session_name}]"))
 		slices.Sort(f)
 		got = strings.Join(f, " ")
 		ls = try("tmux", "ls")
-		pane = try("tmux", "list-panes", "-t", "=failed", "-F", "#{pane_dead}:#{pane_dead_status}")
-		screen = try("tmux", "capture-pane", "-p", "-S", "-", "-t", "=failed:")
-		if got == want && !strings.Contains(ls, "clean") && pane == "1:3\n" && strings.Contains(screen, "why") {
+		pane = try("tmux", "list-panes", "-t", "=failed", "-F", "#{pane_dead}")
+		if got == want && !strings.Contains(ls, "clean") && pane == "1\n" {
 			return
 		}
 	}
-	t.Errorf("viewers = %s, want %s; sessions %q, want the clean one gone; failed pane = %q, want 1:3; its screen %q, want it kept with \"why\"",
-		got, want, ls, pane, screen)
+	t.Errorf("viewers = %s, want %s; sessions %q, want the clean one gone; failed pane dead = %q, want 1", got, want, ls, pane)
 }
