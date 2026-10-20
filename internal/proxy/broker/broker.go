@@ -19,6 +19,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/proxy/audit"
 	"github.com/zaneGittins/skybreaker/internal/proxy/ca"
 	"github.com/zaneGittins/skybreaker/internal/proxy/config"
+	"github.com/zaneGittins/skybreaker/internal/proxy/githubapp"
 	"github.com/zaneGittins/skybreaker/internal/proxy/netguard"
 	"github.com/zaneGittins/skybreaker/internal/proxy/secrets"
 	"github.com/zaneGittins/skybreaker/internal/proxy/server"
@@ -209,6 +210,16 @@ func (b *Broker) GitHubInstallURL(ctx context.Context) (string, error) {
 		return "", ErrNoGitHubApp
 	}
 	return app.InstallURL(ctx)
+}
+
+// GitHubLacking is what the GitHub App, and its installations, lack of the
+// permissions agents use.
+func (b *Broker) GitHubLacking(ctx context.Context) (githubapp.Lacking, error) {
+	app := b.secrets.GitHubApp()
+	if app == nil {
+		return githubapp.Lacking{}, ErrNoGitHubApp
+	}
+	return app.Lacking(ctx)
 }
 
 // SecretsUsed is when each secret was last sent, since start.

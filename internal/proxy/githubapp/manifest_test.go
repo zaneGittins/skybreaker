@@ -35,7 +35,8 @@ func TestManifest(t *testing.T) {
 	if m.RedirectURL != "https://skybreaker.example.ts.net/api/github-app/created" || m.Public || m.Hook.Active {
 		t.Fatalf("%s", b)
 	}
-	if m.Perms["contents"] != "write" || m.Perms["pull_requests"] != "write" || m.Perms["issues"] != "write" || m.Perms["metadata"] != "read" || len(m.Perms) != 4 {
+	if m.Perms["contents"] != "write" || m.Perms["pull_requests"] != "write" || m.Perms["issues"] != "write" || m.Perms["metadata"] != "read" ||
+		m.Perms["actions"] != "read" || m.Perms["checks"] != "read" || m.Perms["statuses"] != "read" || len(m.Perms) != 7 {
 		t.Fatalf("permissions %v", m.Perms)
 	}
 	if _, err := Manifest("x", "http://skybreaker.example"); err == nil {

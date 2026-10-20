@@ -17,6 +17,7 @@ import (
 
 	policy "github.com/zaneGittins/skybreaker/internal/proxy/config"
 	"github.com/zaneGittins/skybreaker/internal/proxy/content"
+	rules "github.com/zaneGittins/skybreaker/internal/proxy/policy"
 	"github.com/zaneGittins/skybreaker/internal/proxy/secrets"
 )
 
@@ -134,6 +135,9 @@ func checkAppEntry(e *policy.Entry) error {
 		return errors.New("the app adds hosts only: routes, private addresses and CA files stay in the config file")
 	case e.Host == "":
 		return errors.New("an entry needs a host")
+	case slices.ContainsFunc(e.Rules, func(r rules.Rule) bool { return len(r.FollowRedirects) > 0 }):
+		// It reaches hosts no entry lists.
+		return errors.New("follow_redirects stays in the config file")
 	}
 	return nil
 }

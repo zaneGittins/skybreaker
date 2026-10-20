@@ -35,15 +35,13 @@ func Manifest(name, uiURL string) ([]byte, error) {
 	}
 	base := "https://" + u.Host
 	return json.Marshal(map[string]any{
-		"name":            name,
-		"url":             base,
-		"redirect_url":    base + CreatedPath,
-		"hook_attributes": map[string]any{"url": base + "/api/github-app/hook", "active": false},
-		"public":          false,
-		"default_permissions": map[string]string{
-			"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read",
-		},
-		"default_events": []string{},
+		"name":                name,
+		"url":                 base,
+		"redirect_url":        base + CreatedPath,
+		"hook_attributes":     map[string]any{"url": base + "/api/github-app/hook", "active": false},
+		"public":              false,
+		"default_permissions": Needed,
+		"default_events":      []string{},
 	})
 }
 

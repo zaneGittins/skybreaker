@@ -44,6 +44,9 @@ type Settings interface {
 	SecretsUsed() map[string]time.Time
 	// GitHubInstallURL is where to install the config file's App.
 	GitHubInstallURL(ctx context.Context) (string, error)
+	// GitHubLacking is what the running App lacks of the permissions
+	// agents use.
+	GitHubLacking(ctx context.Context) (githubapp.Lacking, error)
 	// ConvertGitHubApp trades the code GitHub sends back for the App it
 	// created from a manifest.
 	ConvertGitHubApp(ctx context.Context, code string) (githubapp.Created, error)
@@ -150,6 +153,9 @@ type githubView struct {
 	HTMLURL    string `json:"html_url,omitempty"`
 	InstallURL string `json:"install_url,omitempty"`
 	Error      string `json:"error,omitempty"`
+	// Lacking is what the App can't yet do that agents need, such as read
+	// CI; nil when it lacks nothing, or couldn't be asked.
+	Lacking *githubapp.Lacking `json:"lacking,omitempty"`
 }
 
 type secretView struct {
@@ -215,7 +221,22 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 	}{Admin: admin, Editable: admin && s.Config.SettingsInApp() && c.SettingsInApp(), Pending: s.Settings.Pending(),
 		Secrets: []secretView{}, Bundles: []bundleView{}, Projects: []accessView{},
 		Content: contentView{File: c.ContentRules, App: files.Access.ContentRules}}
+	// What the App lacks is asked alongside, so a slow GitHub costs the
+	// page one wait, not two.
+	lacking := make(chan *githubapp.Lacking, 1)
+	go func() {
+		gctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		if l, err := s.Settings.GitHubLacking(gctx); err == nil && !l.None() {
+			lacking <- &l
+			return
+		}
+		lacking <- nil
+	}()
 	out.GitHub = s.creatable(s.githubView(r.Context(), fileSecrets, files))
+	if l := <-lacking; out.GitHub.State == "app" || out.GitHub.State == "file" {
+		out.GitHub.Lacking = l
+	}
 
 	used, users := s.Settings.SecretsUsed(), secretUsers(c)
 	when := func(name string) *time.Time {

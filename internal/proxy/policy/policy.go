@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -30,11 +32,34 @@ func (a Action) Valid() bool { return a == Auto || a == Ask || a == Deny }
 // Rule is one entry as written in config. Refs are receive-pack ref globs the
 // proxy server enforces; policy only checks they stay under refs/heads/.
 // GraphQL, likewise, is enforced by the server on the request body.
+// FollowRedirects lists the hosts ("*.example.com" for any one label) the
+// server may follow the upstream's redirects of a GET or HEAD to, fetching
+// them itself with no credentials, so the sandbox needn't reach them
+// (GitHub's log storage, say). It's set in the config file only.
 type Rule struct {
-	Match   string   `json:"match" yaml:"match"`
-	Action  Action   `json:"action" yaml:"action"`
-	Refs    []string `json:"refs,omitempty" yaml:"refs,omitempty"`
-	GraphQL *GraphQL `json:"graphql,omitempty" yaml:"graphql,omitempty"`
+	Match           string   `json:"match" yaml:"match"`
+	Action          Action   `json:"action" yaml:"action"`
+	Refs            []string `json:"refs,omitempty" yaml:"refs,omitempty"`
+	GraphQL         *GraphQL `json:"graphql,omitempty" yaml:"graphql,omitempty"`
+	FollowRedirects []string `json:"follow_redirects,omitempty" yaml:"follow_redirects,omitempty"`
+}
+
+var hostPatternRe = regexp.MustCompile(`^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
+
+// Follows reports whether the rule may follow a redirect to host: a listed
+// host, or one label in place of a listed "*.".
+func (r *Rule) Follows(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	for _, p := range r.FollowRedirects {
+		if rest, ok := strings.CutPrefix(p, "*."); ok {
+			if label, tail, found := strings.Cut(host, "."); found && label != "" && tail == rest {
+				return true
+			}
+		} else if host == p {
+			return true
+		}
+	}
+	return false
 }
 
 // GraphQL narrows a rule to some GraphQL operations: queries and the listed
@@ -124,6 +149,16 @@ func compile(r *Rule, vars map[string]string) (compiled, error) {
 				return compiled{}, fmt.Errorf("invalid method %q (uppercase tokens or *)", m)
 			}
 			c.methods = append(c.methods, m)
+		}
+	}
+	// A followed redirect is fetched with the request's method and no
+	// body: only reads may ask for one.
+	if len(r.FollowRedirects) > 0 && (c.methods == nil || slices.ContainsFunc(c.methods, func(m string) bool { return m != "GET" && m != "HEAD" })) {
+		return compiled{}, errors.New("follow_redirects is only for GET and HEAD rules")
+	}
+	for _, h := range r.FollowRedirects {
+		if !hostPatternRe.MatchString(h) {
+			return compiled{}, fmt.Errorf("follow_redirects: %q is not a host name, or *. and one", h)
 		}
 	}
 	pattern := fields[1]

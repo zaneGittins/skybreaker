@@ -33,7 +33,8 @@ To install without the wizard, see [Install by hand](manual-install.md).
 
 Open **Settings** and choose **Create GitHub App** (for your account or an organization). GitHub opens with the App filled in; confirm, and you come back to Settings to install it on your repos. Skybreaker keeps the App's key; you never copy a `.pem`.
 
-- **App permissions:** `contents:write`, `pull_requests:write`, `issues:write` and `metadata:read`. Never `workflows`, `administration` or `secrets`.
+- **App permissions:** `contents:write`, `pull_requests:write`, `issues:write` and `metadata:read`, plus `actions:read`, `checks:read` and `statuses:read` so agents can read CI runs, their logs and pull request checks. Never `workflows`, `administration` or `secrets`.
+- **An App made before agents read CI** lacks the last three, and Settings says so. Add them under the App's permissions on GitHub, then accept them on its installation. Then add the two `actions` rules from [the example config](../deploy/skybreaker.example.yaml) above the `GET /repos/{repo}/**` rule in your config's `github` bundle, so agents can read job logs, and download artifacts once you approve.
 - **Ruleset on `main`:** block direct pushes, force pushes and deletion, and keep the App off the bypass list.
 - **Branches:** the broker only allows pushes to the branch globs in the project's rules (`feature/*`, `fix/*`, `docs/*` and `chore/*` by default), and refuses deletes and tags.
 

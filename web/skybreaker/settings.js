@@ -221,12 +221,13 @@ function githubSection(g, ed) {
   const install = githubLink(g.install_url);
   if (g.state === 'app' || g.state === 'file') {
     const name = g.slug || 'App ' + g.app_id;
-    return setSection('GitHub', 'Agents clone and push through the broker with this App\'s short-lived tokens, one repository at a time.', null,
+    return setSection('GitHub', 'Agents clone and push through the broker with this App\'s short-lived tokens, one repository at a time.', null, el('div', null,
       el('div.row-list', null, el('div.arow.set-row', null, svg(ICON.git, 'set-ic'),
         el('span.set-main', null, el('b.mono', null, name),
           el('span.set-sub', null, [g.owner ? 'owned by ' + g.owner : '', 'App ID ' + g.app_id, g.state === 'file' ? 'from secrets.yaml' : 'created here'].filter(Boolean).join(' · ')),
           g.error ? el('span.set-sub.bad', null, g.error) : null),
-        install ? el('a.btn.sm', { href: install, target: '_blank', rel: 'noopener noreferrer' }, svg(ICON.external), 'Install on repositories') : null)));
+        install ? el('a.btn.sm', { href: install, target: '_blank', rel: 'noopener noreferrer' }, svg(ICON.external), 'Install on repositories') : null)),
+      githubLacking(g.lacking)));
   }
   if (!g.can_create) {
     return setSection('GitHub', null, null, el('p.note', null, g.error || 'A secret named github_app in the secrets file isn\'t a GitHub App, so one can\'t be created here.'));
@@ -254,7 +255,29 @@ function githubSection(g, ed) {
       el('label.np-check', null, mine, el('span.np-check-text', null, el('b', null, 'My account'))),
       el('label.np-check', null, theirs, el('span.np-check-text', null, el('b', null, 'An organization'), org))),
     el('div', null, create));
-  return setSection('GitHub', 'Agents reach GitHub only through the broker, with a GitHub App\'s short-lived tokens. GitHub opens with the App filled in: read and write to contents, pull requests and issues, read metadata, no webhook. Confirm there and you come back here to install it.', null, form);
+  return setSection('GitHub', 'Agents reach GitHub only through the broker, with a GitHub App\'s short-lived tokens. GitHub opens with the App filled in: read and write to contents, pull requests and issues, read metadata, Actions, checks and commit statuses, no webhook. Confirm there and you come back here to install it.', null, form);
+}
+
+// githubLacking says what the App can't yet do that agents need, such as
+// read CI, and where to fix it: the App's permissions on GitHub, then each
+// installation, whose owner accepts them.
+function githubLacking(l) {
+  if (!l) return null;
+  const link = (url, text) => githubLink(url) ? el('a.btn.sm', { href: url, target: '_blank', rel: 'noopener noreferrer' }, svg(ICON.external), text) : null;
+  const rows = [];
+  if (l.app?.length) {
+    rows.push(el('div.set-lack-row', null,
+      el('span', null, 'The App lacks ', el('span.mono', null, l.app.join(', ')), '. Add them to its permissions on GitHub, then accept them where it\'s installed.'),
+      link(l.permissions_url, 'Change permissions')));
+  }
+  for (const i of l.installations || []) {
+    rows.push(el('div.set-lack-row', null,
+      el('span', null, 'Its installation on ', el('b', null, i.account), ' hasn\'t accepted ', el('span.mono', null, i.lacks.join(', ')), ' yet.'),
+      link(i.url, 'Review and accept')));
+  }
+  return el('div.set-lack', { role: 'note' }, el('b', null, 'Agents can\'t do everything they need on GitHub'),
+    el('p.np-hint', null, 'Without these, agents can\'t read CI runs, their logs or pull request checks, and re-run CI themselves to find out why a pull request failed.'),
+    rows);
 }
 
 // --- secrets -----------------------------------------------------------------------
