@@ -27,6 +27,7 @@ type settings struct {
 	configPath   string
 	secrets      string // the secrets file
 	instructions string // every agent's instructions
+	prompts      string // the canned prompts
 	app          *app.App
 	broker       *broker.Broker
 	boards       *board.Store
@@ -114,6 +115,18 @@ func (d *settings) SetInstructions(by, text string) error {
 	}
 	d.broker.LogConfig(by, "changed the agents' instructions")
 	return d.app.SetInstructions(config.CleanInstructions(text))
+}
+
+func (d *settings) Prompts() ([]config.Prompt, error) {
+	return config.ReadPrompts(d.prompts)
+}
+
+func (d *settings) SetPrompts(by string, ps []config.Prompt) error {
+	if err := config.WritePrompts(d.prompts, ps); err != nil {
+		return err
+	}
+	d.broker.LogConfig(by, "changed the prompts")
+	return nil
 }
 
 func (d *settings) ConvertGitHubApp(ctx context.Context, code string) (githubapp.Created, error) {

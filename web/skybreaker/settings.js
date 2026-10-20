@@ -13,7 +13,8 @@ Object.assign(ICON, {
 const githubLink = u => typeof u === 'string' && /^https:\/\/github\.com\//.test(u) ? u : null;
 
 async function renderSettings(seq) {
-  const [d, ins] = await Promise.all([api('GET', '/api/settings'), api('GET', '/api/instructions').catch(() => null)]);
+  const [d, ins, pr] = await Promise.all([api('GET', '/api/settings'), api('GET', '/api/instructions').catch(() => null),
+    api('GET', '/api/prompts').catch(() => null)]);
   if (seq !== state.seq) return;
   crumb(null);
   // GitHub sends you back here after creating the App.
@@ -32,6 +33,7 @@ async function renderSettings(seq) {
   ];
   $('#app').replaceChildren(el('div.wrap.activity.settings', null, head, banners,
     ins ? instructionsSection(ins) : null,
+    pr ? promptsSection(pr) : null,
     githubSection(d.github, ed), secretsSection(d.secrets, ed), bundlesSection(d.bundles, ed, d),
     accessSection(d.projects, ed, d)));
 }
@@ -79,6 +81,60 @@ function instructionsSection(ins) {
     },
   }, box, ins.editable ? el('div.set-instr-acts', null, count, save) : null);
   return setSection('Instructions', 'Every agent in every project reads these: Claude Code as its managed CLAUDE.md, Codex as developer instructions, pi as part of its system prompt. A project\'s own CLAUDE.md or AGENTS.md still applies alongside them. Sessions started after a save get them; no restart.', null, form);
+}
+
+// --- prompts -----------------------------------------------------------------------
+
+// promptsDraft keeps what you typed across a redraw, against the prompts it
+// started from.
+let promptsDraft = null;
+
+function promptsSection(pr) {
+  const base = JSON.stringify(pr.prompts);
+  if (promptsDraft && promptsDraft.base !== base) promptsDraft = null;
+  const ed = pr.editable;
+  const list = el('div.ent-list');
+  const cards = [];
+  const read = () => cards.map(c => ({ name: c.name.value.trim(), text: c.text.value }));
+  const save = el('button.btn.primary.sm', { type: 'submit' }, 'Save');
+  const sync = () => { save.disabled = JSON.stringify(read()) === base };
+  const changed = () => { promptsDraft = { base, list: read() }; sync() };
+  const add = (p, focus) => {
+    const name = el('input.np-input.mono', { type: 'text', value: p.name || null, placeholder: 'name', maxlength: 40, autocomplete: 'off',
+      autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Prompt name', readOnly: !ed, oninput: changed });
+    const text = el('textarea.textarea.ent-rules', { rows: 4, spellcheck: 'true', placeholder: 'What to send, in Markdown.',
+      'aria-label': 'Prompt text', readOnly: !ed, oninput: changed });
+    text.value = p.text || '';
+    const c = { name, text };
+    const card = el('div.ent-card', null,
+      el('div.ent-row', null, el('span.np-hint.mono', null, '/prompt'), name,
+        ed ? el('button.icon-btn.bare', { type: 'button', 'aria-label': 'Remove prompt', title: 'Remove',
+          onclick: () => { card.remove(); cards.splice(cards.indexOf(c), 1); changed() } }, svg(ICON.x)) : null),
+      text);
+    cards.push(c);
+    list.append(card);
+    if (focus) name.focus();
+  };
+  (promptsDraft ? promptsDraft.list : pr.prompts).forEach(p => add(p));
+  sync();
+  const form = el('form.ent', {
+    onsubmit: async e => {
+      e.preventDefault();
+      const prompts = read().filter(p => p.name || p.text.trim());
+      save.disabled = true;
+      try {
+        await api('PUT', '/api/prompts', { prompts });
+        promptsDraft = null;
+        toast('Saved. Type /prompt in any chat to use them.');
+        go();
+      } catch (err) { toast(err.message, 'error'); sync() }
+    },
+  }, list,
+    !ed ? (pr.prompts.length ? null : el('p.np-hint', null, 'None.'))
+      : el('div.set-instr-acts', null,
+        el('button.btn.sm.ghost.ent-add', { type: 'button', onclick: () => { add({}, true); changed() } }, svg(ICON.plus), 'Add a prompt'),
+        el('span.grow'), save));
+  return setSection('Prompts', 'Prompts you reuse, for every chat in every project: type /prompt and pick one, or /prompt <name> and anything to add to it. It\'s sent as your message, so it works the same with every agent. Names are lower case: letters, digits, - and _.', null, form);
 }
 
 // --- GitHub ----------------------------------------------------------------------

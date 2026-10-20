@@ -51,6 +51,11 @@ type Settings interface {
 	// SetInstructions saves them, records by in the audit log and gives
 	// them to every sandbox at once; no restart is needed.
 	SetInstructions(by, text string) error
+	// Prompts are the canned prompts anyone can send with /prompt, as saved.
+	Prompts() ([]config.Prompt, error)
+	// SetPrompts replaces them and records by in the audit log; chats
+	// pick them up at once.
+	SetPrompts(by string, prompts []config.Prompt) error
 }
 
 // Applied is what a change did.
@@ -91,6 +96,8 @@ func (s *server) settingsRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET "+githubapp.CreatedPath, s.githubCreated)
 	m.HandleFunc("GET /api/instructions", s.instructions)
 	m.HandleFunc("PUT /api/instructions", s.saveInstructions)
+	m.HandleFunc("GET /api/prompts", s.prompts)
+	m.HandleFunc("PUT /api/prompts", s.savePrompts)
 }
 
 // admin admits a listed admin where the config file lets the app change
@@ -280,6 +287,45 @@ func (s *server) saveInstructions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webutil.WriteJSON(w, http.StatusOK, map[string]any{"text": text})
+}
+
+// prompts are everyone's to read and send.
+func (s *server) prompts(w http.ResponseWriter, r *http.Request) {
+	if s.Settings == nil {
+		webutil.Error(w, http.StatusNotFound, "settings can't be changed here")
+		return
+	}
+	ps, err := s.Settings.Prompts()
+	if err != nil {
+		webutil.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	p, _ := tsauth.FromContext(r.Context())
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"prompts": ps, "editable": s.Config.Admin(p.Login) && s.Config.SettingsInApp(),
+		"max": config.MaxPrompts, "max_text": config.MaxPromptsText})
+}
+
+func (s *server) savePrompts(w http.ResponseWriter, r *http.Request) {
+	by, ok := s.editor(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Prompts []config.Prompt `json:"prompts"`
+	}
+	if !decodeStrict(w, r, &in) {
+		return
+	}
+	ps := config.CleanPrompts(in.Prompts)
+	if err := config.CheckPrompts(ps); err != nil {
+		webutil.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.Settings.SetPrompts(by, ps); err != nil {
+		webutil.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"prompts": ps})
 }
 
 // secretUsers names, for each secret, the bundles and projects that send it.
