@@ -291,3 +291,37 @@ func TestGraphQLRule(t *testing.T) {
 		t.Error("other defaults to something other than deny")
 	}
 }
+
+func TestFollowRedirectsOnlyForReadsAndListedHosts(t *testing.T) {
+	hosts := []string{"*.blob.core.windows.net", "pipelines.actions.githubusercontent.com"}
+	for _, m := range []string{"GET /x/**", "GET,HEAD /x"} {
+		if _, err := Compile([]Rule{{Match: m, Action: Auto, FollowRedirects: hosts}}, nil); err != nil {
+			t.Errorf("%s: %v", m, err)
+		}
+	}
+	for _, m := range []string{"* /x", "POST /x", "GET,POST /x"} {
+		if _, err := Compile([]Rule{{Match: m, Action: Auto, FollowRedirects: hosts}}, nil); err == nil {
+			t.Errorf("%s with follow_redirects accepted", m)
+		}
+	}
+	for _, h := range []string{"*", "*.com", "**.example.com", "a.*.example.com", "Example.com", "example.com:443", "https://example.com", "10.0.0.1", ""} {
+		if _, err := Compile([]Rule{{Match: "GET /x", Action: Auto, FollowRedirects: []string{h}}}, nil); err == nil {
+			t.Errorf("follow_redirects %q accepted", h)
+		}
+	}
+	r := Rule{FollowRedirects: hosts}
+	for host, want := range map[string]bool{
+		"productionresultssa1.blob.core.windows.net":  true,
+		"ProductionResultsSA1.blob.core.windows.net.": true,
+		"pipelines.actions.githubusercontent.com":     true,
+		"blob.core.windows.net":                       false, // * is one label, not none
+		"a.b.blob.core.windows.net":                   false, // nor two
+		"evilblob.core.windows.net":                   false,
+		"results.actions.githubusercontent.com":       false,
+		"blob.core.windows.net.evil.com":              false,
+	} {
+		if got := r.Follows(host); got != want {
+			t.Errorf("Follows(%q) = %v, want %v", host, got, want)
+		}
+	}
+}

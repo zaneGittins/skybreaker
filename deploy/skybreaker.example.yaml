@@ -83,6 +83,12 @@ capabilities:
       rules:
         - { match: "PUT /repos/{repo}/pulls/*/merge", action: ask }
         - { match: "DELETE /**", action: deny }
+        # CI: runs, checks and job logs. GitHub serves logs and artifacts
+        # from its storage by redirect, which the broker follows itself,
+        # without credentials, to these hosts only. Artifacts can hold build
+        # output with credentials baked in, so they wait for your approval.
+        - { match: "GET /repos/{repo}/actions/artifacts/*/*", action: ask, follow_redirects: ["*.blob.core.windows.net", "*.actions.githubusercontent.com"] }
+        - { match: "GET /repos/{repo}/actions/**", action: auto, follow_redirects: ["*.blob.core.windows.net", "*.actions.githubusercontent.com"] }
         - { match: "GET /repos/{repo}/**", action: auto }
         - { match: "POST /repos/{repo}/pulls", action: auto }
         - { match: "POST /repos/{repo}/issues/*/comments", action: auto }

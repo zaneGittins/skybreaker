@@ -26,7 +26,7 @@ Sandboxes reach the outside only through `HTTPS_PROXY=http://<project>:<token>@b
 |---|---|
 | Caller | From the project's sandbox network, with a live token for that project. Revocation applies to open connections too. |
 | Destination | On the project's list, as a **tunnel** (opaque TLS, server name must match), **mitm** (TLS terminated so rules see method and path) or **route** (a reverse-proxy path). Plain HTTP only to a route's `allow_private` address, never with a secret. |
-| Request | Each method and path is `auto`, `ask` or `deny`. Requests carrying their own credentials are refused. `refs:`, `graphql:`, `k8s:` and `content_rules` narrow git pushes, GraphQL operations, Kubernetes verbs, and commit and pull request text. |
+| Request | Each method and path is `auto`, `ask` or `deny`. Requests carrying their own credentials are refused. `refs:`, `graphql:`, `k8s:` and `content_rules` narrow git pushes, GraphQL operations, Kubernetes verbs, and commit and pull request text. A read rule's `follow_redirects` lists the hosts the broker may follow the upstream's redirects to (GitHub's log storage), fetching them itself over https to a public address with no credentials, so the sandbox never reaches them; it's set in the config file only, and each hop is audited. |
 | Credentials | A secret is added only if it lists the upstream host, so it can't be echoed back from elsewhere. |
 | Connection | Resolved addresses are checked against loopback, link-local, metadata, private ranges, the tailnet and your LAN. |
 | Audit | Every decision is logged and shown on the Activity page. |
@@ -51,7 +51,8 @@ Sandboxes can't reach the app, so the risks are a hijacked session or a listed u
 
 - **A GitHub ruleset** blocks direct pushes, force pushes and deletion, with the App off its bypass list. This is the backstop.
 - **The broker** refuses pushes outside the allowed branch globs, deletes and tags, and checks commit messages and pull request text against `content_rules`.
-- **The GitHub App** gets only `contents`, `pull_requests` and `issues` (write) and `metadata` (read). Never `workflows`, `administration` or `secrets`.
+- **The GitHub App** gets only `contents`, `pull_requests` and `issues` (write) and `metadata`, `actions`, `checks` and `statuses` (read). Never `workflows`, `administration` or `secrets`.
+- **CI can read back what it prints.** Agents can push code that CI runs and then read its logs, so keep deploy and release secrets in protected environments that pushed branches don't get. Artifact downloads wait for your approval.
 
 ## Limits
 

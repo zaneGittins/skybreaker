@@ -16,6 +16,9 @@
 .set-sub { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
 .set-sub.mono { font: 500 12px var(--mono); color: var(--text-2); }
 .set-sub.bad { color: var(--danger); }
+.set-lack { margin-top: 12px; padding: 14px 16px; border-radius: 14px; background: var(--working-bg); display: grid; gap: 8px; }
+.set-lack .np-hint { margin: 0; }
+.set-lack-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between; font-size: 14px; }
 .set-acts { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .set-acts .icon-btn svg { width: 18px; height: 18px; }
 .set-instr-form { display: grid; gap: 8px; }

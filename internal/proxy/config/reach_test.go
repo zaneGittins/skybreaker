@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/zaneGittins/skybreaker/internal/proxy/policy"
 )
 
 // Reaches is a project's policy as the settings page reviews it: every
@@ -30,6 +32,10 @@ func TestReaches(t *testing.T) {
 	}
 	if !slices.Contains(gh.Rules, "POST /zaneGittins/orbit.git/git-receive-pack: auto, pushing refs/heads/agent/*") {
 		t.Errorf("rules %q", gh.Rules)
+	}
+	if got := describeRules([]policy.Rule{{Match: "GET /repos/{repo}/actions/**", Action: policy.Auto, FollowRedirects: []string{"*.blob.core.windows.net"}}}, map[string]string{"repo": "o/r"}); len(got) != 1 ||
+		got[0] != "GET /repos/o/r/actions/**: auto, following redirects without credentials to *.blob.core.windows.net" {
+		t.Errorf("followed redirects described as %q", got)
 	}
 	if r := at("proxy.golang.org"); !slices.Contains(r.Rules, "GET,HEAD /**: auto") {
 		t.Errorf("methods shorthand %q", r.Rules)

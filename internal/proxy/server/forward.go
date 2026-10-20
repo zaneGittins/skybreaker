@@ -461,11 +461,88 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 		return
 	}
 	e.Reason = reason
+	if rule != nil && len(rule.FollowRedirects) > 0 && isRedirect(resp.StatusCode) {
+		var hops []string
+		resp, hops, err = s.follow(ctx, r, resp, upReq.URL, rule)
+		if len(hops) > 0 {
+			e.Reason = strings.TrimSpace(e.Reason + "; followed, without credentials, to " + strings.Join(hops, ", then "))
+		}
+		if err != nil {
+			var fe followError
+			errors.As(err, &fe)
+			s.deny(w, e, cmp.Or(fe.status, http.StatusBadGateway), err.Error())
+			return
+		}
+	}
 	if rules.Commits() && isReceivePackAdvert(r, canon) {
 		s.relayAdvert(w, resp, e)
 		return
 	}
 	s.relay(w, resp, e)
+}
+
+// maxFollow bounds the redirects followed for one request.
+const maxFollow = 5
+
+func isRedirect(status int) bool {
+	switch status {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	}
+	return false
+}
+
+// followError is a redirect follow refused, with the status to answer.
+type followError struct {
+	status int
+	msg    string
+}
+
+func (e followError) Error() string { return e.msg }
+
+// follow fetches where an upstream redirected a read to, for a rule with
+// follow_redirects, and returns the response and each hop, as host and
+// path: the query, which may carry a signature, is left out. The upstream
+// chose where, so the sandbox needn't be able to reach it; it must be a
+// host the rule lists, over https on 443 at a public address, and nothing
+// of the request goes there but its method and Accept, never a credential.
+func (s *Server) follow(ctx context.Context, r *http.Request, resp *http.Response, from *url.URL, rule *policy.Rule) (*http.Response, []string, error) {
+	var hops []string
+	for n := 0; isRedirect(resp.StatusCode); n++ {
+		where := resp.Header.Get("Location")
+		// Drained a little, so the connection can serve the next request.
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		resp.Body.Close()
+		loc, err := from.Parse(where)
+		switch {
+		case err != nil || where == "":
+			return nil, hops, followError{http.StatusBadGateway, "the upstream redirected nowhere"}
+		case loc.Scheme != "https" || loc.Hostname() == "" || loc.User != nil || loc.Port() != "" && loc.Port() != "443":
+			return nil, hops, followError{http.StatusBadGateway, "the upstream redirected somewhere other than an https address"}
+		case !rule.Follows(loc.Hostname()):
+			return nil, hops, followError{http.StatusForbidden, "the upstream redirected to " + loc.Hostname() + ", which the rule doesn't follow redirects to"}
+		case n == maxFollow:
+			return nil, hops, followError{http.StatusBadGateway, "the upstream redirected too many times"}
+		}
+		hop := loc.Hostname() + loc.EscapedPath()
+		if len(hop) > 200 {
+			hop = hop[:200] + "…"
+		}
+		hops = append(hops, hop)
+		req, err := http.NewRequestWithContext(ctx, r.Method, loc.String(), nil)
+		if err != nil {
+			return nil, hops, followError{http.StatusBadGateway, "the upstream redirected to an address that can't be fetched"}
+		}
+		if a := r.Header.Get("Accept"); a != "" {
+			req.Header.Set("Accept", a)
+		}
+		if resp, err = s.transport(s.guard, nil, "").RoundTrip(req); err != nil {
+			status, reason := dialStatus(err)
+			return nil, hops, followError{status, "following the upstream's redirect to " + loc.Hostname() + ": " + reason}
+		}
+		from = loc
+	}
+	return resp, hops, nil
 }
 
 // relay sends an upstream response back to the client, logged as allowed.
@@ -475,8 +552,28 @@ func (s *Server) relay(w http.ResponseWriter, resp *http.Response, e audit.Entry
 	maps.Copy(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	e.Decision, e.Status = "allow", resp.StatusCode
+	if need := s.lacked(e.Host, resp); need != "" {
+		e.Reason = strings.TrimSpace(e.Reason + "; GitHub refused it: the token needs " + need)
+	}
 	s.log(e)
 	copyFlush(w, resp.Body)
+}
+
+// lacked is the permission GitHub's API says a refused request needed
+// ("actions=read", or several to choose from), which an App made before
+// agents read CI lacks, or "". A rate limit is a 403 too, and not one.
+func (s *Server) lacked(host string, resp *http.Response) string {
+	need := resp.Header.Get("X-Accepted-Github-Permissions")
+	switch {
+	case !s.githubAPI[host] || resp.StatusCode != http.StatusForbidden || need == "",
+		resp.Header.Get("X-Ratelimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "",
+		len(need) > 200 || strings.ContainsFunc(need, func(r rune) bool { return r < ' ' || r > '~' }):
+		return ""
+	}
+	if strings.Contains(need, ";") {
+		return "one of " + need
+	}
+	return need
 }
 
 // approvalBinding is the part of where a request goes that the method,

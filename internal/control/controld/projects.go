@@ -101,6 +101,10 @@ func (d *settings) FileSecrets() ([]api.FileSecret, error) {
 
 func (d *settings) SecretsUsed() map[string]time.Time { return d.broker.SecretsUsed() }
 
+func (d *settings) GitHubLacking(ctx context.Context) (githubapp.Lacking, error) {
+	return d.broker.GitHubLacking(ctx)
+}
+
 func (d *settings) GitHubInstallURL(ctx context.Context) (string, error) {
 	return d.broker.GitHubInstallURL(ctx)
 }

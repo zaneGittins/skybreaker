@@ -31,6 +31,7 @@ type fakeSettings struct {
 
 	instructions string
 	prompts      []config.Prompt
+	lacking      githubapp.Lacking
 }
 
 func (s *fakeSettings) Apply(_ context.Context, by, what string, change func(*config.AppFiles) error, dry bool) (Applied, error) {
@@ -60,6 +61,10 @@ func (s *fakeSettings) FileSecrets() ([]FileSecret, error) { return s.file, nil 
 func (s *fakeSettings) SecretsUsed() map[string]time.Time {
 	return map[string]time.Time{"openai": time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)}
 }
+func (s *fakeSettings) GitHubLacking(context.Context) (githubapp.Lacking, error) {
+	return s.lacking, nil
+}
+
 func (s *fakeSettings) GitHubInstallURL(context.Context) (string, error) {
 	return "https://github.com/apps/file-app/installations/new", nil
 }
@@ -94,10 +99,11 @@ type settingsView struct {
 	Editable bool `json:"editable"`
 	Pending  bool `json:"pending"`
 	GitHub   struct {
-		State      string `json:"state"`
-		CanCreate  bool   `json:"can_create"`
-		AppID      string `json:"app_id"`
-		InstallURL string `json:"install_url"`
+		State      string             `json:"state"`
+		CanCreate  bool               `json:"can_create"`
+		AppID      string             `json:"app_id"`
+		InstallURL string             `json:"install_url"`
+		Lacking    *githubapp.Lacking `json:"lacking"`
 	} `json:"github"`
 	Secrets []struct {
 		Name        string    `json:"name"`
@@ -246,10 +252,11 @@ func TestAccessAPI(t *testing.T) {
 		t.Fatalf("bundles %+v", v.Bundles)
 	}
 	for name, c := range map[string][2]string{
-		"a route":           {"/api/bundles/x", `{"entries":[{"route":"/x","upstream":"https://x.example","rules":[{"match":"GET /**","action":"auto"}]}]}`},
-		"an unknown field":  {"/api/projects/orbit/access", `{"capabilities":[],"env":{"A":"b"}}`},
-		"an unknown bundle": {"/api/projects/orbit/access", `{"capabilities":["everything"]}`},
-		"a bad bundle name": {"/api/bundles/Bad%20Name", bundle},
+		"a route":            {"/api/bundles/x", `{"entries":[{"route":"/x","upstream":"https://x.example","rules":[{"match":"GET /**","action":"auto"}]}]}`},
+		"an unknown field":   {"/api/projects/orbit/access", `{"capabilities":[],"env":{"A":"b"}}`},
+		"followed redirects": {"/api/bundles/x", `{"entries":[{"host":"x.example","mode":"mitm","rules":[{"match":"GET /**","action":"auto","follow_redirects":["*.example.com"]}]}]}`},
+		"an unknown bundle":  {"/api/projects/orbit/access", `{"capabilities":["everything"]}`},
+		"a bad bundle name":  {"/api/bundles/Bad%20Name", bundle},
 	} {
 		if code, _ := f.do(t, "PUT", c[0], c[1], nil); code != http.StatusBadRequest {
 			t.Errorf("%s: %d", name, code)
@@ -394,6 +401,15 @@ func TestFileGitHubApp(t *testing.T) {
 	}
 	if code, _ := f.do(t, "POST", "/api/github-app/manifest", `{}`, nil); code != http.StatusConflict {
 		t.Fatalf("replaced the file's App: %d", code)
+	}
+	if v := f.settings(t); v.GitHub.Lacking != nil {
+		t.Errorf("an App with every permission lacks %+v", v.GitHub.Lacking)
+	}
+	// An App made before agents read CI says what it can't do, and where
+	// to change that.
+	s.lacking = githubapp.Lacking{App: []string{"actions:read"}, PermissionsURL: "https://github.com/settings/apps/file-app/permissions"}
+	if v := f.settings(t); v.GitHub.Lacking == nil || v.GitHub.Lacking.App[0] != "actions:read" || v.GitHub.Lacking.PermissionsURL == "" {
+		t.Errorf("lacking = %+v", v.GitHub.Lacking)
 	}
 }
 

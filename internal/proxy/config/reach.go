@@ -123,6 +123,9 @@ func describeRules(rules []policy.Rule, vars map[string]string) []string {
 		if g := ru.GraphQL; g != nil {
 			s += fmt.Sprintf(", GraphQL queries and mutations %s (others: %s)", strings.Join(g.Mutations, ", "), g.OtherAction())
 		}
+		if len(ru.FollowRedirects) > 0 {
+			s += ", following redirects without credentials to " + strings.Join(ru.FollowRedirects, ", ")
+		}
 		out = append(out, s)
 	}
 	return out

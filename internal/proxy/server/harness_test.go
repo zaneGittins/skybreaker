@@ -237,7 +237,7 @@ func newWorldWith(t *testing.T, policy string, handlers map[string]http.Handler)
 	}
 
 	res := mapResolver{"internal.test": "10.0.0.5"}
-	for _, h := range []string{"tunnel.test", "plain.test", "open.test", "github.test", "api.github.test", "llm.test", "unbound.test", "kube.test", "local.test"} {
+	for _, h := range []string{"tunnel.test", "plain.test", "open.test", "github.test", "api.github.test", "llm.test", "unbound.test", "kube.test", "local.test", "blobs.test"} {
 		res[h] = "127.0.0.1"
 	}
 	guard, err := netguard.New(nil, []string{"127.0.0.1/32"})
