@@ -179,12 +179,18 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 		s.deny(w, e, http.StatusForbidden, reason)
 		return
 	}
+	// Content rules (content.go) find what they check by path, compared
+	// as rules compare it; pull request rules apply on GitHub's API host.
+	rules, canon := s.cfg.Content(), canonPath(path)
+	githubAPI := rules.PullRequests() && s.githubAPI[t.host]
+	prGraphQL := githubAPI && r.Method == http.MethodPost && canon == "/graphql"
 
 	// 2a. GraphQL: one endpoint does everything, so the rule looks at the
 	// operation. Queries and the rule's listed mutations keep its action;
 	// any other operation gets the rule's graphql.other; a body that can't
-	// be read unambiguously is refused.
-	if rule != nil && rule.GraphQL != nil {
+	// be read unambiguously is refused. The pull request rules read the
+	// same parse.
+	if rule != nil && rule.GraphQL != nil || prGraphQL {
 		// The operation is judged from the body alone; a server that also
 		// reads query or operationName from the URL would run something
 		// else, so nothing may ride there.
@@ -216,19 +222,52 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 			what += " (and fragments)"
 		}
 		view = append(view, approval.Field{Label: "GraphQL", Value: strings.TrimSpace(what)})
-		listed := q.Op == "query" || q.Op == "mutation" && !q.Indirect && len(q.Fields) > 0 &&
-			!slices.ContainsFunc(q.Fields, func(f string) bool { return !slices.Contains(rule.GraphQL.Mutations, f) })
-		if !listed {
-			action, reason = rule.GraphQL.OtherAction(), "GraphQL "+strings.TrimSpace(what)+" is not on the rule's list"
-			if action != policy.Ask {
-				s.deny(w, e, http.StatusForbidden, reason)
+		if prGraphQL {
+			if problems, err := graphQLPullProblems(rules, q); err != nil || len(problems) > 0 {
+				s.refusePull(w, e, problems, err)
 				return
+			}
+		}
+		if rule != nil && rule.GraphQL != nil {
+			listed := q.Op == "query" || q.Op == "mutation" && !q.Indirect && len(q.Fields) > 0 &&
+				!slices.ContainsFunc(q.Fields, func(f string) bool { return !slices.Contains(rule.GraphQL.Mutations, f) })
+			if !listed {
+				action, reason = rule.GraphQL.OtherAction(), "GraphQL "+strings.TrimSpace(what)+" is not on the rule's list"
+				if action != policy.Ask {
+					s.deny(w, e, http.StatusForbidden, reason)
+					return
+				}
 			}
 		}
 	}
 
-	// 2. Ref policy for git pushes, read from the start of the pack stream.
-	if rule != nil && len(rule.Refs) > 0 {
+	// 2b. Pull requests over REST: the title and body go by the rules.
+	if githubAPI && isPullsREST(r.Method, canon) {
+		if r.Header.Get("Content-Encoding") != "" {
+			s.deny(w, e, http.StatusBadRequest, "compressed pull request bodies are not inspected")
+			return
+		}
+		if !read {
+			b, err := io.ReadAll(io.LimitReader(r.Body, maxAskBody+1))
+			if err != nil || len(b) > maxAskBody {
+				s.deny(w, e, http.StatusRequestEntityTooLarge, "pull request body too large to inspect")
+				return
+			}
+			body, read = b, true
+		}
+		if problems, err := restPullProblems(rules, body); err != nil || len(problems) > 0 {
+			s.refusePull(w, e, problems, err)
+			return
+		}
+	}
+
+	// 2c. Git pushes: the ref policy, read from the start of the pack
+	// stream, and the commit rules, read from the pack itself. Refusals
+	// answer as git servers do, so git shows the reason.
+	refPolicy := rule != nil && len(rule.Refs) > 0
+	checkCommits := rules.Commits() && r.Method == http.MethodPost && strings.HasSuffix(canon, "/git-receive-pack")
+	var gate *pushGate
+	if refPolicy || checkCommits {
 		if r.Header.Get("Content-Encoding") != "" {
 			s.deny(w, e, http.StatusBadRequest, "compressed receive-pack bodies are not inspected")
 			return
@@ -237,17 +276,47 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 		if read {
 			src = io.NopCloser(bytes.NewReader(body))
 		}
-		refs, rest, err := gitproto.Peek(src)
-		if err == nil && len(refs) > 0 { // no refs: git's probe request
-			err = gitproto.Check(refs, rule.Refs)
-		}
+		refs, caps, rest, err := gitproto.Peek(src)
 		if err != nil {
 			s.deny(w, e, http.StatusForbidden, err.Error())
 			return
 		}
 		r.Body = rest
+		if refPolicy && len(refs) > 0 { // no refs: git's probe request
+			if err := gitproto.Check(refs, rule.Refs); err != nil {
+				drain(r.Body)
+				s.refusePush(w, e, gitproto.Push{Updates: refs, Caps: caps}, err.Error(), []string{err.Error()})
+				return
+			}
+		}
 		for _, u := range refs {
 			view = append(view, approval.Field{Label: "Ref", Value: fmt.Sprintf("%s %s → %s", u.Ref, short(u.Old), short(u.New))})
+		}
+		switch {
+		case !checkCommits || len(refs) == 0:
+		case read || action == policy.Ask:
+			// The body is held anyway, so it is checked whole before anyone
+			// is asked about it.
+			if !read {
+				b, err := io.ReadAll(io.LimitReader(r.Body, maxAskBody+1))
+				if err != nil || len(b) > maxAskBody {
+					s.deny(w, e, http.StatusRequestEntityTooLarge, "request body too large to approve")
+					return
+				}
+				body, read = b, true
+			} else if body, err = io.ReadAll(r.Body); err != nil {
+				s.deny(w, e, http.StatusBadRequest, "reading the push: "+err.Error())
+				return
+			}
+			push, problems, err := commitProblems(rules, bytes.NewReader(body), nil)
+			if err != nil || len(problems) > 0 {
+				s.refuseCommits(w, e, push, problems, err)
+				return
+			}
+		default:
+			gate = newPushGate(r.Body, rules)
+			r.Body = gate
+			defer gate.Close()
 		}
 	}
 
@@ -259,6 +328,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 		out.Del(h)
 	}
 	out.Del("Cookie")
+	if rules.Commits() && isReceivePackAdvert(r, canon) {
+		// Uncompressed, so no-thin can be added; the transport asks for
+		// gzip itself and undoes it.
+		out.Del("Accept-Encoding")
+	}
 
 	// 3. Ask: hold the request until approved, or answer 403 with an ID an
 	// identical retry can use once approved.
@@ -368,6 +442,16 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 		return
 	}
 	resp, err := s.transport(t.guard, t.roots, t.transport).RoundTrip(upReq)
+	if gate != nil {
+		if push, problems, perr, refused := gate.verdict(); refused {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			gate.drain()
+			s.refuseCommits(w, e, push, problems, perr)
+			return
+		}
+	}
 	if err != nil {
 		status, reason := dialStatus(err)
 		if status == http.StatusBadGateway {
@@ -377,6 +461,10 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, t target) {
 		return
 	}
 	e.Reason = reason
+	if rules.Commits() && isReceivePackAdvert(r, canon) {
+		s.relayAdvert(w, resp, e)
+		return
+	}
 	s.relay(w, resp, e)
 }
 

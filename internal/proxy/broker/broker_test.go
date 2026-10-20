@@ -21,7 +21,7 @@ func policy(t *testing.T) *config.Config {
 		"orbit": {Repo: "zaneGittins/orbit", Allow: []*config.Entry{
 			{Host: "api.digitalocean.com", Mode: config.ModeMITM, Inject: &config.Inject{Bearer: "do"}, Methods: []string{"GET"}},
 		}},
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

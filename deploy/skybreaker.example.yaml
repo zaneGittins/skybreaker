@@ -54,6 +54,17 @@ projects:
       - { host: files.pythonhosted.org, mode: tunnel }
     capabilities: [github, claude-login, codex-login]
 
+# Checked by the broker on every project's pushes and pull requests,
+# whichever agent sends them; anything that breaks a rule is refused with
+# the reason. Settings can add to these, never loosen them.
+# content_rules:
+#   commit:
+#     max_subject: 72
+#     forbid: ['(?im)^co-authored-by:.*claude']
+#   pull_request:
+#     max_title: 72
+#     forbid: ['(?i)generated with \[claude code\]']
+
 # Capabilities are named bundles of hosts and routes that projects opt into.
 # {repo} is the project's own repo.
 capabilities:

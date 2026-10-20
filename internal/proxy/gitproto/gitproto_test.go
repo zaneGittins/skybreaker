@@ -39,7 +39,7 @@ func TestReadCommands(t *testing.T) {
 		zero+" "+b2+" refs/heads/agent/new",
 		a1+" "+zero+" refs/heads/agent/gone",
 	)
-	got, err := ReadCommands(strings.NewReader(body))
+	got, _, err := ReadCommands(strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestReadCommands(t *testing.T) {
 
 func TestReadCommandsSHA256AndNoNewline(t *testing.T) {
 	body := pkt(s256+" "+z256+" refs/heads/agent/x\x00report-status") + "0000"
-	got, err := ReadCommands(strings.NewReader(body))
+	got, _, err := ReadCommands(strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestReadCommandsRejects(t *testing.T) {
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got, err := ReadCommands(strings.NewReader(body)); err == nil {
+			if got, _, err := ReadCommands(strings.NewReader(body)); err == nil {
 				t.Errorf("accepted: %+v", got)
 			}
 		})
@@ -124,7 +124,7 @@ func TestReadCommandsLimit(t *testing.T) {
 		b.WriteString(pkt(fmt.Sprintf("%s %s refs/heads/agent/%d\n", a1, b2, i)))
 	}
 	b.WriteString("0000")
-	if _, err := ReadCommands(strings.NewReader(b.String())); err == nil {
+	if _, _, err := ReadCommands(strings.NewReader(b.String())); err == nil {
 		t.Error("accepted more than maxCommands commands")
 	}
 }
@@ -139,7 +139,7 @@ func (c *closeTracker) Close() error { c.closed = true; return nil }
 func TestPeekReplaysBody(t *testing.T) {
 	body := push(a1+" "+b2+" refs/heads/agent/x", zero+" "+b2+" refs/heads/agent/y")
 	src := &closeTracker{Reader: strings.NewReader(body)}
-	ups, rc, err := Peek(src)
+	ups, _, rc, err := Peek(src)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestPeekReplaysBody(t *testing.T) {
 }
 
 func TestPeekError(t *testing.T) {
-	if _, _, err := Peek(io.NopCloser(strings.NewReader("zzzz"))); err == nil {
+	if _, _, _, err := Peek(io.NopCloser(strings.NewReader("zzzz"))); err == nil {
 		t.Error("Peek accepted garbage")
 	}
 }
@@ -257,7 +257,7 @@ func FuzzReadCommands(f *testing.F) {
 	f.Add([]byte(push(a1 + " " + b2 + " refs/heads/agent/x")))
 	f.Add([]byte("0000"))
 	f.Fuzz(func(t *testing.T, body []byte) {
-		ups, err := ReadCommands(bytes.NewReader(body))
+		ups, _, err := ReadCommands(bytes.NewReader(body))
 		if err != nil {
 			return
 		}
@@ -272,7 +272,7 @@ func FuzzReadCommands(f *testing.F) {
 func TestPeekProbe(t *testing.T) {
 	// Before a push larger than http.postBuffer, git probes receive-pack
 	// with a bare flush-pkt. It changes nothing and must get through.
-	ups, rest, err := Peek(io.NopCloser(strings.NewReader("0000")))
+	ups, _, rest, err := Peek(io.NopCloser(strings.NewReader("0000")))
 	if err != nil || len(ups) != 0 {
 		t.Fatalf("probe: %v %v", ups, err)
 	}
@@ -280,7 +280,7 @@ func TestPeekProbe(t *testing.T) {
 		t.Fatalf("probe body not replayed: %q", b)
 	}
 	// An empty command list followed by data is not a probe.
-	if _, _, err := Peek(io.NopCloser(strings.NewReader("0000PACK"))); err == nil {
+	if _, _, _, err := Peek(io.NopCloser(strings.NewReader("0000PACK"))); err == nil {
 		t.Fatal("empty command list with a pack accepted")
 	}
 }

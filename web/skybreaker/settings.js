@@ -34,6 +34,7 @@ async function renderSettings(seq) {
   $('#app').replaceChildren(el('div.wrap.activity.settings', null, head, banners,
     ins ? instructionsSection(ins) : null,
     pr ? promptsSection(pr) : null,
+    contentSection(d.content_rules || {}, ed),
     githubSection(d.github, ed), secretsSection(d.secrets, ed), bundlesSection(d.bundles, ed, d),
     accessSection(d.projects, ed, d)));
 }
@@ -135,6 +136,83 @@ function promptsSection(pr) {
         el('button.btn.sm.ghost.ent-add', { type: 'button', onclick: () => { add({}, true); changed() } }, svg(ICON.plus), 'Add a prompt'),
         el('span.grow'), save));
   return setSection('Prompts', 'Prompts you reuse, for every chat in every project: type /prompt and pick one, or /prompt <name> and anything to add to it. It\'s sent as your message, so it works the same with every agent. Names are lower case: letters, digits, - and _.', null, form);
+}
+
+// --- commit and pull request rules ------------------------------------------------
+
+// rulesDraft keeps what you typed across a redraw, against the rules it
+// started from.
+let rulesDraft = null;
+
+// contentSection edits the app's commit and pull request rules. The broker
+// checks every push and pull request against them and the config file's,
+// the stricter limit and every pattern, and tells the agent what to fix.
+function contentSection(c, ed) {
+  const app = c.app || {};
+  const base = JSON.stringify(app);
+  if (rulesDraft && rulesDraft.base !== base) rulesDraft = null;
+  const limit = n => n ? String(n) : '';
+  const initial = {
+    subject: limit(app.commit?.max_subject), message: limit(app.commit?.max_message), cForbid: (app.commit?.forbid || []).join('\n'),
+    title: limit(app.pull_request?.max_title), body: limit(app.pull_request?.max_body), pForbid: (app.pull_request?.forbid || []).join('\n'),
+  };
+  const shown = rulesDraft ? rulesDraft.values : initial;
+  const inputs = {};
+  const num = (key, label) => {
+    inputs[key] = el('input.np-input', { type: 'number', min: 0, step: 1, placeholder: 'No limit', disabled: !ed || null, 'aria-label': label });
+    inputs[key].value = shown[key];
+    return inputs[key];
+  };
+  const pats = (key, label, hint) => {
+    inputs[key] = el('textarea.np-input.ent-rules', { rows: 3, spellcheck: 'false', placeholder: hint, disabled: !ed || null, 'aria-label': label });
+    inputs[key].value = shown[key];
+    return inputs[key];
+  };
+  const field = (label, input) => el('label.np-field', null, el('span.np-label', null, label), input);
+  const subject = num('subject', 'Commit subject limit');
+  const message = num('message', 'Commit message limit');
+  const cForbid = pats('cForbid', 'Forbidden in commit messages', '(?im)^co-authored-by:.*claude');
+  const title = num('title', 'Pull request title limit');
+  const body = num('body', 'Pull request body limit');
+  const pForbid = pats('pForbid', 'Forbidden in pull requests', '(?i)generated with \\[claude code\\]');
+  const lines = box => box.value.split('\n').map(x => x.trim()).filter(Boolean);
+  const int = input => input.value === '' ? 0 : Number(input.value);
+  const values = () => Object.fromEntries(Object.entries(inputs).map(([k, i]) => [k, i.value]));
+  const start = JSON.stringify(initial);
+  const save = el('button.btn.primary.sm', { type: 'submit' }, 'Save');
+  const sync = () => {
+    const whole = [subject, message, title, body].every(i => i.value === '' || Number.isInteger(Number(i.value)) && Number(i.value) >= 0);
+    save.disabled = !whole || JSON.stringify(values()) === start;
+  };
+  for (const input of Object.values(inputs)) input.addEventListener('input', () => { rulesDraft = { base, values: values() }; sync() });
+  sync();
+  const form = el('form.set-instr-form', {
+    onsubmit: async e => {
+      e.preventDefault();
+      save.disabled = true;
+      try {
+        await api('PUT', '/api/content-rules', {
+          commit: { max_subject: int(subject), max_message: int(message), forbid: lines(cForbid) },
+          pull_request: { max_title: int(title), max_body: int(body), forbid: lines(pForbid) },
+        });
+        rulesDraft = null;
+        saved();
+      } catch (err) { toast(err.message, 'error'); sync() }
+    },
+  },
+    el('div.set-rules', null,
+      el('fieldset.np-group', null, el('legend', null, 'Commits'),
+        el('div.set-rule-nums', null, field('Subject, characters', subject), field('Message, characters', message)),
+        field('Forbidden patterns, one per line', cForbid)),
+      el('fieldset.np-group', null, el('legend', null, 'Pull requests'),
+        el('div.set-rule-nums', null, field('Title, characters', title), field('Body, characters', body)),
+        field('Forbidden patterns, one per line', pForbid))),
+    c.file ? el('div.set-file', null, el('span.np-hint', null, 'The config file also sets these; the stricter limit and every pattern apply:'),
+      el('span.np-hint.mono', null, JSON.stringify(c.file))) : null,
+    ed ? el('div.set-instr-acts', null, save) : null);
+  return setSection('Commit and pull request rules',
+    'The broker checks every commit an agent pushes and every pull request it opens or edits, and tells the agent what to fix. ' +
+    'Patterns are Go regular expressions: (?i) ignores case, (?m) makes ^ and $ match each line.', null, form);
 }
 
 // --- GitHub ----------------------------------------------------------------------

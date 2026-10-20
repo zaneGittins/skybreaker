@@ -1,6 +1,7 @@
-// Package gitproto reads the ref-update commands at the start of a
-// git-receive-pack request, so the proxy can refuse a push before any of it
-// reaches GitHub.
+// Package gitproto reads git-receive-pack requests: the ref-update commands
+// at the start, so the proxy can refuse a push before any of it reaches
+// GitHub, and the pack after them, for the commits it carries (pack.go). It
+// also writes the refusals git shows (respond.go).
 //
 // It enforces which refs may move, and refuses deletes and tags. It cannot
 // detect a force push: telling a fast-forward from a rewrite needs the object
@@ -31,38 +32,44 @@ func (u RefUpdate) IsDelete() bool { return isZero(u.New) }
 
 func isZero(oid string) bool { return oid != "" && strings.Trim(oid, "0") == "" }
 
-// ReadCommands parses pkt-lines up to the first flush-pkt. Anything it does
-// not fully understand is an error, so an odd request fails closed.
-func ReadCommands(r io.Reader) ([]RefUpdate, error) {
-	var ups []RefUpdate
+// ReadCommands parses pkt-lines up to the first flush-pkt, returning the
+// ref updates and the capabilities the client asked for on the first one.
+// Anything it does not fully understand is an error, so an odd request
+// fails closed.
+func ReadCommands(r io.Reader) ([]RefUpdate, []string, error) {
+	var (
+		ups  []RefUpdate
+		caps []string
+	)
 	for {
 		line, flush, err := readPkt(r)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if flush {
 			break
 		}
 		if len(ups) == maxCommands {
-			return nil, fmt.Errorf("more than %d ref updates", maxCommands)
+			return nil, nil, fmt.Errorf("more than %d ref updates", maxCommands)
 		}
 		if i := bytes.IndexByte(line, 0); i >= 0 {
 			if len(ups) > 0 {
-				return nil, errors.New("capabilities after the first command")
+				return nil, nil, errors.New("capabilities after the first command")
 			}
+			caps = strings.Fields(string(line[i+1:]))
 			line = line[:i]
 		}
 		line = bytes.TrimSuffix(line, []byte("\n"))
 		u, err := parseCommand(string(line))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		ups = append(ups, u)
 	}
 	if len(ups) == 0 {
-		return nil, errNoCommands
+		return nil, nil, errNoCommands
 	}
-	return ups, nil
+	return ups, caps, nil
 }
 
 var errNoCommands = errors.New("no ref updates")
@@ -154,21 +161,21 @@ func validRef(ref string) error {
 
 // Peek reads the commands from body and returns a body that replays every
 // byte consumed, followed by the rest, ready to forward upstream.
-func Peek(body io.ReadCloser) ([]RefUpdate, io.ReadCloser, error) {
+func Peek(body io.ReadCloser) ([]RefUpdate, []string, io.ReadCloser, error) {
 	var seen bytes.Buffer
-	ups, err := ReadCommands(io.TeeReader(body, &seen))
+	ups, caps, err := ReadCommands(io.TeeReader(body, &seen))
 	if errors.Is(err, errNoCommands) {
 		// git's probe before a large push is a bare flush-pkt and nothing
 		// else. It can't change a ref, so it passes with no updates.
 		var one [1]byte
 		if n, _ := io.ReadFull(body, one[:]); n == 0 {
-			return nil, replay{&seen, body}, nil
+			return nil, nil, replay{&seen, body}, nil
 		}
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return ups, replay{io.MultiReader(&seen, body), body}, nil
+	return ups, caps, replay{io.MultiReader(&seen, body), body}, nil
 }
 
 type replay struct {

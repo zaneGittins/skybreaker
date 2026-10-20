@@ -56,8 +56,9 @@ type Deps struct {
 	Hold          time.Duration  // how long an ask request is held, default 30s
 	UIURL         string         // where approvals are answered, for the agent's error message
 
-	portMap   map[int]int   // tests: dial a different local port per upstream port
-	reapEvery time.Duration // tests: how often open connections are re-checked
+	portMap   map[int]int     // tests: dial a different local port per upstream port
+	reapEvery time.Duration   // tests: how often open connections are re-checked
+	githubAPI map[string]bool // tests: GitHub's API hosts, default api.github.com
 }
 
 type Server struct {
@@ -73,6 +74,7 @@ type Server struct {
 	hold      time.Duration
 	uiURL     string
 	portMap   map[int]int
+	githubAPI map[string]bool // where pull request rules apply
 	mux       *http.ServeMux
 
 	mu         sync.Mutex
@@ -101,6 +103,9 @@ func New(d Deps) (*Server, error) {
 	}
 	if s.hold <= 0 {
 		s.hold = 30 * time.Second
+	}
+	if s.githubAPI = d.githubAPI; s.githubAPI == nil {
+		s.githubAPI = map[string]bool{"api.github.com": true}
 	}
 	if s.reapEvery <= 0 {
 		s.reapEvery = 5 * time.Second

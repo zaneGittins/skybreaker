@@ -114,3 +114,80 @@ func FuzzParse(f *testing.F) {
 		}
 	})
 }
+
+func TestStrings(t *testing.T) {
+	str := func(s string) *string { return &s }
+	cases := []struct {
+		name        string
+		in          []byte
+		title, body *string
+	}{
+		{"inline", body(`mutation { createPullRequest(input: {repositoryId: "R", title: "Fix it", body: "line\nCo-Authored-By: x é"}) { pullRequest { url } } }`),
+			str("Fix it"), str("line\nCo-Authored-By: x é")},
+		{"input variable", []byte(`{"query":"mutation P($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { url } } }","variables":{"input":{"title":"T","body":"B","repositoryId":"R"}}}`),
+			str("T"), str("B")},
+		{"field variables", []byte(`{"query":"mutation($t: String!, $b: String) { createPullRequest(input: {title: $t, body: $b}) { clientMutationId } }","variables":{"t":"T","b":null}}`),
+			str("T"), nil},
+		{"title only", body(`mutation { updatePullRequest(input: {pullRequestId: "P", title: "New"}) { clientMutationId } }`),
+			str("New"), nil},
+		{"block string", body("mutation { createPullRequest(input: {title: \"T\", body: \"\"\"\n    Para one\n      indented\n\n    Co-Authored-By: Claude\n  \"\"\"}) { clientMutationId } }"),
+			str("T"), str("Para one\n  indented\n\nCo-Authored-By: Claude")},
+		{"surrogate pair", body(`mutation { createPullRequest(input: {title: "😀", body: "\u{1F600}"}) { clientMutationId } }`),
+			str("😀"), str("😀")},
+	}
+	for _, c := range cases {
+		q, err := Parse(c.in)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		got, err := q.Strings(q.Calls[0], "input", "title", "body")
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		for k, want := range map[string]*string{"title": c.title, "body": c.body} {
+			if (got[k] == nil) != (want == nil) || got[k] != nil && *got[k] != *want {
+				t.Errorf("%s: %s = %v, want %v", c.name, k, deref(got[k]), deref(want))
+			}
+		}
+	}
+}
+
+func deref(s *string) any {
+	if s == nil {
+		return nil
+	}
+	return *s
+}
+
+func TestStringsRefuses(t *testing.T) {
+	for name, in := range map[string][]byte{
+		"missing variable": []byte(`{"query":"mutation($b: String = \"x\") { createPullRequest(input: {title: \"T\", body: $b}) { clientMutationId } }"}`),
+		"number body":      body(`mutation { createPullRequest(input: {title: "T", body: 5}) { clientMutationId } }`),
+		"input not object": []byte(`{"query":"mutation($i: X) { createPullRequest(input: $i) { clientMutationId } }","variables":{"i":"s"}}`),
+		"no input":         body(`mutation { createPullRequest { clientMutationId } }`),
+		"list title":       []byte(`{"query":"mutation($i: X) { createPullRequest(input: $i) { clientMutationId } }","variables":{"i":{"title":["a"]}}}`),
+	} {
+		q, err := Parse(in)
+		if err != nil {
+			continue // refused earlier is fine too
+		}
+		if _, err := q.Strings(q.Calls[0], "input", "title", "body"); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+func TestParseRefusesAmbiguousArguments(t *testing.T) {
+	for name, in := range map[string][]byte{
+		"duplicate variables key": []byte(`{"query":"mutation($i: X) { createPullRequest(input: $i) { clientMutationId } }","variables":{"i":{"body":"ok","body":"Co-Authored-By: Claude"}}}`),
+		"duplicate argument":      body(`mutation { createPullRequest(input: {title: "a"}, input: {title: "b"}) { clientMutationId } }`),
+		"duplicate field":         body(`mutation { createPullRequest(input: {body: "a", body: "b"}) { clientMutationId } }`),
+		"variables not object":    []byte(`{"query":"{ viewer { login } }","variables":[1]}`),
+		"bad escape":              body(`mutation { createPullRequest(input: {title: "\q"}) { clientMutationId } }`),
+		"lone surrogate":          body(`mutation { createPullRequest(input: {title: "\ud83d"}) { clientMutationId } }`),
+	} {
+		if _, err := Parse(in); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

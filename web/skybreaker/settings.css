@@ -24,6 +24,9 @@
 .set-instr-acts { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 .set-count { color: var(--muted); font-size: 12.5px; }
 .set-gh .np-check-text { gap: 8px; }
+.set-rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.set-rules .np-group { gap: 10px; }
+.set-rule-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .set-gh .np-check input.np-input { width: min(280px, 100%); height: 42px; margin-top: 4px; accent-color: auto; }
 
 .picker.set-sheet { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow-y: auto; }
