@@ -25,9 +25,9 @@ type Backend interface {
 	// ChatIn reports whether session is a running chat of project's.
 	ChatIn(project, session string) bool
 	// ReadSandboxFile reads at most max bytes of a regular file inside the
-	// project's sandbox, resolving p there against /workspace. It returns
-	// the resolved path and the file's full size.
-	ReadSandboxFile(ctx context.Context, project, p string, max int64) (resolved string, size int64, data []byte, err error)
+	// project's sandbox, resolving p there against the session's working
+	// directory. It returns the resolved path and the file's full size.
+	ReadSandboxFile(ctx context.Context, project, session, p string, max int64) (resolved string, size int64, data []byte, err error)
 	// ChatShow keeps a copy of data and adds a show card to the chat.
 	ChatShow(session string, sh chat.Show, data []byte, ext string) error
 }
@@ -105,14 +105,6 @@ func title(s string) string {
 	return s
 }
 
-// display is how a path reads on the card: relative inside the workspace.
-func display(p string) string {
-	if r, ok := strings.CutPrefix(p, "/workspace/"); ok && r != "" {
-		return r
-	}
-	return p
-}
-
 func showImage(ctx context.Context, b Backend, c mcp.Caller, raw json.RawMessage) (string, error) {
 	var in struct {
 		Path    string `json:"path"`
@@ -124,18 +116,18 @@ func showImage(ctx context.Context, b Backend, c mcp.Caller, raw json.RawMessage
 	if err := checkPath(in.Path); err != nil {
 		return "", err
 	}
-	resolved, size, data, err := b.ReadSandboxFile(ctx, c.Project, in.Path, maxImage+1)
+	resolved, size, data, err := b.ReadSandboxFile(ctx, c.Project, c.Session, in.Path, maxImage+1)
 	if err != nil {
 		return "", err
 	}
 	if size > maxImage || len(data) > maxImage {
-		return "", fmt.Errorf("%s is %.1f MB; images up to %d MB can be shown", display(resolved), float64(size)/(1<<20), maxImage>>20)
+		return "", fmt.Errorf("%s is %.1f MB; images up to %d MB can be shown", chat.Rel(resolved), float64(size)/(1<<20), maxImage>>20)
 	}
 	ext, ok := images[http.DetectContentType(data)]
 	if !ok {
-		return "", fmt.Errorf("%s isn't a PNG, JPEG, GIF or WebP image; use show_file for text, including SVG source", display(resolved))
+		return "", fmt.Errorf("%s isn't a PNG, JPEG, GIF or WebP image; use show_file for text, including SVG source", chat.Rel(resolved))
 	}
-	sh := chat.Show{Path: display(resolved), Kind: chat.ShowImage, Title: title(in.Caption), Size: size}
+	sh := chat.Show{Path: chat.Rel(resolved), Kind: chat.ShowImage, Title: title(in.Caption), Size: size}
 	if err := b.ChatShow(c.Session, sh, data, ext); err != nil {
 		return "", err
 	}
@@ -159,11 +151,11 @@ func showFile(ctx context.Context, b Backend, c mcp.Caller, raw json.RawMessage)
 		return "", errors.New("start_line and end_line must be line numbers from 1, with end_line not before start_line")
 	}
 	ranged := in.Start > 0 || in.End > 0
-	resolved, size, data, err := b.ReadSandboxFile(ctx, c.Project, in.Path, maxTextRead)
+	resolved, size, data, err := b.ReadSandboxFile(ctx, c.Project, c.Session, in.Path, maxTextRead)
 	if err != nil {
 		return "", err
 	}
-	name := display(resolved)
+	name := chat.Rel(resolved)
 	if _, ok := images[http.DetectContentType(data)]; ok {
 		return "", fmt.Errorf("%s is an image; use show_image", name)
 	}

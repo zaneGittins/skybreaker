@@ -338,6 +338,20 @@ func Run(ctx context.Context, o Options) error {
 		}
 	}()
 	go func() {
+		// On its own, so a project whose git is slow can't hold up the
+		// token renewals; it bounds each project itself.
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			a.TidyWorktrees(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for {

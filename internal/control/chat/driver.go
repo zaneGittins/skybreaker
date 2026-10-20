@@ -120,13 +120,22 @@ func stepEnd(status string) string {
 	return StatusDeclined
 }
 
-// rel shows a path in the workspace relative to it.
-func rel(p string) string {
+// Rel shows a path in the workspace, or in a session's worktree, relative
+// to it.
+func Rel(p string) string {
 	if r, ok := strings.CutPrefix(p, "/workspace/"); ok && r != "" {
 		return r
 	}
+	if r, ok := strings.CutPrefix(p, worktrees); ok {
+		if _, r, ok := strings.Cut(r, "/"); ok && r != "" {
+			return r
+		}
+	}
 	return p
 }
+
+// worktrees is sandbox.WorktreesDir, where sessions' own worktrees are.
+const worktrees = "/skybreaker/worktrees/"
 
 func firstLine(s string) string {
 	s = strings.TrimSpace(s)

@@ -28,7 +28,7 @@ type shown struct {
 
 func (f *fakeBackend) ChatIn(project, session string) bool { return project == "p" && session == "s1" }
 
-func (f *fakeBackend) ReadSandboxFile(_ context.Context, project, path string, max int64) (string, int64, []byte, error) {
+func (f *fakeBackend) ReadSandboxFile(_ context.Context, project, _, path string, max int64) (string, int64, []byte, error) {
 	f.reads = append(f.reads, max)
 	if !strings.HasPrefix(path, "/") {
 		path = "/workspace/" + path

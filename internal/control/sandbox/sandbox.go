@@ -162,6 +162,8 @@ func (s Spec) Mounts() []Mount {
 		{Source: filepath.Join(d, "etc", InstructionsFile), Target: "/etc/claude-code/CLAUDE.md", ReadOnly: true},
 		{Source: filepath.Join(d, "etc", CodexConfigFile), Target: "/etc/codex/managed_config.toml", ReadOnly: true},
 		{Source: filepath.Join(d, "runs"), Target: "/skybreaker/runs"},
+		// Chats' and terminals' own git worktrees, beside the workspace.
+		{Source: filepath.Join(d, "worktrees"), Target: WorktreesDir},
 		// The inner dockerd's images and build cache, on disk rather than a
 		// tmpfs, which would take them out of the sandbox's memory. overlay2
 		// works on the bind mount (only gVisor's own root overlay would push
@@ -171,6 +173,10 @@ func (s Spec) Mounts() []Mount {
 }
 
 const settingsFile = "claude-managed-settings.json"
+
+// WorktreesDir holds the git worktrees of sessions that work on a branch of
+// their own, one directory per session.
+const WorktreesDir = "/skybreaker/worktrees"
 
 // The files in a sandbox's etc/ that hold every agent's instructions: as
 // written, and as Codex's managed config. They are mounted on their own,

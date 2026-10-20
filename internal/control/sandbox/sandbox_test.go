@@ -116,6 +116,7 @@ func TestRunArgsMounts(t *testing.T) {
 		"type=bind,source=" + d + "/etc/instructions.md,target=/etc/claude-code/CLAUDE.md,readonly",
 		"type=bind,source=" + d + "/etc/codex-managed-config.toml,target=/etc/codex/managed_config.toml,readonly",
 		"type=bind,source=" + d + "/runs,target=/skybreaker/runs",
+		"type=bind,source=" + d + "/worktrees,target=/skybreaker/worktrees",
 		"type=bind,source=" + d + "/docker,target=/var/lib/docker",
 	}
 	if got := pairs(args, "--mount"); !slices.Equal(got, want) {
@@ -341,7 +342,7 @@ func TestStartMissing(t *testing.T) {
 	if got := f.commands(); !slices.Equal(got, want) {
 		t.Fatalf("commands %v, want %v", got, want)
 	}
-	for _, d := range []string{"workspace", "home", "etc", "runs", "docker"} {
+	for _, d := range []string{"workspace", "home", "etc", "runs", "worktrees", "docker"} {
 		fi, err := os.Stat(filepath.Join(s.DataDir, d))
 		if err != nil || !fi.IsDir() {
 			t.Fatalf("%s not created: %v", d, err)

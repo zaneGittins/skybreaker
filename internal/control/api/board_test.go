@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,12 @@ func TestWorkOnAnItem(t *testing.T) {
 	}
 	if code, _ := f.do(t, "POST", "/api/items/ORB-1/work", `{"harness":"shell"}`, nil); code != 400 {
 		t.Fatalf("shell can't chat: %d", code)
+	}
+	if code, _ := f.do(t, "POST", "/api/items/ORB-1/work", `{"own_branch":true}`, nil); code != 200 {
+		t.Fatalf("work on its own branch: %d", code)
+	}
+	if calls := f.backend.chat.got(); !slices.Contains(calls, "new orbit claude own-branch") {
+		t.Errorf("calls: %q", calls)
 	}
 }
 

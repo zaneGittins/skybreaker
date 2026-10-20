@@ -673,7 +673,7 @@ func (c *claude) finishTool(t *Tool, text string, result json.RawMessage) {
 		}
 		t.Output = clipTail(out, maxOutput)
 	case ToolEdit:
-		path := rel(r.FilePath)
+		path := Rel(r.FilePath)
 		if path == "" {
 			path = t.Title
 		}
@@ -932,7 +932,7 @@ func claudeTool(name string, raw json.RawMessage) *Tool {
 			t.Title = str("description")
 		}
 	case "Edit", "MultiEdit":
-		t.Kind, t.Title = ToolEdit, rel(str("file_path"))
+		t.Kind, t.Title = ToolEdit, Rel(str("file_path"))
 		if old, nw := str("old_string"), str("new_string"); old != "" || nw != "" {
 			t.Diff = clip(replaceDiff(t.Title, old, nw), maxDiff)
 		}
@@ -948,17 +948,17 @@ func claudeTool(name string, raw json.RawMessage) *Tool {
 		}
 		t.Added, t.Removed = countDiff(t.Diff)
 	case "Write":
-		t.Kind, t.Title = ToolEdit, rel(str("file_path"))
+		t.Kind, t.Title = ToolEdit, Rel(str("file_path"))
 		t.Diff = clip(wholeFile(t.Title, str("content"), '+'), maxDiff)
 		t.Added, t.Removed = countDiff(t.Diff)
 	case "NotebookEdit":
-		t.Kind, t.Title = ToolEdit, rel(str("notebook_path"))
+		t.Kind, t.Title = ToolEdit, Rel(str("notebook_path"))
 	case "Read":
-		t.Kind, t.Title = ToolRead, rel(str("file_path"))
+		t.Kind, t.Title = ToolRead, Rel(str("file_path"))
 	case "Grep", "Glob":
 		t.Kind, t.Title = ToolSearch, str("pattern")
 		if p := str("path"); p != "" {
-			t.Title += " in " + rel(p)
+			t.Title += " in " + Rel(p)
 		}
 	case "WebFetch":
 		t.Kind, t.Title = ToolWeb, str("url")

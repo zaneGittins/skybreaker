@@ -244,7 +244,7 @@ func (m *Manager) Start(ctx context.Context, s Spec) error {
 // read-only file mount has a source. Existing files are kept: the control
 // plane writes the real ones.
 func ensureDataDir(dir string) error {
-	for _, d := range []string{"workspace", "home", "etc", "runs", "docker"} {
+	for _, d := range []string{"workspace", "home", "etc", "runs", "worktrees", "docker"} {
 		if err := os.MkdirAll(filepath.Join(dir, d), 0o700); err != nil {
 			return fmt.Errorf("sandbox data dir: %w", err)
 		}

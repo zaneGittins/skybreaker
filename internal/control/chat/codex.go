@@ -621,7 +621,7 @@ func (c *codex) item(it codexItem, parent string, done bool, now time.Time) []Ev
 		if len(it.Changes) > 0 {
 			var b strings.Builder
 			for _, ch := range it.Changes {
-				p := rel(ch.Path)
+				p := Rel(ch.Path)
 				switch {
 				case ch.Kind.Type == "add" && !strings.HasPrefix(ch.Diff, "@@"):
 					b.WriteString(wholeFile(p, ch.Diff, '+'))
@@ -633,7 +633,7 @@ func (c *codex) item(it codexItem, parent string, done bool, now time.Time) []Ev
 			}
 			t.Diff = clip(b.String(), maxDiff)
 			t.Added, t.Removed = countDiff(t.Diff)
-			t.Title = rel(it.Changes[0].Path)
+			t.Title = Rel(it.Changes[0].Path)
 			if n := len(it.Changes) - 1; n > 0 {
 				t.Title += " and " + strconv.Itoa(n) + " more"
 			}

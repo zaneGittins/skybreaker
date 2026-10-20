@@ -100,7 +100,7 @@ func (a *App) newChatManager(dir string) (*chat.Manager, error) {
 }
 
 func (a *App) chatOptions(s store.Session) chat.Options {
-	return chat.Options{Cwd: "/workspace", MCP: a.MCPURL(s.Project, s.ID)}
+	return chat.Options{Cwd: workdir(s), MCP: a.MCPURL(s.Project, s.ID)}
 }
 
 // startChat runs a chat's harness in its sandbox, starting the sandbox
@@ -113,11 +113,14 @@ func (a *App) startChat(ctx context.Context, s store.Session, argv []string, env
 	if err := a.waitReady(ctx, s.Project); err != nil {
 		return nil, err
 	}
+	if err := a.ensureWorktree(ctx, &s, nil); err != nil {
+		return nil, err
+	}
 	if s.Terminal != "" {
 		a.closeChatTerminal(ctx, s)
 		a.chat.Note(s.ID, "Back in the chat. The agent remembers what happened in the terminal, but it isn't shown here.")
 	}
-	full := a.sandbox.ExecPipeArgv(s.Project, "/workspace", env, append([]string{"sh", "-c", pidWrapper, s.ID}, argv...)...)
+	full := a.sandbox.ExecPipeArgv(s.Project, workdir(s), env, append([]string{"sh", "-c", pidWrapper, s.ID}, argv...)...)
 	p, err := a.spawn(ctx, full)
 	if err != nil {
 		return nil, err
@@ -135,10 +138,54 @@ func (a *App) startChat(ctx context.Context, s store.Session, argv []string, env
 	return p, nil
 }
 
+// NewOptions are where a new session works.
+type NewOptions struct {
+	// OwnBranch gives it a git worktree and branch of its own, so it
+	// doesn't share the workspace with the project's other sessions.
+	OwnBranch bool
+	// Continues names a session of the project's whose worktree it takes
+	// on, as a chat cleared to start afresh on the same work does.
+	Continues string
+}
+
+// placeSession sets where new session s works, from opts. A sandbox that's
+// up but can't hold worktrees is refused now rather than on the first start.
+func (a *App) placeSession(ctx context.Context, s *store.Session, opts NewOptions) error {
+	if opts.Continues != "" {
+		from, ok := a.store.Session(opts.Continues)
+		if !ok || from.Project != s.Project {
+			return fmt.Errorf("session %q: %w", opts.Continues, ErrNotFound)
+		}
+		s.Worktree, s.Branch, s.BranchFrom = from.Worktree, from.Branch, from.BranchFrom
+		return nil
+	}
+	if !opts.OwnBranch {
+		return nil
+	}
+	if st, err := a.sandbox.Status(ctx, s.Project); err == nil && st.Running && !a.holdsWorktrees(ctx, s.Project) {
+		// Started by an earlier Skybreaker: restart it onto one that can,
+		// unless that would interrupt something.
+		if a.busy(ctx, s.Project) {
+			return ErrNoWorktrees
+		}
+		if err := a.StopSandbox(ctx, s.Project); err != nil {
+			return err
+		}
+		if err := a.StartSandbox(ctx, s.Project); err != nil {
+			return err
+		}
+		a.Publish(Event{Type: "sandbox", Project: s.Project, Data: "restarted so sessions can have their own branch"})
+	}
+	s.Worktree = worktreeOf(s.ID)
+	s.Branch = ownBranch(s.Worktree)
+	return nil
+}
+
 // NewChat starts a chat session: the harness runs in its structured mode
 // and the UI draws the conversation. The sandbox and harness start on the
-// first message, or in the background now, so that message is quick.
-func (a *App) NewChat(ctx context.Context, project, harnessName string) (store.Session, error) {
+// first message, or in the background now, so that message is quick. Its
+// own worktree, if it has one, is made on that first start.
+func (a *App) NewChat(ctx context.Context, project, harnessName string, opts NewOptions) (store.Session, error) {
 	p, err := a.project(project)
 	if err != nil {
 		return store.Session{}, err
@@ -156,6 +203,9 @@ func (a *App) NewChat(ctx context.Context, project, harnessName string) (store.S
 	now := time.Now().UTC()
 	s := store.Session{ID: newSessionID(), Project: project, Harness: harnessName, Created: now, Status: store.StatusRunning,
 		Mode: store.ModeChat, State: store.ChatIdle, PermMode: chat.ModeAsk, Updated: now, Seen: now}
+	if err := a.placeSession(ctx, &s, opts); err != nil {
+		return store.Session{}, err
+	}
 	if err := a.store.CreateSession(s); err != nil {
 		return store.Session{}, err
 	}
@@ -173,7 +223,9 @@ func (a *App) NewChat(ctx context.Context, project, harnessName string) (store.S
 // ChatFork starts a chat that carries on from a copy of another's
 // conversation, which stays as it was. The copy shows the conversation so
 // far; its harness forks the original's on the first message. An ended
-// chat can be forked, to pick it up again.
+// chat can be forked, to pick it up again. A chat on its own branch forks
+// onto a new one, with a copy of its files as they are now, uncommitted
+// work included.
 func (a *App) ChatFork(ctx context.Context, id string) (store.Session, error) {
 	s, err := a.chatSession(id)
 	if err != nil {
@@ -199,13 +251,20 @@ func (a *App) ChatFork(ctx context.Context, id string) (store.Session, error) {
 	if s.Title != "" {
 		f.Title = s.Title + " (fork)"
 	}
+	if s.Worktree != "" {
+		if err := a.forkWorktree(ctx, s, &f); err != nil {
+			return store.Session{}, err
+		}
+	}
 	if f.PermMode == "" {
 		f.PermMode = chat.ModeAsk
 	}
 	if err := a.chat.Copy(s.ID, f.ID); err != nil {
+		a.dropWorktree(f)
 		return store.Session{}, err
 	}
 	if err := a.store.CreateSession(f); err != nil {
+		a.dropWorktree(f)
 		return store.Session{}, err
 	}
 	name := s.Title
@@ -351,12 +410,12 @@ func (a *App) ChatTerminal(ctx context.Context, id string) (store.Session, error
 	if err := a.EnsureTmux(ctx, s.Project); err != nil {
 		return store.Session{}, err
 	}
-	t := store.Session{ID: newSessionID(), Project: s.Project, Harness: s.Harness, Title: s.Title, Created: time.Now().UTC(), Status: store.StatusRunning, Parent: s.ID}
-	env := map[string]string{"SKYBREAKER_SESSION": t.ID}
-	for k, v := range m.Env {
-		env[k] = v
+	if err := a.ensureWorktree(ctx, &s, nil); err != nil {
+		return store.Session{}, err
 	}
-	if _, err := a.sandbox.Exec(ctx, s.Project, tmux.NewSession(t.ID, "/workspace", env, m.ResumeArgs(s.Resume, MCPPath))...); err != nil {
+	t := store.Session{ID: newSessionID(), Project: s.Project, Harness: s.Harness, Title: s.Title, Created: time.Now().UTC(), Status: store.StatusRunning, Parent: s.ID,
+		Worktree: s.Worktree, Branch: s.Branch, BranchFrom: s.BranchFrom}
+	if _, err := a.sandbox.Exec(ctx, s.Project, tmux.NewSession(t.ID, workdir(s), a.sessionEnv(t, m), m.ResumeArgs(s.Resume, MCPPath))...); err != nil {
 		return store.Session{}, fmt.Errorf("start %s terminal: %w", s.Harness, err)
 	}
 	if err := a.store.CreateSession(t); err != nil {
@@ -516,13 +575,47 @@ type FileChange struct {
 
 const maxReviewDiff = 2 << 20
 
-// Review runs git in the sandbox, never on the host.
+// Review is what the project's workspace has changed. It runs git in the
+// sandbox, never on the host.
 func (a *App) Review(ctx context.Context, project string) (Review, error) {
-	if _, err := a.project(project); err != nil {
+	p, err := a.project(project)
+	if err != nil {
 		return Review{}, err
 	}
+	return a.review(ctx, project, p.Branch, workspaceDir)
+}
+
+// ReviewSession is what a session has changed: in its own worktree, or the
+// workspace for a session without one.
+func (a *App) ReviewSession(ctx context.Context, id string) (Review, error) {
+	s, err := a.session(id)
+	if err != nil {
+		return Review{}, err
+	}
+	p, err := a.project(s.Project)
+	if err != nil {
+		return Review{}, err
+	}
+	if s.Worktree == "" {
+		return a.review(ctx, s.Project, p.Branch, workspaceDir)
+	}
+	if st, err := a.sandbox.Status(ctx, s.Project); err != nil || !st.Running {
+		return Review{}, errors.New("the project's sandbox is stopped: start it to see this chat's changes")
+	}
+	if ok, err := a.present(ctx, s.Project, s.Worktree+"/.git"); err != nil {
+		return Review{}, err
+	} else if !ok {
+		if s.Status == store.StatusRunning {
+			return Review{}, errors.New("this chat's branch is made when its agent first starts: send it a message")
+		}
+		return Review{}, fmt.Errorf("this chat ended and its copy of the repository was tidied away; its work is on branch %s", s.Branch)
+	}
+	return a.review(ctx, s.Project, p.Branch, s.Worktree)
+}
+
+func (a *App) review(ctx context.Context, project, defaultBranch, dir string) (Review, error) {
 	git := func(args ...string) (string, error) {
-		out, err := a.sandbox.Exec(ctx, project, GitArgs("/workspace", args...)...)
+		out, err := a.sandbox.Exec(ctx, project, GitArgs(dir, args...)...)
 		if errors.Is(err, sandbox.ErrOutputLimit) {
 			err = nil // a diff cut off by the runner is truncated below
 		}
@@ -533,9 +626,9 @@ func (a *App) Review(ctx context.Context, project string) (Review, error) {
 		return Review{}, fmt.Errorf("the workspace isn't a git repository yet: %w", err)
 	}
 	r := Review{Branch: strings.TrimSpace(branch), Commits: []Commit{}, Files: []FileChange{}}
-	// The base: where this branch left the remote's default branch.
+	// The base: where this branch left the project's branch on the remote.
 	base := ""
-	for _, ref := range []string{"@{upstream}", "origin/HEAD", "origin/main", "origin/master"} {
+	for _, ref := range []string{"@{upstream}", "origin/" + defaultBranch, "origin/HEAD", "origin/main", "origin/master"} {
 		if r.Branch != "HEAD" && ref == "@{upstream}" {
 			if up, err := git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"); err == nil && strings.TrimSpace(up) != "origin/"+r.Branch {
 				continue // a feature branch tracking itself: compare with the default branch
@@ -625,19 +718,27 @@ func countLines(diff string) (added, removed int) {
 const idleFor = 15 * time.Minute
 
 // RefreshSandboxes restarts running sandboxes whose image the weekly
-// rebuild has replaced, once nothing in them is in use: no live terminal,
+// rebuild has replaced, or that an earlier Skybreaker started without a
+// place for worktrees, once nothing in them is in use: no live terminal,
 // no scheduled run, no chat working or touched lately. Chats resume in the
 // new sandbox on their next message.
 func (a *App) RefreshSandboxes(ctx context.Context) {
 	for _, project := range slices.Sorted(maps.Keys(a.cfg.Projects)) {
 		stale, err := a.sandbox.ImageStale(ctx, project, a.cfg.Sandbox.Image)
-		if err != nil || !stale {
+		if err != nil {
 			continue
 		}
 		if st, err := a.sandbox.Status(ctx, project); err != nil || !st.Running || a.busy(ctx, project) {
 			continue
 		}
-		log.Printf("skybreaker: restarting %s onto the new sandbox image", project)
+		if !stale && a.holdsWorktrees(ctx, project) {
+			continue
+		}
+		why := "onto the new sandbox image"
+		if !stale {
+			why = "so sessions can have their own branch"
+		}
+		log.Printf("skybreaker: restarting %s %s", project, why)
 		if err := a.StopSandbox(ctx, project); err != nil {
 			log.Printf("skybreaker: refresh %s: %v", project, err)
 			continue
@@ -646,7 +747,7 @@ func (a *App) RefreshSandboxes(ctx context.Context) {
 			log.Printf("skybreaker: refresh %s: %v", project, err)
 			continue
 		}
-		a.Publish(Event{Type: "sandbox", Project: project, Data: "restarted onto the new sandbox image"})
+		a.Publish(Event{Type: "sandbox", Project: project, Data: "restarted " + why})
 	}
 }
 
@@ -682,9 +783,21 @@ func (a *App) markSwept(project string, v bool) {
 	a.swept[project] = v
 }
 
-// sessionEnded stops a project's containers when the session that just
-// ended was its last live one, and no scheduled run is going.
-func (a *App) sessionEnded(project string) {
+// sessionEnded tidies away the worktree of a session that just ended, if
+// it had one, and stops a project's containers when it was the last live
+// session and no scheduled run is going.
+func (a *App) sessionEnded(s store.Session) {
+	project := s.Project
+	if s.Worktree != "" {
+		a.bg.Go(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			st, err := a.sandbox.Status(ctx, project)
+			cancel()
+			if err == nil && st.Running {
+				a.tidyWorktrees(context.Background(), project, false)
+			}
+		})
+	}
 	for _, x := range a.store.ListSessions(project) {
 		if x.Status == store.StatusRunning {
 			return
