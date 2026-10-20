@@ -12,23 +12,21 @@ In DigitalOcean: **API → Tokens → Generate New Token → Custom Scopes**. Gr
 
 **Settings → Secrets → Add secret.**
 
-<p align="center">
-  <img src="img/do-1-secrets.png" alt="Settings, with Add secret outlined" width="260">
-  <img src="img/do-2-add-secret.png" alt="The Add a secret sheet, filled in" width="260">
-  <img src="img/do-3-secret-saved.png" alt="The saved do_token secret" width="260">
-</p>
+![Settings, with Settings and Add secret outlined](img/do-1-secrets.png)
+
+![The Add a secret dialog, filled in](img/do-2-add-secret.png)
 
 1. **Name:** `do_token`
 2. **Value:** your token (never shown again)
 3. **Hosts:** `api.digitalocean.com` (the only place it can be sent)
 
+![The saved do_token secret](img/do-3-secret-saved.png)
+
 ## 3. Make the bundle
 
 **Settings → Bundles → New bundle.**
 
-<p align="center">
-  <img src="img/do-4-new-bundle.png" alt="The New bundle sheet, with name, host, rules and secret numbered" width="260">
-</p>
+![The New bundle dialog, with name, host, rules and secret numbered](img/do-4-new-bundle.png)
 
 1. **Name:** `digitalocean`
 2. **Host:** `api.digitalocean.com`, **Inspected**
@@ -46,10 +44,9 @@ In DigitalOcean: **API → Tokens → Generate New Token → Custom Scopes**. Gr
 
 **Settings → Project access → Edit** on the project, tick **digitalocean**, **Review → Save.**
 
-<p align="center">
-  <img src="img/do-5-project-access.png" alt="Project access with digitalocean ticked" width="260">
-  <img src="img/do-6-access-review.png" alt="The review: the project can now reach api.digitalocean.com" width="260">
-</p>
+![Project access with digitalocean ticked](img/do-5-project-access.png)
+
+![The review: the project can now reach api.digitalocean.com](img/do-6-access-review.png)
 
 > [!IMPORTANT]
 > Changes apply when Skybreaker restarts, which it does **once no agent is working**. A busy agent, even the one you want to use DigitalOcean, delays it.
@@ -78,9 +75,7 @@ DIGITALOCEAN_ACCESS_TOKEN: skybreaker-injected
 
 Changes show up as an approval card:
 
-<p align="center">
-  <img src="img/do-7-approval.png" alt="An approval card for a droplet resize" width="260">
-</p>
+![An approval card for a droplet resize](img/do-7-approval.png)
 
 1. The request, as the broker parsed it
 2. The rule that asked you
