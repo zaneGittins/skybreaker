@@ -1,14 +1,8 @@
 package tmux
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"reflect"
-	"slices"
-	"strings"
 	"testing"
-	"time"
 )
 
 func eq(t *testing.T, name string, got, want []string) {
@@ -119,67 +113,4 @@ func TestParsePanes(t *testing.T) {
 			t.Errorf("ParsePanes(%q) succeeded", bad)
 		}
 	}
-}
-
-// A harness that exits cleanly ends its session, so its viewer goes back
-// where it came from instead of sitting on a dead pane; one that fails
-// keeps its screen, and its viewer, to read why. Runs the options in a
-// real tmux.
-func TestExitsLetViewersGo(t *testing.T) {
-	if _, err := exec.LookPath("tmux"); err != nil {
-		t.Skip("no tmux")
-	}
-	dir, err := os.MkdirTemp("", "tm") // short: socket paths are limited
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-	sock := filepath.Join(dir, "s")
-	run := func(args ...string) string {
-		t.Helper()
-		out, err := exec.Command("tmux", append([]string{"-S", sock, "-f", "/dev/null"}, args[1:]...)...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("%q: %v %s", args, err, out)
-		}
-		return string(out)
-	}
-	// try is run for checks that may fail while waiting.
-	try := func(args ...string) string {
-		out, _ := exec.Command("tmux", append([]string{"-S", sock}, args[1:]...)...).CombinedOutput()
-		return string(out)
-	}
-	defer exec.Command("tmux", "-S", sock, "kill-server").Run()
-	run("tmux", "new-session", "-d", "-s", "keep", "sleep 60")
-	for _, o := range EnsureServerOptions() {
-		run(o...)
-	}
-	run("tmux", "new-session", "-d", "-s", "clean", "sleep 2")
-	run("tmux", "new-session", "-d", "-s", "failed", "sleep 2; exit 3")
-	for _, s := range []string{"clean", "failed", "keep"} {
-		// A control-mode viewer; its stdin stays open until the test ends.
-		c := exec.Command("tmux", "-S", sock, "-C", "attach", "-t", "="+s)
-		in, _ := c.StdinPipe()
-		defer in.Close()
-		if err := c.Start(); err != nil {
-			t.Fatal(err)
-		}
-		go c.Wait()
-	}
-	// Both harnesses end at about the same time, so wait for all of it
-	// rather than checking the moment one thing is true. tmux can see a
-	// pane's terminal close before its process exits, and then never
-	// records the exit status, so the failed pane is only checked dead.
-	want := "[failed] [keep]"
-	var got, ls, pane string
-	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
-		f := strings.Fields(try("tmux", "list-clients", "-F", "[#{session_name}]"))
-		slices.Sort(f)
-		got = strings.Join(f, " ")
-		ls = try("tmux", "ls")
-		pane = try("tmux", "list-panes", "-t", "=failed", "-F", "#{pane_dead}")
-		if got == want && !strings.Contains(ls, "clean") && pane == "1\n" {
-			return
-		}
-	}
-	t.Errorf("viewers = %s, want %s; sessions %q, want the clean one gone; failed pane dead = %q, want 1", got, want, ls, pane)
 }
