@@ -48,7 +48,7 @@ func (s *fakeSettings) Saved() (*config.Config, config.AppFiles, error) {
 	if err != nil {
 		return nil, config.AppFiles{}, err
 	}
-	f, err := config.ReadAppFiles(s.path)
+	f, err := config.ReadAppFiles(c.AppPaths())
 	return c, f, err
 }
 
@@ -212,7 +212,7 @@ func TestAccessAPI(t *testing.T) {
 	if code, out := f.do(t, "PUT", "/api/bundles/openai", bundle, nil); code != 200 {
 		t.Fatalf("bundle: %d %s", code, out)
 	}
-	before, _ := os.ReadFile(filepath.Join(filepath.Dir(s.path), "access.json"))
+	before, _ := os.ReadFile(filepath.Join(d0(t, s.path), "access.json"))
 	code, out := f.do(t, "PUT", "/api/projects/orbit/access", `{"capabilities":["openai"],"allow":[{"host":"pypi.org","mode":"tunnel"}],"dry_run":true}`, nil)
 	var r struct {
 		Restart string `json:"restart"`
@@ -229,7 +229,7 @@ func TestAccessAPI(t *testing.T) {
 	if code != 200 || r.Restart != "" || len(r.Review) != 1 || r.Review[0].Project != "orbit" || len(r.Review[0].Added) != 2 || r.Review[0].Added[0].Target != "api.openai.com" || r.Review[0].Added[0].Bundle != "openai" {
 		t.Fatalf("review: %d %s", code, out)
 	}
-	if after, _ := os.ReadFile(filepath.Join(filepath.Dir(s.path), "access.json")); string(after) != string(before) {
+	if after, _ := os.ReadFile(filepath.Join(d0(t, s.path), "access.json")); string(after) != string(before) {
 		t.Fatal("a dry run saved")
 	}
 	if code, out := f.do(t, "PUT", "/api/projects/orbit/access", `{"capabilities":["openai"],"allow":[{"host":"pypi.org","mode":"tunnel"}]}`, nil); code != 200 || !strings.Contains(out, `"restart":"now"`) {
@@ -343,7 +343,8 @@ func TestGitHubAppCreation(t *testing.T) {
 	if _, loc := noRedirect("/api/github-app/created?code=good-code&state=" + url.QueryEscape(state)); !strings.Contains(loc, "github_error=") {
 		t.Fatalf("state reused: %s", loc)
 	}
-	files, _ := config.ReadAppFiles(s.path)
+	saved, _ := config.Load(s.path)
+	files, _ := config.ReadAppFiles(saved.AppPaths())
 	if len(files.Secrets.Secrets) != 1 || files.Secrets.Secrets[0].Name != "github_app" || files.Secrets.Secrets[0].GitHubApp.AppID != "42" || files.Secrets.Secrets[0].App.Slug != "skybreaker-abc" {
 		t.Fatalf("saved %+v", files.Secrets)
 	}
@@ -413,4 +414,14 @@ func TestGitHubAppNeedsUIURL(t *testing.T) {
 	if v := f.settings(t); v.GitHub.CanCreate {
 		t.Fatalf("%+v", v.GitHub)
 	}
+}
+
+// d0 is where the app's files for the config at path go.
+func d0(t *testing.T, path string) string {
+	t.Helper()
+	c, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Dir(c.AppPaths().Access)
 }

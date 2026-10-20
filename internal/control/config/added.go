@@ -12,8 +12,8 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/names"
 )
 
-// Added is a project created in the app, kept in projects.json beside the
-// config file. It holds a repo, its agents, a board key and the names of
+// Added is a project created in the app, kept in projects.json (see
+// Paths). It holds a repo, its agents, a board key and the names of
 // the bundles it was given. Hosts and rules the app grants live in
 // access.json (see Access), where they are checked as the app's; env and
 // subnets stay in the file you edit.
@@ -29,9 +29,6 @@ type addedFile struct {
 	Projects map[string]*Added `json:"projects"`
 }
 
-// ProjectsPath is where projects created in the app are kept.
-func ProjectsPath(configPath string) string { return PathsFor(configPath).Projects }
-
 // Added reports whether a project was created in the app.
 func (c *Config) Added(name string) bool { return c.added[name] }
 
@@ -41,8 +38,11 @@ func readAdded(path string) (addedFile, error) {
 	return f, err
 }
 
-// readJSON decodes a file the app writes; a missing one is empty.
+// readJSON decodes a file the app writes; a missing one (or none) is empty.
 func readJSON(path string, v any) error {
+	if path == "" {
+		return nil
+	}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

@@ -11,9 +11,16 @@ import (
 
 func mainConfig(t *testing.T) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "skybreaker.json")
-	os.WriteFile(p, []byte(good), 0o600)
+	dir := t.TempDir()
+	p := filepath.Join(dir, "skybreaker.json")
+	os.WriteFile(p, []byte(strings.Replace(good, `"/var/lib/skybreaker"`, `"`+filepath.Join(dir, "data")+`"`, 1)), 0o600)
 	return p
+}
+
+// appPaths are where the app's files for the config at path go.
+func appPaths(t *testing.T, path string) Paths {
+	t.Helper()
+	return mustLoad(t, path).AppPaths()
 }
 
 func TestAddProject(t *testing.T) {
@@ -33,7 +40,7 @@ func TestAddProject(t *testing.T) {
 	if !c.Subnet("comet").IsValid() || c.Policy == nil {
 		t.Fatal("added project not compiled like the rest")
 	}
-	fi, _ := os.Stat(ProjectsPath(path))
+	fi, _ := os.Stat(appPaths(t, path).Projects)
 	if fi.Mode().Perm() != 0o600 {
 		t.Fatalf("projects.json mode %v", fi.Mode().Perm())
 	}
@@ -43,7 +50,7 @@ func TestAddProjectRefusals(t *testing.T) {
 	path := mainConfig(t)
 	ok := Added{Repo: "zaneGittins/comet", Harnesses: []string{"claude"}, Capabilities: []string{"github"}}
 	AddProject(path, "comet", ok, nil)
-	before, _ := os.ReadFile(ProjectsPath(path))
+	before, _ := os.ReadFile(appPaths(t, path).Projects)
 	checkFails := func(*Config) error { return errors.New("secret github_app isn't bound to api.github.com") }
 	for name, c := range map[string]struct {
 		name  string
@@ -67,7 +74,7 @@ func TestAddProjectRefusals(t *testing.T) {
 			t.Errorf("%s: %v, want %q", name, err, c.want)
 		}
 	}
-	if after, _ := os.ReadFile(ProjectsPath(path)); string(after) != string(before) {
+	if after, _ := os.ReadFile(appPaths(t, path).Projects); string(after) != string(before) {
 		t.Fatal("a refused project changed projects.json")
 	}
 }
@@ -84,7 +91,9 @@ func TestProjectsFileIsStrict(t *testing.T) {
 		"orbit":     `{"projects": {"orbit": {"repo": "a/b", "harnesses": ["claude"]}}}`,
 	} {
 		path := mainConfig(t)
-		os.WriteFile(ProjectsPath(path), []byte(body), 0o600)
+		ps := appPaths(t, path)
+		os.MkdirAll(filepath.Dir(ps.Projects), 0o700)
+		os.WriteFile(ps.Projects, []byte(body), 0o600)
 		if _, err := Load(path); err == nil {
 			t.Errorf("%s: loaded", name)
 		}

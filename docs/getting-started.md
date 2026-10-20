@@ -87,7 +87,7 @@ Most of it can also be changed in the app, by the users in `admins` (everyone in
 - **Settings** creates the GitHub App, adds secrets (each bound to the hosts you list, and never shown again), makes bundles, and adds bundles and hosts to any project. Every change to what a project reaches is shown as the broker compiles it before you save.
 - **New project** on the home page creates a project from the bundles there are.
 
-The app saves beside the config file, in `projects.json`, `access.json` and `app-secrets.json`, and only ever adds to it: what the file says is shown read-only, and a name in both is an error. Changes apply when Skybreaker restarts itself, once no agent is working. `app_settings: false` in the config file turns changes in the app off.
+The app saves in the data directory, in `settings/` (`projects.json`, `access.json` and `app-secrets.json`), and only ever adds to the config file: what the file says is shown read-only, and a name in both is an error. Changes apply when Skybreaker restarts itself, once no agent is working. `app_settings: false` in the config file turns changes in the app off.
 
 ## Updating
 

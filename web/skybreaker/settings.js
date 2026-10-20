@@ -2,7 +2,7 @@
 
 // Settings: the GitHub App, secrets, bundles and what each project may
 // reach. The config file stays the base and is shown read-only; what's
-// changed here is saved beside it and applies when Skybreaker restarts,
+// changed here is saved in the data directory and applies when Skybreaker restarts,
 // once no agent is working. Secret values go in and never come back out.
 
 Object.assign(ICON, {
@@ -27,7 +27,7 @@ async function renderSettings(seq) {
 
   const ed = d.editable;
   const head = el('section.inbox-head', null, el('div', null, el('h1', null, 'Settings'),
-    el('p', null, 'What your agents can reach, and with which credentials. Your config file is the base, shown here read-only; changes made here are saved beside it.')));
+    el('p', null, 'What your agents can reach, and with which credentials. Your config file is the base, shown here read-only; changes made here add to it.')));
   const banners = [
     d.pending ? el('p.set-banner', null, el('span.spinner'), 'Saved. Skybreaker restarts to apply it once no agent is working.') : null,
     !d.admin ? el('p.set-banner', null, 'Only admins can change settings.')

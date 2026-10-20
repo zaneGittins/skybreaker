@@ -144,14 +144,23 @@ var (
 	branchRe  = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$`)
 )
 
-// Load reads the config file and, beside it, what the app adds: projects,
+// Load reads the config file and what the app adds to it: projects,
 // access and secrets (see Paths).
-func Load(path string) (*Config, error) { return loadWith(path, PathsFor(path)) }
+func Load(path string) (*Config, error) { return loadWith(path, nil) }
 
-func loadWith(path string, paths Paths) (*Config, error) {
+// loadWith loads the config file with the app's files, or with staged ones
+// that Edit is checking.
+func loadWith(path string, staged *Paths) (*Config, error) {
 	var c Config
 	if err := configfile.Load(path, &c); err != nil {
 		return nil, err
+	}
+	paths := c.AppPaths()
+	switch {
+	case staged != nil:
+		paths = *staged
+	case !filepath.IsAbs(c.DataDir):
+		paths = Paths{} // validate refuses it; read nothing relative
 	}
 	c.fileAccess, c.appBundles = map[string]Grant{}, map[string]bool{}
 	for name, p := range c.Projects {

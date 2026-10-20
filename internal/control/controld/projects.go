@@ -64,7 +64,7 @@ func (d *settings) Saved() (*config.Config, config.AppFiles, error) {
 	if err != nil {
 		return nil, config.AppFiles{}, err
 	}
-	f, err := config.ReadAppFiles(d.configPath)
+	f, err := config.ReadAppFiles(c.AppPaths())
 	return c, f, err
 }
 

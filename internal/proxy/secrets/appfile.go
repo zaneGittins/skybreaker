@@ -12,8 +12,8 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/configfile"
 )
 
-// AppFile is the secrets added in Skybreaker's settings, kept beside the
-// config file. The settings never show a value again: only its name, hosts
+// AppFile is the secrets added in Skybreaker's settings, kept in the data
+// directory. The settings never show a value again: only its name, hosts
 // and a fingerprint.
 type AppFile struct {
 	// Key keys the fingerprints, so one can't be checked against a guess
@@ -37,9 +37,12 @@ type AppInfo struct {
 	HTMLURL string `json:"html_url"`
 }
 
-// ReadAppFile reads the app's secrets; a missing file has none.
+// ReadAppFile reads the app's secrets; a missing file (or none) has none.
 func ReadAppFile(path string) (AppFile, error) {
 	var f AppFile
+	if path == "" {
+		return f, nil
+	}
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return f, nil
 	}

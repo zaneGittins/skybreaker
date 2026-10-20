@@ -23,16 +23,22 @@ import (
 // app_settings: false.
 var ErrSettingsOff = errors.New("settings can't be changed in the app here (app_settings: false in the config file)")
 
-// Paths are the files the app writes, beside the config file. Each is read
-// after the config file and can only add to it.
+// Paths are the files the app writes, in <data_dir>/settings. Each is read
+// after the config file and can only add to it. They live in the data
+// directory because the service can't write its config directory (systemd
+// keeps /etc read-only to it), so nothing it does can change the file it
+// reads admins and app_settings from.
 type Paths struct {
 	Projects string // projects created in the app
 	Access   string // the app's bundles, and what it grants each project
 	Secrets  string // secrets added in the app (never shown again)
 }
 
-func PathsFor(configPath string) Paths {
-	dir := filepath.Dir(configPath)
+// AppPaths are where this configuration's app files are.
+func (c *Config) AppPaths() Paths { return pathsIn(c.DataDir) }
+
+func pathsIn(dataDir string) Paths {
+	dir := filepath.Join(dataDir, "settings")
 	return Paths{
 		Projects: filepath.Join(dir, "projects.json"),
 		Access:   filepath.Join(dir, "access.json"),
@@ -64,9 +70,7 @@ type AppFiles struct {
 }
 
 // ReadAppFiles reads the app's files as they are on disk.
-func ReadAppFiles(configPath string) (AppFiles, error) { return readAppFiles(PathsFor(configPath)) }
-
-func readAppFiles(p Paths) (AppFiles, error) {
+func ReadAppFiles(p Paths) (AppFiles, error) {
 	var f AppFiles
 	a, err := readAdded(p.Projects)
 	if err != nil {
@@ -197,14 +201,17 @@ var editMu sync.Mutex
 func Edit(configPath string, change func(*AppFiles) error, check func(*Config) error, dry bool) (before, after *Config, err error) {
 	editMu.Lock()
 	defer editMu.Unlock()
-	paths := PathsFor(configPath)
-	if before, err = loadWith(configPath, paths); err != nil {
+	if before, err = loadWith(configPath, nil); err != nil {
 		return nil, nil, err
 	}
 	if !before.SettingsInApp() {
 		return nil, nil, ErrSettingsOff
 	}
-	f, err := readAppFiles(paths)
+	paths := before.AppPaths()
+	if err := os.MkdirAll(filepath.Dir(paths.Access), 0o700); err != nil {
+		return nil, nil, err
+	}
+	f, err := ReadAppFiles(paths)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -249,7 +256,7 @@ func Edit(configPath string, change func(*AppFiles) error, check func(*Config) e
 		renames = append(renames, [2]string{tmp, *x.path})
 		*x.path = tmp
 	}
-	if after, err = loadWith(configPath, staged); err != nil {
+	if after, err = loadWith(configPath, &staged); err != nil {
 		return nil, nil, err
 	}
 	if check != nil {

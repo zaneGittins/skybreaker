@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -13,6 +14,30 @@ import (
 )
 
 var openai = []*policy.Entry{{Host: "api.openai.com", Mode: policy.ModeMITM, Methods: []string{"GET", "POST"}}}
+
+// The app writes in the data directory, never beside the config file: the
+// service can't write /etc/skybreaker.
+func TestAppFilesInDataDir(t *testing.T) {
+	path := mainConfig(t)
+	os.MkdirAll(mustLoad(t, path).DataDir, 0o700) // the service makes it at start
+	if err := os.Chmod(filepath.Dir(path), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(filepath.Dir(path), 0o700)
+	if _, _, err := Edit(path, func(f *AppFiles) error {
+		f.SetGrant("orbit", Grant{Allow: []*policy.Entry{{Host: "pypi.org", Mode: policy.ModeTunnel}}})
+		return nil
+	}, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	c := mustLoad(t, path)
+	if filepath.Dir(c.AppPaths().Access) != filepath.Join(c.DataDir, "settings") {
+		t.Fatalf("paths %+v", c.AppPaths())
+	}
+	if pp, _ := c.Policy.Project("orbit"); pp.Host("pypi.org") == nil {
+		t.Fatal("not saved")
+	}
+}
 
 func TestEditAccess(t *testing.T) {
 	path := mainConfig(t)
@@ -40,11 +65,11 @@ func TestEditAccess(t *testing.T) {
 			t.Fatal("AppBundle")
 		}
 	}
-	fi, _ := os.Stat(PathsFor(path).Access)
+	fi, _ := os.Stat(appPaths(t, path).Access)
 	if fi == nil || fi.Mode().Perm() != 0o600 {
 		t.Fatal("access.json isn't 0600")
 	}
-	f, _ := ReadAppFiles(path)
+	f, _ := ReadAppFiles(appPaths(t, path))
 	if g := f.Grant("orbit"); !slices.Equal(g.Capabilities, []string{"openai"}) {
 		t.Fatalf("grant %+v", g)
 	}
@@ -57,7 +82,7 @@ func TestEditAccessOfAddedProject(t *testing.T) {
 	if err := AddProject(path, "comet", Added{Repo: "a/comet", Harnesses: []string{"claude"}, Capabilities: []string{"github"}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	f, _ := ReadAppFiles(path)
+	f, _ := ReadAppFiles(appPaths(t, path))
 	if g := f.Grant("comet"); !slices.Equal(g.Capabilities, []string{"github"}) {
 		t.Fatalf("grant %+v", g)
 	}
@@ -71,7 +96,7 @@ func TestEditAccessOfAddedProject(t *testing.T) {
 	if p := after.Projects["comet"]; !slices.Equal(p.Capabilities, []string{"tracker"}) {
 		t.Fatalf("comet %+v", p.Capabilities)
 	}
-	if f, _ := ReadAppFiles(path); len(f.Projects["comet"].Capabilities) != 0 {
+	if f, _ := ReadAppFiles(appPaths(t, path)); len(f.Projects["comet"].Capabilities) != 0 {
 		t.Fatal("projects.json still grants")
 	}
 }
@@ -80,7 +105,7 @@ func TestEditRefusals(t *testing.T) {
 	path := mainConfig(t)
 	snapshot := func() string {
 		var s string
-		for _, p := range []string{PathsFor(path).Projects, PathsFor(path).Access, PathsFor(path).Secrets} {
+		for _, p := range []string{appPaths(t, path).Projects, appPaths(t, path).Access, appPaths(t, path).Secrets} {
 			b, _ := os.ReadFile(p)
 			s += string(b) + "|"
 		}
@@ -161,7 +186,7 @@ func TestEditSecretsReachCheck(t *testing.T) {
 		t.Fatalf("%v saw %q", err, saw)
 	}
 	c := mustLoad(t, path)
-	if c.AppSecretsFile != PathsFor(path).Secrets {
+	if c.AppSecretsFile != appPaths(t, path).Secrets {
 		t.Fatalf("AppSecretsFile %q", c.AppSecretsFile)
 	}
 	fi, _ := os.Stat(c.AppSecretsFile)
@@ -174,7 +199,8 @@ func TestEditSecretsReachCheck(t *testing.T) {
 // only ever add, so dropping them can't widen anything.
 func TestGrantForRemovedProject(t *testing.T) {
 	path := mainConfig(t)
-	os.WriteFile(PathsFor(path).Access, []byte(`{"projects": {"gone": {"capabilities": ["github"]}}}`), 0o600)
+	os.MkdirAll(filepath.Dir(appPaths(t, path).Access), 0o700)
+	os.WriteFile(appPaths(t, path).Access, []byte(`{"projects": {"gone": {"capabilities": ["github"]}}}`), 0o600)
 	if _, err := Load(path); err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +212,8 @@ func TestAccessFileIsStrict(t *testing.T) {
 		"a route":       `{"capabilities": {"x": [{"route": "/x", "upstream": "https://x.example", "rules": [{"match": "GET /**", "action": "auto"}]}]}}`,
 	} {
 		path := mainConfig(t)
-		os.WriteFile(PathsFor(path).Access, []byte(body), 0o600)
+		os.MkdirAll(filepath.Dir(appPaths(t, path).Access), 0o700)
+		os.WriteFile(appPaths(t, path).Access, []byte(body), 0o600)
 		if _, err := Load(path); err == nil {
 			t.Errorf("%s: loaded", name)
 		}
