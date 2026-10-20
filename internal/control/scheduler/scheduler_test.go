@@ -16,6 +16,7 @@ import (
 
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/config"
+	"github.com/zaneGittins/skybreaker/internal/control/harness"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 )
 
@@ -52,6 +53,10 @@ func (b *fakeBackend) StartSandbox(context.Context, string) error {
 	return nil
 }
 func (b *fakeBackend) ProjectDir(p string) string { return filepath.Join(b.dir, "projects", p) }
+
+func (b *fakeBackend) ProjectMCP(p string) harness.MCP {
+	return harness.MCP{Config: "/etc/skybreaker/mcp.json", URL: "http://broker:8402/mcp/" + p + "/tok/-"}
+}
 
 func (b *fakeBackend) Exec(_ context.Context, project string, args ...string) ([]byte, error) {
 	b.mu.Lock()
@@ -95,7 +100,7 @@ func setup(t *testing.T, jobs string) (*Scheduler, *fakeBackend, *store.Store) {
 	cfgJSON := fmt.Sprintf(`{
 	  "data_dir": %q, "users": ["zane@example.com"],
 	  "sandbox": {"image": "img"},
-	  "projects": {"orbit": {"repo": "zaneGittins/orbit", "harnesses": ["claude", "pi"]}},
+	  "projects": {"orbit": {"repo": "zaneGittins/orbit", "harnesses": ["claude", "pi", "codex"]}},
 	  "jobs": %s
 	}`, dir, jobs)
 	p := filepath.Join(dir, "skybreaker.json")
@@ -159,6 +164,39 @@ func TestTriggerRun(t *testing.T) {
 	}
 	if b.started == 0 {
 		t.Error("sandbox not started")
+	}
+}
+
+func TestCodexBoardRunGetsTheBoard(t *testing.T) {
+	s, b, _ := setup(t, `[{"name": "codex-board", "project": "orbit", "harness": "codex", "schedule": "0 2 * * *", "kind": "board"}]`)
+	if _, err := s.Trigger(context.Background(), "codex-board"); err != nil {
+		t.Fatal(err)
+	}
+	s.Wait()
+	win := b.find("new-window")
+	if len(win) != 1 {
+		t.Fatalf("new-window calls %d", len(win))
+	}
+	if i := slices.Index(win[0], `mcp_servers.skybreaker={url="http://broker:8402/mcp/orbit/tok/-", default_tools_approval_mode="approve"}`); i < 1 || win[0][i-1] != "-c" || !slices.Contains(win[0], "exec") {
+		t.Errorf("codex run isn't given Skybreaker's MCP server: %v", win[0])
+	}
+}
+
+func TestJobThatCantRunFailsSayingWhy(t *testing.T) {
+	s, b, st := setup(t, nightly)
+	j, _ := s.cfg.Job("nightly")
+	j.Problem = "harness claude isn't given Skybreaker's MCP server, which a board job needs"
+	run, err := s.Trigger(context.Background(), "nightly")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Wait()
+	got, _ := st.Run(run.ID)
+	if got.Status != store.RunFailed || !strings.Contains(got.Error, "board job needs") {
+		t.Errorf("run = %+v", got)
+	}
+	if len(b.find("new-window")) != 0 {
+		t.Error("the harness ran anyway")
 	}
 }
 

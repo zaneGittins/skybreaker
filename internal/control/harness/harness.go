@@ -38,7 +38,8 @@ type Manifest struct {
 	// conversation in its structured mode; empty means terminal only.
 	Chat string `json:"chat,omitempty" yaml:"chat,omitempty"`
 	// Resume is the TUI command that continues a chat's conversation,
-	// with {resume} and {mcp_config}; a chat opened in a terminal runs it.
+	// with {resume}, {mcp_config} and {mcp_url}; a chat opened in a
+	// terminal runs it.
 	Resume []string `json:"resume,omitempty" yaml:"resume,omitempty"`
 }
 
@@ -48,11 +49,24 @@ var (
 	chats        = []string{"", "claude", "codex"}
 	validName    = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 	placeholder  = regexp.MustCompile(`\{[a-z_]+\}`)
-	placeholders = []string{"{prompt}", "{budget}", "{allowed_tools}", "{mcp_config}", "{model}"}
+	placeholders = []string{"{prompt}", "{budget}", "{allowed_tools}", "{mcp_config}", "{mcp_url}", "{model}"}
+	// mcpFlags are the placeholders that hand a harness Skybreaker's MCP
+	// server: a config file naming it, or its URL.
+	mcpFlags = []string{"{mcp_config}", "{mcp_url}"}
 )
 
 // Shell is the builtin harness every project gets.
 const Shell = "shell"
+
+// codexMCP is the -c override that names Skybreaker's MCP server to Codex.
+// In a terminal, Codex asks you before running its tools.
+const codexMCP = `mcp_servers.skybreaker.url="{mcp_url}"`
+
+// codexRunMCP is codexMCP for a scheduled run, where nobody can answer:
+// codex exec never asks, so it would refuse every tool that changes
+// anything (claim_item, say). The board's tools are scoped to the project,
+// so a run may use them as a Claude run may with allowed_tools.
+const codexRunMCP = `mcp_servers.skybreaker={url="{mcp_url}", default_tools_approval_mode="approve"}`
 
 // Builtins returns fresh copies of the built-in manifests. Check the flags
 // against the installed CLI versions (skybreaker-sandbox-update does, for the
@@ -83,15 +97,17 @@ func Builtins() map[string]Manifest {
 			Name:        "codex",
 			Description: "OpenAI Codex CLI",
 			Install:     "npm install -g @openai/codex",
-			TUI:         []string{"codex", "--no-alt-screen"},
-			Headless: []string{"codex", "exec", "--json", "--sandbox", "workspace-write",
+			// Skybreaker's MCP server goes in as a config override, as the
+			// chat driver's does: Codex's config is the agent's to edit.
+			TUI: []string{"codex", "-c", codexMCP, "--no-alt-screen"},
+			Headless: []string{"codex", "exec", "--json", "--sandbox", "workspace-write", "-c", codexRunMCP,
 				"--model", "{model}", "{prompt}"},
 			Approval: "codex-app-server",
 			Login:    []string{".codex"},
 			Egress:   []string{"api.openai.com", "chatgpt.com"},
 			Result:   "codex-json",
 			Chat:     "codex",
-			Resume:   []string{"codex", "resume", "{resume}", "--no-alt-screen"},
+			Resume:   []string{"codex", "resume", "-c", codexMCP, "{resume}", "--no-alt-screen"},
 		},
 		"pi": {
 			Name:        "pi",
@@ -131,15 +147,15 @@ func (m Manifest) Validate() error {
 	}
 	for _, arg := range m.TUI {
 		for _, p := range placeholder.FindAllString(arg, -1) {
-			if p != "{mcp_config}" {
-				return fmt.Errorf("harness %s: the tui command takes only {mcp_config}, not %s", m.Name, p)
+			if !slices.Contains(mcpFlags, p) {
+				return fmt.Errorf("harness %s: the tui command takes only {mcp_config} and {mcp_url}, not %s", m.Name, p)
 			}
 		}
 	}
 	for _, arg := range m.Resume {
 		for _, p := range placeholder.FindAllString(arg, -1) {
-			if p != "{resume}" && p != "{mcp_config}" {
-				return fmt.Errorf("harness %s: the resume command takes only {resume} and {mcp_config}, not %s", m.Name, p)
+			if p != "{resume}" && !slices.Contains(mcpFlags, p) {
+				return fmt.Errorf("harness %s: the resume command takes only {resume}, {mcp_config} and {mcp_url}, not %s", m.Name, p)
 			}
 		}
 	}
@@ -169,14 +185,36 @@ func (m Manifest) Validate() error {
 	return nil
 }
 
+// MCP is how a harness reaches Skybreaker's MCP server: a config file
+// naming it (Claude's --mcp-config) and its URL.
+type MCP struct {
+	Config string
+	URL    string
+}
+
 // RunOptions fill a headless command template.
 type RunOptions struct {
 	Prompt       string
 	BudgetUSD    float64
 	AllowedTools []string
-	MCPConfig    string
+	MCP          MCP
 	Model        string
 }
+
+// Takes reports whether the headless command has placeholder p, so a job
+// setting that fills it has an effect.
+func (m Manifest) Takes(p string) bool {
+	for _, arg := range m.Headless {
+		if slices.Contains(placeholder.FindAllString(arg, -1), p) {
+			return true
+		}
+	}
+	return false
+}
+
+// TakesMCP reports whether the headless command is given Skybreaker's MCP
+// server, which board jobs need.
+func (m Manifest) TakesMCP() bool { return m.Takes("{mcp_config}") || m.Takes("{mcp_url}") }
 
 func (m Manifest) endsOptionsBeforePrompt() bool {
 	i := slices.Index(m.Headless, "{prompt}")
@@ -184,7 +222,7 @@ func (m Manifest) endsOptionsBeforePrompt() bool {
 }
 
 // HeadlessArgs fills the headless template (see fill). Placeholders are
-// {prompt}, {budget}, {allowed_tools}, {mcp_config} and {model}.
+// {prompt}, {budget}, {allowed_tools}, {mcp_config}, {mcp_url} and {model}.
 func (m Manifest) HeadlessArgs(o RunOptions) ([]string, error) {
 	if len(m.Headless) == 0 {
 		return nil, fmt.Errorf("harness %s: no headless command", m.Name)
@@ -200,7 +238,8 @@ func (m Manifest) HeadlessArgs(o RunOptions) ([]string, error) {
 	values := map[string]string{
 		"{prompt}":        o.Prompt,
 		"{allowed_tools}": strings.Join(o.AllowedTools, ","),
-		"{mcp_config}":    o.MCPConfig,
+		"{mcp_config}":    o.MCP.Config,
+		"{mcp_url}":       plainURL(o.MCP.URL),
 		"{model}":         o.Model,
 	}
 	if o.BudgetUSD > 0 {
@@ -209,19 +248,32 @@ func (m Manifest) HeadlessArgs(o RunOptions) ([]string, error) {
 	return fill(m.Headless, values), nil
 }
 
-// TUIArgs is the interactive command, with {mcp_config} filled in or, when
-// the project has none, dropped with its flag.
-func (m Manifest) TUIArgs(mcpConfig string) []string {
-	return fill(m.TUI, map[string]string{"{mcp_config}": mcpConfig})
+// TUIArgs is the interactive command, with Skybreaker's MCP server filled
+// in or, when there is none, dropped with its flag.
+func (m Manifest) TUIArgs(mcp MCP) []string {
+	return fill(m.TUI, map[string]string{"{mcp_config}": mcp.Config, "{mcp_url}": plainURL(mcp.URL)})
 }
 
 // ResumeArgs is the TUI command that continues conversation id, or the
-// plain TUI when there is no conversation or no resume command.
-func (m Manifest) ResumeArgs(id, mcpConfig string) []string {
-	if id == "" || len(m.Resume) == 0 {
-		return m.TUIArgs(mcpConfig)
+// plain TUI when there is no conversation or no resume command. The id is
+// the harness's, read from the sandbox: one that would pass for a flag
+// isn't resumed.
+func (m Manifest) ResumeArgs(id string, mcp MCP) []string {
+	if id == "" || strings.HasPrefix(id, "-") || len(m.Resume) == 0 {
+		return m.TUIArgs(mcp)
 	}
-	return fill(m.Resume, map[string]string{"{resume}": id, "{mcp_config}": mcpConfig})
+	return fill(m.Resume, map[string]string{"{resume}": id, "{mcp_config}": mcp.Config, "{mcp_url}": plainURL(mcp.URL)})
+}
+
+var plainURLRe = regexp.MustCompile(`^https?://[A-Za-z0-9._~:/%-]+$`)
+
+// plainURL is url if nothing in it could end the quoted string a template
+// puts it in (Codex's TOML -c), else empty, which drops it and its flag.
+func plainURL(url string) string {
+	if !plainURLRe.MatchString(url) {
+		return ""
+	}
+	return url
 }
 
 // fill substitutes placeholders in a command template. An element whose

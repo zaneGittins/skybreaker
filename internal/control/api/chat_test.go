@@ -135,7 +135,8 @@ func (b *fakeBackend) ChatModes(h string) []string {
 	}
 	return nil
 }
-func (b *fakeBackend) MarkSeen(id string) error { b.chat.call("seen " + id); return known(id) }
+func (b *fakeBackend) MarkSeen(id string) error  { b.chat.call("seen " + id); return known(id) }
+func (b *fakeBackend) HookToken(p string) string { return "tok-" + p + "-0123456789" }
 func (b *fakeBackend) Review(_ context.Context, p string) (app.Review, error) {
 	return app.Review{Branch: "feature/x", Diff: "+new", Files: []app.FileChange{{Path: "a.go", Added: 1}}}, nil
 }

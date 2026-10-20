@@ -80,20 +80,20 @@ func TestTUIsRunInline(t *testing.T) {
 	if b["claude"].Env["CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN"] != "1" {
 		t.Errorf("claude env = %v", b["claude"].Env)
 	}
-	if !slices.Contains(b["codex"].TUIArgs(""), "--no-alt-screen") {
-		t.Errorf("codex tui = %q", b["codex"].TUIArgs(""))
+	if !slices.Contains(b["codex"].TUIArgs(MCP{}), "--no-alt-screen") {
+		t.Errorf("codex tui = %q", b["codex"].TUIArgs(MCP{}))
 	}
 }
 
 func TestTUIArgs(t *testing.T) {
 	claude := Builtins()["claude"]
-	if got := claude.TUIArgs("/etc/skybreaker/orbit-mcp.json"); !slices.Equal(got, []string{"claude", "--mcp-config", "/etc/skybreaker/orbit-mcp.json"}) {
+	if got := claude.TUIArgs(MCP{Config: "/etc/skybreaker/orbit-mcp.json"}); !slices.Equal(got, []string{"claude", "--mcp-config", "/etc/skybreaker/orbit-mcp.json"}) {
 		t.Errorf("claude with mcp = %q", got)
 	}
-	if got := claude.TUIArgs(""); !slices.Equal(got, []string{"claude"}) {
+	if got := claude.TUIArgs(MCP{}); !slices.Equal(got, []string{"claude"}) {
 		t.Errorf("claude without mcp = %q", got)
 	}
-	if got := Builtins()["shell"].TUIArgs("/x"); !slices.Equal(got, []string{"bash", "-l"}) {
+	if got := Builtins()["shell"].TUIArgs(MCP{Config: "/x", URL: "http://x"}); !slices.Equal(got, []string{"bash", "-l"}) {
 		t.Errorf("shell = %q", got)
 	}
 }
@@ -104,7 +104,7 @@ func TestHeadlessArgsClaude(t *testing.T) {
 		Prompt:       "fix the bug",
 		BudgetUSD:    2.5,
 		AllowedTools: []string{"Read", "Edit", "Bash(git:*)"},
-		MCPConfig:    "/etc/skybreaker/orbit-mcp.json",
+		MCP:          MCP{Config: "/etc/skybreaker/orbit-mcp.json"},
 		Model:        "claude-opus-5-5",
 	})
 	if err != nil {
@@ -269,18 +269,18 @@ func TestChatAndResume(t *testing.T) {
 	if b["claude"].Chat != "claude" || b["codex"].Chat != "codex" || b["shell"].Chat != "" || b["pi"].Chat != "" {
 		t.Errorf("chat drivers: claude %q codex %q shell %q pi %q", b["claude"].Chat, b["codex"].Chat, b["shell"].Chat, b["pi"].Chat)
 	}
-	got := b["claude"].ResumeArgs("abc", "/etc/skybreaker/orbit-mcp.json")
+	got := b["claude"].ResumeArgs("abc", MCP{Config: "/etc/skybreaker/orbit-mcp.json"})
 	if !slices.Equal(got, []string{"claude", "--resume", "abc", "--mcp-config", "/etc/skybreaker/orbit-mcp.json"}) {
 		t.Errorf("claude resume = %q", got)
 	}
-	if got := b["codex"].ResumeArgs("t1", ""); !slices.Equal(got, []string{"codex", "resume", "t1", "--no-alt-screen"}) {
+	if got := b["codex"].ResumeArgs("t1", MCP{}); !slices.Equal(got, []string{"codex", "resume", "t1", "--no-alt-screen"}) {
 		t.Errorf("codex resume = %q", got)
 	}
 	// Nothing to resume, or no resume command: the plain TUI.
-	if got := b["claude"].ResumeArgs("", ""); !slices.Equal(got, []string{"claude"}) {
+	if got := b["claude"].ResumeArgs("", MCP{}); !slices.Equal(got, []string{"claude"}) {
 		t.Errorf("claude without a conversation = %q", got)
 	}
-	if got := b["shell"].ResumeArgs("x", ""); !slices.Equal(got, []string{"bash", "-l"}) {
+	if got := b["shell"].ResumeArgs("x", MCP{}); !slices.Equal(got, []string{"bash", "-l"}) {
 		t.Errorf("shell resume = %q", got)
 	}
 	m := b["claude"]
@@ -293,4 +293,65 @@ func TestChatAndResume(t *testing.T) {
 	if err := m.Validate(); err == nil {
 		t.Error("resume template took {prompt}")
 	}
+}
+
+func TestCodexGetsSkybreakersMCPServer(t *testing.T) {
+	codex := Builtins()["codex"]
+	mcp := MCP{Config: "/etc/skybreaker/mcp.json", URL: "http://broker:8402/mcp/orbit/tok/-"}
+	flag := []string{"-c", `mcp_servers.skybreaker.url="http://broker:8402/mcp/orbit/tok/-"`}
+	if got := codex.TUIArgs(mcp); !slices.Equal(got, append(append([]string{"codex"}, flag...), "--no-alt-screen")) {
+		t.Errorf("tui = %q", got)
+	}
+	if got := codex.ResumeArgs("t1", mcp); !slices.Equal(got, append(append([]string{"codex", "resume"}, flag...), "t1", "--no-alt-screen")) {
+		t.Errorf("resume = %q", got)
+	}
+	got, err := codex.HeadlessArgs(RunOptions{Prompt: "go", MCP: mcp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A run can't answer Codex's questions, so the board's tools are
+	// approved for it.
+	run := []string{"-c", `mcp_servers.skybreaker={url="http://broker:8402/mcp/orbit/tok/-", default_tools_approval_mode="approve"}`}
+	if !hasSeq(got, run...) || got[len(got)-1] != "go" {
+		t.Errorf("headless = %q", got)
+	}
+	if got, _ := codex.HeadlessArgs(RunOptions{Prompt: "go"}); slices.Contains(got, "-c") {
+		t.Errorf("headless without a server = %q", got)
+	}
+	// Without a server, the flag goes with it.
+	if got := codex.TUIArgs(MCP{}); slices.Contains(got, "-c") {
+		t.Errorf("tui without a server = %q", got)
+	}
+	// A URL that could end the TOML string it goes in is left out.
+	for _, bad := range []string{`http://x/"; approval_policy="never`, "http://x/\\", "http://x/\nnl", "file:///etc"} {
+		if got := codex.TUIArgs(MCP{URL: bad}); slices.Contains(got, "-c") {
+			t.Errorf("tui with url %q = %q", bad, got)
+		}
+		if got, _ := codex.HeadlessArgs(RunOptions{Prompt: "go", MCP: MCP{URL: bad}}); slices.Contains(got, "-c") {
+			t.Errorf("headless with url %q = %q", bad, got)
+		}
+	}
+	// A conversation ID that would pass for a flag isn't resumed.
+	if got := codex.ResumeArgs("--dangerously-bypass-approvals-and-sandbox", mcp); slices.Contains(got, "resume") || slices.Contains(got, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Errorf("resume with a flag for an id = %q", got)
+	}
+	if !codex.TakesMCP() || codex.Takes("{budget}") || codex.Takes("{allowed_tools}") {
+		t.Error("codex's headless placeholders")
+	}
+	c := Builtins()["claude"]
+	if !c.TakesMCP() || !c.Takes("{budget}") || !c.Takes("{allowed_tools}") {
+		t.Error("claude's headless placeholders")
+	}
+	if err := (Manifest{Name: "x", TUI: []string{"x", "{mcp_url}"}, Resume: []string{"x", "{resume}", "{mcp_url}"}, Approval: "none", Result: "text"}).Validate(); err != nil {
+		t.Errorf("mcp_url in tui and resume: %v", err)
+	}
+}
+
+func hasSeq(c []string, seq ...string) bool {
+	for i := 0; i+len(seq) <= len(c); i++ {
+		if slices.Equal(c[i:i+len(seq)], seq) {
+			return true
+		}
+	}
+	return false
 }

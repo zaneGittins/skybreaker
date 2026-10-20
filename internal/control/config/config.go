@@ -144,6 +144,11 @@ type Job struct {
 	Timeout      configfile.Duration `json:"timeout" yaml:"timeout"` // default 1h
 
 	Cron *cron.Schedule `json:"-" yaml:"-"`
+	// Ignored names the settings the job's harness has no place for, so
+	// its runs go without them, and Problem why it can't run at all. The UI
+	// says so; neither is a setting.
+	Ignored []string `json:"-" yaml:"-"`
+	Problem string   `json:"-" yaml:"-"`
 }
 
 var (
@@ -394,6 +399,21 @@ func (c *Config) validate() error {
 			bad("job %s: harness %q is not enabled for project %s", j.Name, j.Harness, j.Project)
 		} else if m, ok := c.Harnesses.Get(j.Harness); ok && len(m.Headless) == 0 {
 			bad("job %s: harness %s has no headless command", j.Name, j.Harness)
+		} else if ok {
+			// Neither stops Skybreaker starting: a config that loaded
+			// before these were checked still does, and the UI says what's
+			// wrong. A board job without the board's tools fails each run;
+			// settings its command has no place for are left out.
+			j.Ignored, j.Problem = nil, ""
+			if j.Kind == JobBoard && !m.TakesMCP() {
+				j.Problem = "harness " + j.Harness + " isn't given Skybreaker's MCP server, which a board job needs"
+			}
+			if j.BudgetUSD > 0 && !m.Takes("{budget}") {
+				j.Ignored = append(j.Ignored, "budget_usd")
+			}
+			if len(j.AllowedTools) > 0 && !m.Takes("{allowed_tools}") {
+				j.Ignored = append(j.Ignored, "allowed_tools")
+			}
 		}
 		if j.Cron, err = cron.Parse(j.Schedule); err != nil {
 			bad("job %s: %v", j.Name, err)

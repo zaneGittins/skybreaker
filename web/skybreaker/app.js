@@ -822,7 +822,9 @@ function jobRow(j) {
     svg(ICON.clock),
     el('b', null, j.name),
     el('span.mono.muted', null, j.schedule),
-    el('span.muted', null, `${j.kind} · ${j.harness}${j.budget_usd ? ' · $' + j.budget_usd : ''}`),
+    el('span.muted', null, `${j.kind} · ${j.harness}${j.budget_usd && !j.ignored?.includes('budget_usd') ? ' · $' + j.budget_usd : ''}`),
+    j.ignored?.length ? el('span.job-ignored', { title: `${j.harness} has no way to apply these, so its runs go without them` }, j.ignored.join(', ') + ' ignored') : null,
+    j.problem ? el('span.job-ignored', { title: j.problem }, 'can\'t run: ' + j.problem) : null,
     el('span.grow'),
     el('button.btn.sm', { onclick: run }, svg(ICON.play), 'Run now'));
 }

@@ -39,6 +39,8 @@ type Backend interface {
 	EnsureTmux(ctx context.Context, project string) error   // the server and options runs rely on
 	Exec(ctx context.Context, project string, args ...string) ([]byte, error)
 	ProjectDir(project string) string
+	// ProjectMCP is how a run reaches Skybreaker's MCP server.
+	ProjectMCP(project string) harness.MCP
 }
 
 type Deps struct {
@@ -227,6 +229,10 @@ func (s *Scheduler) execute(ctx, parent context.Context, job *config.Job, run st
 		s.notify.Notify(nctx, notify.Message{ID: "run-" + run.ID, Title: title, Body: "Job " + job.Name + " in " + job.Project + ".", Click: s.uiURL + "/p/" + job.Project})
 	}
 	fail := func(format string, a ...any) { finish(store.RunFailed, fmt.Sprintf(format, a...), nil, Result{}) }
+	if job.Problem != "" {
+		fail("%s", job.Problem)
+		return
+	}
 
 	if err := s.backend.StartSandbox(ctx, job.Project); err != nil {
 		fail("sandbox: %v", err)
@@ -262,7 +268,7 @@ func (s *Scheduler) execute(ctx, parent context.Context, job *config.Job, run st
 		return
 	}
 	opts := harness.RunOptions{Prompt: run.Prompt, BudgetUSD: job.BudgetUSD, AllowedTools: job.AllowedTools, Model: job.Model}
-	opts.MCPConfig = app.MCPPath
+	opts.MCP = s.backend.ProjectMCP(job.Project)
 	args, err := m.HeadlessArgs(opts)
 	if err != nil {
 		fail("%v", err)

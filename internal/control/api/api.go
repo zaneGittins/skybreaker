@@ -6,6 +6,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -71,6 +72,7 @@ type Backend interface {
 	ChatModes(harness string) []string
 	MarkSeen(id string) error
 	Review(ctx context.Context, project string) (app.Review, error)
+	HookToken(project string) string
 	ReviewSession(ctx context.Context, id string) (app.Review, error)
 	Listening(ctx context.Context, project string) ([]preview.Listening, error)
 	EditSession(id string, e app.SessionEdit) (store.Session, error)
@@ -329,10 +331,10 @@ func (s *server) project(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	view, sessions := s.view(r.Context(), name)
-	var jobs []*config.Job
+	var jobs []jobView
 	for _, j := range s.Config.Jobs {
 		if j.Project == name {
-			jobs = append(jobs, j)
+			jobs = append(jobs, jobView{j, j.Ignored, j.Problem})
 		}
 	}
 	webutil.WriteJSON(w, http.StatusOK, map[string]any{
@@ -344,6 +346,13 @@ func (s *server) project(w http.ResponseWriter, r *http.Request) {
 		"runs":     nonNil(s.Store.ListRuns(name, 20)),
 		"jobs":     nonNil(jobs),
 	})
+}
+
+// jobView is a job with what's wrong with it, for the Runs tab.
+type jobView struct {
+	*config.Job
+	Ignored []string `json:"ignored,omitempty"`
+	Problem string   `json:"problem,omitempty"`
 }
 
 func nonNil[T any](v []T) []T {
@@ -595,6 +604,11 @@ func (s *server) runLog(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		webutil.Error(w, http.StatusNotFound, "no log yet")
 		return
+	}
+	// A harness can print Skybreaker's MCP URL (Codex does when it can't
+	// connect), and the project's hook token is in it.
+	if tok := s.Backend.HookToken(run.Project); tok != "" {
+		b = bytes.ReplaceAll(b, []byte(tok), []byte("[hook token]"))
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(b)

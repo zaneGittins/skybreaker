@@ -180,7 +180,7 @@ func TestGoodBranchAndEnv(t *testing.T) {
 }
 
 func TestHarnessOverride(t *testing.T) {
-	body := strings.Replace(good, `"projects"`, `"harnesses": {"claude": {"tui": ["claude", "--rc"], "headless": ["claude", "-p", "{prompt}"], "approval": "claude-hooks", "result": "claude-stream-json"}}, "projects"`, 1)
+	body := strings.Replace(good, `"projects"`, `"harnesses": {"claude": {"tui": ["claude", "--rc"], "headless": ["claude", "-p", "{prompt}", "--mcp-config", "{mcp_config}"], "approval": "claude-hooks", "result": "claude-stream-json"}}, "projects"`, 1)
 	c, err := load(t, body)
 	if err != nil {
 		t.Fatal(err)
@@ -188,6 +188,44 @@ func TestHarnessOverride(t *testing.T) {
 	m, _ := c.Harnesses.Get("claude")
 	if len(m.TUI) != 2 || m.TUI[1] != "--rc" {
 		t.Fatalf("override not applied: %+v", m.TUI)
+	}
+}
+
+func TestJobSettingsAHarnessCantUse(t *testing.T) {
+	// The good config's nightly job is a board job with a budget.
+	body := strings.Replace(good, `"projects"`, `"harnesses": {"claude": {"tui": ["claude"], "headless": ["claude", "-p", "{prompt}", "--mcp-config", "{mcp_config}"], "approval": "claude-hooks", "result": "claude-stream-json"}}, "projects"`, 1)
+	c, err := load(t, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, _ := c.Job("nightly-orbit")
+	if !slices.Equal(j.Ignored, []string{"budget_usd"}) {
+		t.Errorf("ignored = %q", j.Ignored)
+	}
+	if c, _ := load(t, good); c != nil {
+		if j, _ := c.Job("nightly-orbit"); j.Ignored != nil {
+			t.Errorf("claude ignores %q", j.Ignored)
+		}
+	}
+	// A board job needs the board's tools. The config still loads, so
+	// Skybreaker starts; the job can't run, and says why.
+	noMCP := strings.Replace(good, `"projects"`, `"harnesses": {"claude": {"tui": ["claude"], "headless": ["claude", "-p", "{prompt}"], "approval": "claude-hooks", "result": "claude-stream-json"}}, "projects"`, 1)
+	c, err = load(t, noMCP)
+	if err != nil {
+		t.Fatalf("board job without MCP stopped the config loading: %v", err)
+	}
+	if j, _ := c.Job("nightly-orbit"); !strings.Contains(j.Problem, "board job needs") {
+		t.Errorf("problem = %q", j.Problem)
+	}
+	// Neither is a setting.
+	for _, field := range []string{`"ignored": ["x"]`, `"problem": "x"`} {
+		bad := strings.Replace(good, `"name": "nightly-orbit"`, field+`, "name": "nightly-orbit"`, 1)
+		if bad == good {
+			t.Fatal("test config changed")
+		}
+		if _, err := load(t, bad); err == nil {
+			t.Errorf("job accepted %s", field)
+		}
 	}
 }
 
