@@ -23,7 +23,7 @@ func handshake(t *testing.T, o Options) (*codex, []Event) {
 	for _, w := range out.Write {
 		m := decodeLine(t, w)
 		methods = append(methods, m["method"].(string))
-		if m["method"] == "thread/start" || m["method"] == "thread/resume" {
+		if m["method"] == "thread/start" || m["method"] == "thread/resume" || m["method"] == "thread/fork" {
 			startID = m["id"]
 			p := m["params"].(map[string]any)
 			if p["cwd"] != "/workspace" || p["sandbox"] != "danger-full-access" {
@@ -32,7 +32,10 @@ func handshake(t *testing.T, o Options) (*codex, []Event) {
 		}
 	}
 	want := []string{"initialized", "thread/start", "account/read", "model/list"}
-	if o.Resume != "" {
+	switch {
+	case o.Resume != "" && o.Fork:
+		want[1] = "thread/fork"
+	case o.Resume != "":
 		want[1] = "thread/resume"
 	}
 	if !slices.Equal(methods, want) {

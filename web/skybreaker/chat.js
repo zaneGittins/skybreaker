@@ -28,6 +28,7 @@ Object.assign(ICON, {
   list: ['M9 6h11', 'M9 12h11', 'M9 18h11', 'M4 6h.01', 'M4 12h.01', 'M4 18h.01'],
   plug: ['M9 2v6', 'M15 2v6', 'M6 8h12v4a6 6 0 0 1-12 0z', 'M12 18v4'],
   copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'],
+  fork: ['M6 3v12', 'M18 9a3 3 0 1 0 0-6a3 3 0 1 0 0 6', 'M6 21a3 3 0 1 0 0-6a3 3 0 1 0 0 6', 'M18 9a9 9 0 0 1-9 9'],
   down: ['M12 5v14', 'M6 13l6 6 6-6'],
   brain: ['M12 5a3 3 0 0 0-6 1 3 3 0 0 0-2 5 3 3 0 0 0 3 5 3 3 0 0 0 5 1z', 'M12 5a3 3 0 0 1 6 1 3 3 0 0 1 2 5 3 3 0 0 1-3 5 3 3 0 0 1-5 1z'],
   ship: ['M12 3v12', 'M7 8l5-5 5 5', 'M5 21h14'],
@@ -158,6 +159,37 @@ function sunMark() {
   return s;
 }
 
+// contextRing is the chat's session button: a ring that fills as the
+// conversation uses up its context window.
+function contextRing() {
+  const ns = 'http://www.w3.org/2000/svg';
+  const s = document.createElementNS(ns, 'svg');
+  s.setAttribute('viewBox', '0 0 24 24');
+  s.setAttribute('class', 'ctx-ring');
+  s.setAttribute('aria-hidden', 'true');
+  const circle = cls => {
+    const c = document.createElementNS(ns, 'circle');
+    c.setAttribute('cx', '12');
+    c.setAttribute('cy', '12');
+    c.setAttribute('r', '8');
+    c.setAttribute('pathLength', '100');
+    c.setAttribute('class', cls);
+    s.append(c);
+    return c;
+  };
+  circle('track');
+  const fill = circle('fill');
+  const set = use => {
+    const pct = use ? use.frac * 100 : 0;
+    fill.setAttribute('stroke-dasharray', `${pct} 100`);
+    s.classList.toggle('none', !use || use.used === 0);
+    s.classList.toggle('warn', !!use && use.frac >= 0.6 && use.frac < 0.85);
+    s.classList.toggle('full', !!use && use.frac >= 0.85);
+  };
+  set(null);
+  return { node: s, set };
+}
+
 async function renderChat(seq, d) {
   const id = d.session.id;
   let session = d.session, project = d.project;
@@ -182,6 +214,8 @@ async function renderChat(seq, d) {
   const hints = el('div.cmd-hints', { hidden: true });
   const footer = el('div.chat-foot', null, dock, hints, composer, ended);
   const goalBar = el('div.chat-goal', { hidden: true });
+  const ring = contextRing();
+  const ringBtn = el('button.icon-btn.bare.ctx-btn', { onclick: e => sessionMenu(e.currentTarget), 'aria-label': 'Context and session' }, ring.node);
 
   const back = () => history.length > 1 ? history.back() : navigate('/');
   const page = el('div.chat-page', null,
@@ -190,7 +224,7 @@ async function renderChat(seq, d) {
       el('div.chat-title', null, title, sub),
       el('button.icon-btn.bare', { onclick: () => openReview(session.project, id), 'aria-label': 'Review changes', title: 'Review changes' }, svg(ICON.branch)),
       el('button.icon-btn.bare', { onclick: () => openTerminal(), 'aria-label': 'Open in terminal', title: 'Open in terminal' }, svg(ICON.term)),
-      el('button.icon-btn.bare', { onclick: e => moreMenu(e.currentTarget), 'aria-label': 'More', title: 'More' }, svg(ICON.more))),
+      ringBtn),
     goalBar, scroller, jump, footer);
   $('#app').replaceChildren(page);
   const viewport = trackViewport();
@@ -225,10 +259,14 @@ async function renderChat(seq, d) {
     const m = MODE_INFO[session.perm_mode] || MODE_INFO.ask;
     modeBtn.replaceChildren(svg(ICON.shield), el('span', null, m.short));
     modeBtn.title = m.label + ': ' + m.desc;
+    const use = contextUse(chat.info);
+    ring.set(use);
+    ringBtn.title = use ? `Context ${use.pct}% used: ${fmtTokens(use.used)} of ${fmtTokens(use.window)} tokens` : 'Context and session';
     const over = session.status !== 'running';
     composer.hidden = over;
     ended.hidden = !over;
     if (over) ended.replaceChildren(el('span', null, 'This session has ended.'),
+      session.resume ? el('button.btn.sm', { type: 'button', onclick: () => runCommand({ cmd: 'fork', arg: '' }) }, svg(ICON.fork), 'Fork') : null,
       el('button.btn.sm', { type: 'button', onclick: () => newChatIn(project.name, session.harness) }, svg(ICON.plus), 'New chat'));
     syncComposer();
   };
@@ -360,7 +398,7 @@ async function renderChat(seq, d) {
   };
   input.addEventListener('input', () => { grow(); syncComposer(); saveDraft(); showHints() });
 
-  // --- Skybreaker's own commands: /rename, /color, /goal ---
+  // --- Skybreaker's own commands: /rename, /color, /goal, /clear, /fork, /compact ---
   const edit = async body => {
     session = await api('PATCH', '/api/sessions/' + encodeURIComponent(id), body);
     head();
@@ -376,9 +414,28 @@ async function renderChat(seq, d) {
       } else if (c.cmd === 'goal') {
         await edit({ goal: c.arg });
         if (c.arg) await send('Goal for this chat: ' + c.arg);
+      } else if (c.cmd === 'compact') {
+        await api('POST', `/api/sessions/${id}/compact`, {});
+        stick = true;
+      } else if (c.cmd === 'fork') {
+        const f = await api('POST', `/api/sessions/${id}/fork`, {});
+        navigate('/s/' + f.id);
+      } else if (c.cmd === 'clear') {
+        if (chat.working) { toast('Stop the agent first, then clear.'); return false }
+        await clearChat();
       }
       return true;
     } catch (e) { toast(e.message, 'error'); return false }
+  };
+  // clearChat starts a fresh chat like this one (same agent, mode and
+  // model) and ends this one, which stays readable.
+  const clearChat = async () => {
+    const n = await api('POST', `/api/projects/${project.name}/sessions`, { harness: session.harness });
+    const mode = session.perm_mode || 'ask';
+    if (mode !== 'ask') await api('POST', `/api/sessions/${n.id}/mode`, { mode }).catch(() => { });
+    if (session.chosen_model) await api('POST', `/api/sessions/${n.id}/model`, { model: session.chosen_model }).catch(() => { });
+    await api('DELETE', '/api/sessions/' + id);
+    navigate('/s/' + n.id);
   };
   const clearInput = () => {
     input.value = '';
@@ -481,12 +538,18 @@ async function renderChat(seq, d) {
     })));
   };
 
-  const moreMenu = anchor => {
+  // sessionMenu is the ring's: how full the context is, and what to do
+  // about it.
+  const sessionMenu = anchor => {
     const running = session.status === 'running';
+    const use = contextUse(chat.info);
     menu(anchor, [
+      { note: use ? `${use.pct}% of context used` : 'Context not reported yet',
+        desc: use ? `${fmtTokens(use.used)} of ${fmtTokens(use.window)} tokens` : 'It shows after the agent\'s first reply.' },
+      running && session.resume ? { label: 'Compact', desc: 'Summarise the conversation to free up context', run: () => runCommand({ cmd: 'compact', arg: '' }) } : null,
+      { label: 'New chat', desc: 'Start fresh; this one stays as it is', run: () => newChatIn(project.name, session.harness) },
+      session.resume ? { label: 'Fork', desc: 'Copy this conversation into a new chat', run: () => runCommand({ cmd: 'fork', arg: '' }) } : null,
       running && chat.info.models?.length ? { label: 'Model', desc: chatModel()?.name, run: () => modelMenu(anchor) } : null,
-      { label: 'Review changes', run: () => openReview(session.project, id) },
-      { label: 'Open in terminal', run: () => openTerminal() },
       { label: 'Project ' + project.name, run: () => navigate('/p/' + project.name) },
       session.status === 'running' ? {
         label: 'End session', danger: true, run: async () => {
@@ -775,8 +838,9 @@ function closeChat() {
 function menu(anchor, items) {
   closeMenu();
   const r = anchor.getBoundingClientRect();
-  const box = el('div.menu', { role: 'menu' }, items.map(it =>
-    el('button.menu-item' + (it.danger ? '.danger' : '') + (it.on ? '.on' : ''), {
+  const box = el('div.menu', { role: 'menu' }, items.map(it => it.note
+    ? el('div.menu-note', null, el('b', null, it.note), it.desc ? el('span', null, it.desc) : null)
+    : el('button.menu-item' + (it.danger ? '.danger' : '') + (it.on ? '.on' : ''), {
       type: 'button', role: 'menuitem', onclick: () => { closeMenu(); it.run() },
     }, el('span.mi-text', null, el('b', null, it.label), it.desc ? el('span', null, it.desc) : null), it.on ? svg(ICON.check) : null)));
   const shade = el('div.menu-shade', { onclick: closeMenu });

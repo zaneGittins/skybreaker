@@ -132,6 +132,32 @@ func (l *Log) Since(id string, seq int64) ([]Event, error) {
 	return append([]Event(nil), s.events[i:]...), nil
 }
 
+// Copy appends session from's events, and the files they show, to session
+// to's log, numbered afresh.
+func (l *Log) Copy(from, to string) error {
+	if !logName.MatchString(to) {
+		return errors.New("chat: bad session id")
+	}
+	events, err := l.Since(from, 0)
+	if err != nil {
+		return err
+	}
+	for _, e := range events {
+		if e.Kind == KindShow {
+			if b, err := l.Kept(from, e.ID); err == nil {
+				if _, err := l.Keep(to, b, filepath.Ext(e.ID)); err != nil {
+					return err
+				}
+			}
+		}
+		e.Seq = 0
+		if _, err := l.Append(to, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Delete drops a session's log.
 func (l *Log) Delete(id string) error {
 	l.mu.Lock()

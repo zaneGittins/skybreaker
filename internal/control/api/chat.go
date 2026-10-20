@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zaneGittins/skybreaker/internal/control/app"
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 	"github.com/zaneGittins/skybreaker/internal/notify/webpush"
@@ -132,6 +133,10 @@ func (s *server) chatSend(w http.ResponseWriter, r *http.Request) {
 // chatFail maps a chat error: unknown sessions are 404, anything else the
 // user can act on is 400.
 func chatFail(w http.ResponseWriter, err error) {
+	if errors.Is(err, app.ErrBusy) {
+		fail(w, err)
+		return
+	}
 	if errors.Is(err, chat.ErrTerminalLogin) {
 		webutil.WriteJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "terminal": true})
 		return
@@ -220,6 +225,25 @@ func (s *server) chatTerminal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webutil.WriteJSON(w, http.StatusOK, t)
+}
+
+// chatCompact has the harness summarise the conversation so far.
+func (s *server) chatCompact(w http.ResponseWriter, r *http.Request) {
+	if err := s.Backend.ChatCompact(r.Context(), r.PathValue("id")); err != nil {
+		chatFail(w, err)
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// chatFork starts a chat that carries on from a copy of this one.
+func (s *server) chatFork(w http.ResponseWriter, r *http.Request) {
+	f, err := s.Backend.ChatFork(r.Context(), r.PathValue("id"))
+	if err != nil {
+		chatFail(w, err)
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, f)
 }
 
 func (s *server) seen(w http.ResponseWriter, r *http.Request) {

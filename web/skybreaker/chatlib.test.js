@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, contextUse, fmtTokens } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -269,17 +269,52 @@ test('parseCommand: only Skybreaker\'s own commands, everything else goes to the
   assert.deepEqual(parseCommand('/color'), { cmd: 'color', arg: '' });
   assert.deepEqual(parseCommand('/goal Ship the fix\nwith tests'), { cmd: 'goal', arg: 'Ship the fix\nwith tests' });
   assert.deepEqual(parseCommand('/goal'), { cmd: 'goal', arg: '' });
-  for (const s of ['/compact', '/model opus', '/renamed x', '/Rename x', 'please /rename x', '/', 'hello', '']) {
+  for (const c of ['clear', 'fork', 'compact']) {
+    assert.deepEqual(parseCommand('/' + c), { cmd: c, arg: '' });
+    assert.deepEqual(parseCommand(' /' + c + ' '), { cmd: c, arg: '' });
+  }
+  for (const s of ['/model opus', '/renamed x', '/Rename x', 'please /rename x', '/clearly', '/forks', '/', 'hello', '']) {
     assert.equal(parseCommand(s), null, s);
   }
 });
 
 test('commandHints: what to suggest as you type', () => {
-  assert.deepEqual(commandHints('/').map(h => h.cmd), ['rename', 'color', 'goal']);
-  assert.deepEqual(commandHints('/co').map(h => h.cmd), ['color']);
+  assert.deepEqual(commandHints('/').map(h => h.cmd), ['rename', 'color', 'goal', 'clear', 'fork', 'compact']);
+  assert.deepEqual(commandHints('/co').map(h => h.cmd), ['color', 'compact']);
+  assert.deepEqual(commandHints('/f').map(h => h.cmd), ['fork']);
   assert.deepEqual(commandHints('/color ').map(h => h.color), CHAT_COLORS);
   assert.deepEqual(commandHints('/color b').map(h => h.color), ['blue']);
   assert.deepEqual(commandHints('/rename x'), []);
-  assert.deepEqual(commandHints('/compact'), []);
+  assert.deepEqual(commandHints('/model'), []);
   assert.deepEqual(commandHints('hello'), []);
+});
+
+test('foldChat: context usage keeps the last window it was told', () => {
+  const c = newChat();
+  foldChat(c, { seq: 1, kind: 'info', info: { context: { used: 5 } } });
+  foldChat(c, { seq: 2, kind: 'info', info: { context: { used: 10, window: 100 } } });
+  foldChat(c, { seq: 3, kind: 'info', info: { model: 'm' } });
+  foldChat(c, { seq: 4, kind: 'info', info: { context: { used: 3 } } });
+  assert.deepEqual(c.info.context, { used: 3, window: 100 });
+  assert.equal(c.info.model, 'm');
+});
+
+test('contextUse: how full the window is, once the harness has said', () => {
+  assert.equal(contextUse({}), null);
+  assert.equal(contextUse({ context: { used: 50 } }), null);
+  assert.deepEqual(contextUse({ context: { used: 250000, window: 1000000 } }), { used: 250000, window: 1000000, frac: 0.25, pct: 25 });
+  assert.equal(contextUse({ context: { used: 2000, window: 1000 } }).frac, 1);
+  assert.equal(contextUse({ context: { used: 0, window: 1000 } }).pct, 0);
+  // A sliver still shows as 1%, not nothing.
+  assert.equal(contextUse({ context: { used: 1, window: 1000000 } }).pct, 1);
+  assert.equal(contextUse({ context: { used: -5, window: 100 } }).frac, 0);
+});
+
+test('fmtTokens: short counts', () => {
+  assert.equal(fmtTokens(950), '950');
+  assert.equal(fmtTokens(1500), '1.5k');
+  assert.equal(fmtTokens(24181), '24k');
+  assert.equal(fmtTokens(258400), '258k');
+  assert.equal(fmtTokens(1000000), '1M');
+  assert.equal(fmtTokens(1250000), '1.3M');
 });

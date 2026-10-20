@@ -169,6 +169,62 @@ func (a *App) NewChat(ctx context.Context, project, harnessName string) (store.S
 	return s, nil
 }
 
+// ChatFork starts a chat that carries on from a copy of another's
+// conversation, which stays as it was. The copy shows the conversation so
+// far; its harness forks the original's on the first message. An ended
+// chat can be forked, to pick it up again.
+func (a *App) ChatFork(ctx context.Context, id string) (store.Session, error) {
+	s, err := a.chatSession(id)
+	if err != nil {
+		return store.Session{}, err
+	}
+	if s.Resume == "" {
+		return store.Session{}, errors.New("there's nothing to fork yet: send a message first")
+	}
+	if s.Status == store.StatusRunning && (s.State == store.ChatWorking || s.State == store.ChatWaiting) {
+		return store.Session{}, ErrBusy
+	}
+	p, err := a.project(s.Project)
+	if err != nil {
+		return store.Session{}, err
+	}
+	if !slices.Contains(p.Harnesses, s.Harness) {
+		return store.Session{}, fmt.Errorf("harness %q is not enabled for %s", s.Harness, s.Project)
+	}
+	now := time.Now().UTC()
+	f := store.Session{ID: newSessionID(), Project: s.Project, Harness: s.Harness, Created: now, Status: store.StatusRunning,
+		Mode: store.ModeChat, State: store.ChatIdle, PermMode: s.PermMode, ChosenModel: s.ChosenModel, Model: s.Model,
+		Resume: s.Resume, Fork: true, Color: s.Color, Goal: s.Goal, Updated: now, Seen: now}
+	if s.Title != "" {
+		f.Title = s.Title + " (fork)"
+	}
+	if f.PermMode == "" {
+		f.PermMode = chat.ModeAsk
+	}
+	if err := a.chat.Copy(s.ID, f.ID); err != nil {
+		return store.Session{}, err
+	}
+	if err := a.store.CreateSession(f); err != nil {
+		return store.Session{}, err
+	}
+	name := s.Title
+	if name == "" {
+		name = "the original chat"
+	}
+	a.chat.Note(f.ID, "Forked from "+name+". From here on, the two go their own ways.")
+	a.Publish(Event{Type: "session", Project: f.Project, Session: f.ID, Data: "started"})
+	return f, nil
+}
+
+// ChatCompact has a chat's harness summarise its conversation, to free
+// its context window.
+func (a *App) ChatCompact(ctx context.Context, id string) error {
+	if _, err := a.chatSession(id); err != nil {
+		return err
+	}
+	return a.chat.Compact(ctx, id)
+}
+
 // chatSession returns a chat session, or an error for anything else.
 func (a *App) chatSession(id string) (store.Session, error) {
 	s, err := a.session(id)
@@ -271,6 +327,10 @@ func (a *App) ChatTerminal(ctx context.Context, id string) (store.Session, error
 	}
 	if s.State == store.ChatWorking || s.State == store.ChatWaiting {
 		return store.Session{}, ErrBusy
+	}
+	if s.Fork {
+		// Its terminal would resume the original, not a copy.
+		return store.Session{}, errors.New("send the fork a message first, then open its terminal")
 	}
 	if s.Terminal != "" {
 		if t, ok := a.store.Session(s.Terminal); ok && t.Status == store.StatusRunning {

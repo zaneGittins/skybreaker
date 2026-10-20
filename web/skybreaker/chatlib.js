@@ -159,12 +159,15 @@ const COMMANDS = [
   { cmd: 'rename', usage: '/rename <title>', desc: 'Name this chat' },
   { cmd: 'color', usage: '/color <colour>', desc: 'Tint this chat, to tell it apart' },
   { cmd: 'goal', usage: '/goal <what you want done>', desc: 'Pin a goal and give it to the agent' },
+  { cmd: 'clear', usage: '/clear', desc: 'End this chat and start a fresh one' },
+  { cmd: 'fork', usage: '/fork', desc: 'Copy this conversation into a new chat' },
+  { cmd: 'compact', usage: '/compact', desc: 'Summarise the conversation to free up context' },
 ];
 
 // parseCommand reads Skybreaker's own chat commands. Anything else starting
 // with a slash (the harness's own commands) is left for the agent.
 function parseCommand(text) {
-  const m = /^\/(rename|color|goal)(?:\s+([\s\S]*))?$/.exec(String(text ?? '').trim());
+  const m = /^\/(rename|color|goal|clear|fork|compact)(?:\s+([\s\S]*))?$/.exec(String(text ?? '').trim());
   return m ? { cmd: m[1], arg: (m[2] || '').trim() } : null;
 }
 
@@ -393,9 +396,14 @@ function foldChat(c, e) {
       return add({ type: 'show', id: auto(), file: e.id, show: e.show || {} });
     case 'preview':
       return add({ type: 'preview', id: auto(), preview: e.preview || {} });
-    case 'info':
+    case 'info': {
+      const prev = c.info.context;
       c.info = { ...c.info, ...e.info };
+      // Usage comes without the window until the harness has said it.
+      if (e.info?.context) c.info.context = { ...prev, ...e.info.context };
+      else if (prev) c.info.context = prev;
       return { changed: null };
+    }
     case 'login': {
       const l = e.login || {};
       if (l.done) {
@@ -469,6 +477,24 @@ function currentModel(models = [], chosen = '', reported = '') {
   return models.find(m => m.default) || null;
 }
 
+// contextUse says how full a chat's context window is, or null until the
+// harness has given the window.
+function contextUse(info) {
+  const c = info?.context;
+  if (!c || !(c.window > 0)) return null;
+  const used = Math.max(0, Number(c.used) || 0);
+  const frac = Math.min(1, used / c.window);
+  return { used, window: c.window, frac, pct: used > 0 ? Math.max(1, Math.round(frac * 100)) : 0 };
+}
+
+// fmtTokens writes a token count short: 950, 1.5k, 24k, 1.3M.
+function fmtTokens(n) {
+  const short = (x, unit) => (x < 10 ? String(Number(x.toFixed(1))) : String(Math.round(x))) + unit;
+  if (n < 1000) return String(Math.round(n));
+  if (n < 999500) return short(n / 1e3, 'k');
+  return short(n / 1e6, 'M');
+}
+
 // activityLabel says what a working agent is doing right now, for the line
 // under the conversation: its newest running tool (a subagent's step
 // included), else whether it is writing or thinking.
@@ -501,4 +527,4 @@ function activityLabel(c) {
   return 'Working';
 }
 
-if (typeof module !== 'undefined') module.exports = { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel };
+if (typeof module !== 'undefined') module.exports = { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel, contextUse, fmtTokens };

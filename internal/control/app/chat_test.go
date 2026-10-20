@@ -518,3 +518,91 @@ func TestSweepStopsContainersOnceIdle(t *testing.T) {
 		t.Fatalf("ran docker stop with no containers (%d)", n)
 	}
 }
+
+func TestChatFork(t *testing.T) {
+	f, sp := chatFixture(t)
+	ctx := context.Background()
+	s, _ := f.app.NewChat(ctx, "orbit", "claude")
+	if _, err := f.app.ChatFork(ctx, s.ID); err == nil {
+		t.Error("forked a chat with no conversation yet")
+	}
+	f.app.ChatSend(ctx, s.ID, "hello")
+	waitUntil(t, "the turn", func() bool {
+		x, _ := f.app.store.Session(s.ID)
+		return x.Resume == "conv-1" && x.State == store.ChatIdle
+	})
+	f.app.store.UpdateSession(s.ID, func(x *store.Session) {
+		x.Title, x.Color, x.Goal, x.PermMode, x.ChosenModel = "Login", "blue", "Ship it", chat.ModeEdits, "sonnet"
+	})
+
+	fork, err := f.app.ChatFork(ctx, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fork.ID == s.ID || fork.Project != "orbit" || fork.Harness != "claude" || fork.Mode != store.ModeChat || fork.Status != store.StatusRunning ||
+		fork.Resume != "conv-1" || !fork.Fork || fork.Title != "Login (fork)" || fork.Color != "blue" || fork.Goal != "Ship it" ||
+		fork.PermMode != chat.ModeEdits || fork.ChosenModel != "sonnet" || fork.State != store.ChatIdle {
+		t.Errorf("fork = %+v", fork)
+	}
+	// It starts with the conversation so far, and says where it came from.
+	ev, _ := f.app.ChatEvents(fork.ID, 0)
+	if len(ev) < 2 || ev[0].Kind != chat.KindUser || ev[0].Text != "hello" || ev[len(ev)-1].Kind != chat.KindNotice || !strings.Contains(ev[len(ev)-1].Text, "Login") {
+		t.Errorf("fork events = %+v", ev)
+	}
+	if pev, _ := f.app.ChatEvents(s.ID, 0); slices.ContainsFunc(pev, func(e chat.Event) bool { return e.Kind == chat.KindNotice }) {
+		t.Errorf("the original got the fork's notice: %+v", pev)
+	}
+	// Its terminal would resume the original, so it waits for the first message.
+	if _, err := f.app.ChatTerminal(ctx, fork.ID); err == nil {
+		t.Error("opened a terminal on a fork that hasn't started")
+	}
+	f.app.ChatSend(ctx, fork.ID, "next")
+	waitUntil(t, "the fork's turn", func() bool { x, _ := f.app.store.Session(fork.ID); return !x.Fork && x.State == store.ChatIdle })
+	if argv := sp.last(); !hasSeq(argv, "--resume", "conv-1", "--fork-session") {
+		t.Errorf("fork argv = %q", argv)
+	}
+
+	// An ended chat can be forked, to carry on from it; a busy one can't.
+	f.app.KillSession(ctx, s.ID)
+	if _, err := f.app.ChatFork(ctx, s.ID); err != nil {
+		t.Errorf("fork of an ended chat: %v", err)
+	}
+	f.app.store.UpdateSession(fork.ID, func(x *store.Session) { x.State = store.ChatWorking })
+	if _, err := f.app.ChatFork(ctx, fork.ID); err != ErrBusy {
+		t.Errorf("fork of a busy chat: %v", err)
+	}
+}
+
+func TestChatCompact(t *testing.T) {
+	f, sp := chatFixture(t)
+	ctx := context.Background()
+	s, _ := f.app.NewChat(ctx, "orbit", "claude")
+	if err := f.app.ChatCompact(ctx, s.ID); err == nil {
+		t.Error("compacted an empty chat")
+	}
+	f.app.ChatSend(ctx, s.ID, "hello")
+	waitUntil(t, "the turn", func() bool {
+		x, _ := f.app.store.Session(s.ID)
+		return x.Resume == "conv-1" && x.State == store.ChatIdle
+	})
+	n := len(sp.argvs)
+	if err := f.app.ChatCompact(ctx, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the compaction", func() bool {
+		ev, _ := f.app.ChatEvents(s.ID, 0)
+		turns := 0
+		for _, e := range ev {
+			if e.Kind == chat.KindTurn {
+				turns++
+			}
+		}
+		return turns == 4
+	})
+	if len(sp.argvs) != n {
+		t.Error("compacting started another process")
+	}
+	if err := f.app.ChatCompact(ctx, "nope"); err == nil {
+		t.Error("compacted an unknown session")
+	}
+}

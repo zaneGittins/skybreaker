@@ -208,7 +208,7 @@ func devClaude(m map[string]any, say func(any), raw func(string)) {
 		}
 		pause()
 		stream(say, "m-after", "All 42 tests pass. The inbox now sorts approvals first, then problems, then finished work.")
-		raw(`{"type":"result","subtype":"success","is_error":false,"duration_ms":5400,"session_id":"dev-conv"}`)
+		raw(`{"type":"result","subtype":"success","is_error":false,"duration_ms":5400,"session_id":"dev-conv","modelUsage":{"claude-opus-5-5":{"contextWindow":400000}}}`)
 		return
 	case "user":
 	default:
@@ -220,6 +220,12 @@ func devClaude(m map[string]any, say func(any), raw func(string)) {
 	raw(`{"type":"system","subtype":"init","session_id":"dev-conv","model":"claude-opus-5-5","permissionMode":"default","slash_commands":["compact","review"]}`)
 	pause()
 	switch {
+	case text == "/compact":
+		devUsed = 30000
+		pause()
+		raw(`{"type":"system","subtype":"compact_boundary","session_id":"dev-conv","compact_metadata":{"trigger":"manual","pre_tokens":200000,"post_tokens":30000}}`)
+		raw(`{"type":"result","subtype":"success","is_error":false,"duration_ms":4000,"result":"","session_id":"dev-conv"}`)
+		return
 	case strings.Contains(text, "approve"):
 		stream(say, msg, "I'll run the test suite first.")
 		raw(`{"type":"assistant","message":{"id":"` + msg + `t","content":[{"type":"tool_use","id":"toolu_test","name":"Bash","input":{"command":"npm test","description":"Run the test suite"}}]}}`)
@@ -248,11 +254,15 @@ func devClaude(m map[string]any, say func(any), raw func(string)) {
 	raw(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t4-` + msg + `","content":"ok"}]},"tool_use_result":{"stdout":"✔ sessionTone and inboxGroups (3.8ms)\nℹ tests 14\nℹ pass 14\nℹ fail 0","stderr":""}}`)
 	pause()
 	stream(say, msg+"e", "Done. Approvals now sort to the top:\n\n```js\ng.forYou.sort((a, b) => urgency(a) - urgency(b) || newest(a, b));\n```\n\n| Group | Order |\n|---|---|\n| For you | urgency, then newest |\n| Working | newest |\n\nAll 14 tests pass. Want me to open a PR?")
-	raw(`{"type":"result","subtype":"success","is_error":false,"duration_ms":8200,"session_id":"dev-conv"}`)
+	raw(`{"type":"result","subtype":"success","is_error":false,"duration_ms":8200,"session_id":"dev-conv","modelUsage":{"claude-opus-5-5":{"contextWindow":400000}}}`)
 }
+
+// devUsed is the scripted conversation's context, which each message grows.
+var devUsed int64
 
 // stream sends text as Claude Code's partial messages, then whole.
 func stream(say func(any), msg, text string) {
+	devUsed += 45000
 	say(map[string]any{"type": "stream_event", "event": map[string]any{"type": "message_start", "message": map[string]any{"id": msg}}})
 	say(map[string]any{"type": "stream_event", "event": map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "text", "text": ""}}})
 	words := strings.SplitAfter(text, " ")
@@ -261,7 +271,8 @@ func stream(say func(any), msg, text string) {
 		say(map[string]any{"type": "stream_event", "event": map[string]any{"type": "content_block_delta", "index": 0, "delta": map[string]any{"type": "text_delta", "text": chunk}}})
 		time.Sleep(25 * time.Millisecond)
 	}
-	say(map[string]any{"type": "assistant", "message": map[string]any{"id": msg, "content": []any{map[string]any{"type": "text", "text": text}}}, "parent_tool_use_id": nil})
+	say(map[string]any{"type": "assistant", "message": map[string]any{"id": msg, "content": []any{map[string]any{"type": "text", "text": text}},
+		"usage": map[string]any{"input_tokens": 2, "cache_read_input_tokens": devUsed, "output_tokens": 40}}, "parent_tool_use_id": nil})
 }
 
 func devCodex(m map[string]any, say func(any)) {

@@ -63,6 +63,8 @@ type Backend interface {
 	ChatShown(id, name string) ([]byte, error)
 	ChatLogin(ctx context.Context, id string) error
 	ChatTerminal(ctx context.Context, id string) (store.Session, error)
+	ChatCompact(ctx context.Context, id string) error
+	ChatFork(ctx context.Context, id string) (store.Session, error)
 	ChatEvents(id string, after int64) ([]chat.Event, error)
 	ChatSubscribe(id string) (<-chan chat.Event, func())
 	ChatModes(harness string) []string
@@ -170,6 +172,8 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("GET /api/sessions/{id}/shown/{name}", s.chatShown)
 	m.HandleFunc("POST /api/sessions/{id}/login", s.chatLogin)
 	m.HandleFunc("POST /api/sessions/{id}/terminal", s.chatTerminal)
+	m.HandleFunc("POST /api/sessions/{id}/compact", s.chatCompact)
+	m.HandleFunc("POST /api/sessions/{id}/fork", s.chatFork)
 	m.HandleFunc("POST /api/sessions/{id}/seen", s.seen)
 	m.HandleFunc("GET /api/push/key", s.pushKey)
 	m.HandleFunc("POST /api/push/subscribe", s.pushSubscribe)

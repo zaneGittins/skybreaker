@@ -22,6 +22,7 @@ type codex struct {
 	asks    map[string]codexAsk
 	items   map[string]*Tool // item ID → its card
 	resumed bool
+	compact bool    // a compaction asked for before the thread exists
 	signing bool    // a sign-in is under way
 	model   string  // the model the user chose; empty leaves it to codex
 	models  []Model // model/list pages so far
@@ -87,6 +88,9 @@ func (c *codex) startThread() []byte {
 		c.resumed = true
 		p := c.threadParams()
 		p["threadId"] = c.opts.Resume
+		if c.opts.Fork {
+			return c.request("thread/fork", p)
+		}
 		return c.request("thread/resume", p)
 	}
 	return c.request("thread/start", c.threadParams())
@@ -119,6 +123,16 @@ func (c *codex) startTurn(text string) []byte {
 		p["model"] = c.model
 	}
 	return c.request("turn/start", p)
+}
+
+// Compact asks codex to summarise the thread. Its progress comes as an
+// ordinary turn.
+func (c *codex) Compact() ([][]byte, error) {
+	if c.thread == "" {
+		c.compact = true
+		return nil, nil
+	}
+	return [][]byte{c.request("thread/compact/start", map[string]any{"threadId": c.thread})}, nil
 }
 
 func (c *codex) Interrupt() [][]byte {
@@ -233,7 +247,10 @@ func (c *codex) response(l codexLine, now time.Time) Out {
 		case "thread/resume":
 			out.Events = append(out.Events, Event{Time: now, Kind: KindNotice, Text: "The earlier conversation couldn't be resumed, so this is a new one."})
 			out.Write = append(out.Write, c.startThread())
-		case "thread/start":
+		case "thread/fork":
+			out.Events = append(out.Events, Event{Time: now, Kind: KindNotice, Text: "The earlier conversation couldn't be forked, so this is a new one."})
+			out.Write = append(out.Write, c.startThread())
+		case "thread/start", "thread/compact/start":
 			out.Events = append(out.Events, Event{Time: now, Kind: KindTurn, Turn: &Turn{State: TurnFailed, Error: l.Error.Message}})
 		case "turn/start", "turn/steer":
 			c.turn = ""
@@ -276,7 +293,7 @@ func (c *codex) response(l codexLine, now time.Time) Out {
 			out.Events = append(out.Events, Event{Time: now, Kind: KindInfo, Info: &Info{Models: c.models}})
 		}
 		c.models, c.pages = nil, 0
-	case "thread/start", "thread/resume":
+	case "thread/start", "thread/resume", "thread/fork":
 		var r struct {
 			Thread struct {
 				ID string `json:"id"`
@@ -288,6 +305,10 @@ func (c *codex) response(l codexLine, now time.Time) Out {
 		}
 		c.thread, out.Resume = r.Thread.ID, r.Thread.ID
 		out.Events = append(out.Events, Event{Time: now, Kind: KindInfo, Info: &Info{Model: r.Model, Mode: c.mode}})
+		if c.compact {
+			c.compact = false
+			out.Write = append(out.Write, c.request("thread/compact/start", map[string]any{"threadId": c.thread}))
+		}
 		queued := c.queue
 		c.queue = nil
 		for i, text := range queued {
@@ -368,6 +389,25 @@ func (c *codex) notification(l codexLine, now time.Time) []Event {
 		}
 	case "turn/completed":
 		return c.turnCompleted(l, now)
+	case "thread/tokenUsage/updated":
+		// The last request's tokens are what the context holds now.
+		var p struct {
+			ThreadID   string `json:"threadId"`
+			TokenUsage struct {
+				Last struct {
+					Total int64 `json:"totalTokens"`
+				} `json:"last"`
+				Window *int64 `json:"modelContextWindow"`
+			} `json:"tokenUsage"`
+		}
+		if json.Unmarshal(l.Params, &p) != nil || p.ThreadID != c.thread || c.thread == "" {
+			return nil
+		}
+		ctx := &Context{Used: p.TokenUsage.Last.Total}
+		if p.TokenUsage.Window != nil {
+			ctx.Window = *p.TokenUsage.Window
+		}
+		return []Event{{Time: now, Kind: KindInfo, Info: &Info{Context: ctx}}}
 	case "item/agentMessage/delta":
 		var p struct {
 			Delta  string `json:"delta"`

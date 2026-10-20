@@ -24,6 +24,10 @@ type claude struct {
 	seq         int
 	sent        map[string]string // our control request ID → what it set (set_model's model), or its subtype
 	mode        string            // the permission mode Claude is in, as far as we know
+	model       string            // the model Claude says it runs
+	counted     string            // the last message whose usage was reported
+	used        int64             // tokens in the context as of the last message
+	window      int64             // the model's context window, once a result says
 }
 
 type claudeAsk struct {
@@ -69,6 +73,9 @@ func (c *claude) Argv(o Options) []string {
 	switch {
 	case o.Resume != "":
 		argv = append(argv, "--resume", o.Resume)
+		if o.Fork {
+			argv = append(argv, "--fork-session")
+		}
 	case o.NewID != "":
 		argv = append(argv, "--session-id", o.NewID)
 	}
@@ -112,6 +119,10 @@ func (c *claude) Send(text string) ([][]byte, error) {
 		"type": "user", "message": map[string]any{"role": "user", "content": text}, "parent_tool_use_id": nil,
 	})}, nil
 }
+
+// Compact runs Claude Code's own /compact, which stream-json takes as a
+// message. A compact_boundary reports what's left.
+func (c *claude) Compact() ([][]byte, error) { return c.Send("/compact") }
 
 func (c *claude) Interrupt() [][]byte {
 	c.interrupted = true
@@ -198,6 +209,14 @@ type claudeLine struct {
 	DurationMS     int64    `json:"duration_ms"`
 	Errors         []string `json:"errors"`
 	TerminalReason string   `json:"terminal_reason"`
+	ModelUsage     map[string]struct {
+		ContextWindow int64 `json:"contextWindow"`
+	} `json:"modelUsage"`
+
+	CompactMetadata *struct {
+		Trigger    string `json:"trigger"`
+		PostTokens int64  `json:"post_tokens"`
+	} `json:"compact_metadata"`
 }
 
 type claudeBlock struct {
@@ -215,6 +234,12 @@ type claudeBlock struct {
 type claudeMessage struct {
 	ID      string          `json:"id"`
 	Content json.RawMessage `json:"content"`
+	Usage   *struct {
+		Input         int64 `json:"input_tokens"`
+		CacheCreation int64 `json:"cache_creation_input_tokens"`
+		CacheRead     int64 `json:"cache_read_input_tokens"`
+		Output        int64 `json:"output_tokens"`
+	} `json:"usage"`
 }
 
 func (c *claude) Read(b []byte) Out {
@@ -236,7 +261,19 @@ func (c *claude) Read(b []byte) Out {
 				}
 			}
 			c.mode = mode
+			if l.Model != "" {
+				c.model = l.Model
+			}
 			out.Events = append(out.Events, ev(Event{Kind: KindInfo, Info: &Info{Model: l.Model, Mode: mode, Version: l.Version, Commands: l.SlashCommands}}))
+		}
+		if l.Subtype == "compact_boundary" && l.CompactMetadata != nil {
+			c.used = l.CompactMetadata.PostTokens
+			text := "The conversation was compacted."
+			if l.CompactMetadata.Trigger == "auto" {
+				text = "The conversation was compacted to fit the context window."
+			}
+			out.Events = append(out.Events, ev(Event{Kind: KindNotice, Text: text}),
+				ev(Event{Kind: KindInfo, Info: &Info{Context: &Context{Used: c.used, Window: c.window}}}))
 		}
 	case "stream_event":
 		out.Events = append(out.Events, c.stream(l, now)...)
@@ -294,6 +331,7 @@ func (c *claude) response(l claudeLine, now time.Time) []Event {
 	model, isSet := strings.CutPrefix(sent, "set_model ")
 	switch {
 	case isSet && r.Subtype == "success":
+		c.model = model
 		return []Event{{Time: now, Kind: KindInfo, Info: &Info{Model: model}}}
 	case isSet:
 		return []Event{{Time: now, Kind: KindNotice, Text: clip("Couldn't switch to "+model+": "+r.Error, 4096)}}
@@ -370,6 +408,13 @@ func (c *claude) assistant(l claudeLine, now time.Time) []Event {
 		parent = *l.Parent
 	}
 	var out []Event
+	// Each top-level message's usage is the whole context it was sent, so
+	// the last one says how full the window is. Subagents have their own.
+	if u := m.Usage; u != nil && parent == "" && m.ID != c.counted {
+		c.counted = m.ID
+		c.used = u.Input + u.CacheCreation + u.CacheRead + u.Output
+		out = append(out, Event{Time: now, Kind: KindInfo, Info: &Info{Context: &Context{Used: c.used, Window: c.window}}})
+	}
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
@@ -542,7 +587,25 @@ func (c *claude) result(l claudeLine, now time.Time) []Event {
 	}
 	clear(c.blocks)
 	c.draft = ""
+	if w := c.contextWindow(l); w > 0 && w != c.window {
+		c.window = w
+		out = append(out, Event{Time: now, Kind: KindInfo, Info: &Info{Context: &Context{Used: c.used, Window: w}}})
+	}
 	return append(out, Event{Time: now, Kind: KindTurn, Turn: turn})
+}
+
+// contextWindow reads the window of the model Claude runs from a result's
+// per-model usage, which subagents' models share. An alias the user chose
+// won't match the full name, so failing that, the largest window there.
+func (c *claude) contextWindow(l claudeLine) int64 {
+	if u, ok := l.ModelUsage[c.model]; ok {
+		return u.ContextWindow
+	}
+	var w int64
+	for _, u := range l.ModelUsage {
+		w = max(w, u.ContextWindow)
+	}
+	return w
 }
 
 // request handles the CLI asking its host something. Only permission

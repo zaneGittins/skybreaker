@@ -98,6 +98,19 @@ func (b *fakeBackend) ChatTerminal(_ context.Context, id string) (store.Session,
 	}
 	return store.Session{ID: "t1", Parent: id, Status: store.StatusRunning}, known(id)
 }
+func (b *fakeBackend) ChatCompact(_ context.Context, id string) error {
+	b.chat.call("compact " + id)
+	return known(id)
+}
+func (b *fakeBackend) ChatFork(_ context.Context, id string) (store.Session, error) {
+	switch id {
+	case "busy":
+		return store.Session{}, app.ErrBusy
+	case "new":
+		return store.Session{}, errors.New("there's nothing to fork yet")
+	}
+	return store.Session{ID: "f1", Resume: "conv-1", Fork: true, Status: store.StatusRunning}, known(id)
+}
 func (b *fakeBackend) ChatEvents(id string, after int64) ([]chat.Event, error) {
 	if err := known(id); err != nil {
 		return nil, err
@@ -169,13 +182,15 @@ func TestChatActions(t *testing.T) {
 		{"/api/sessions/c1/model", `{"model":""}`, 400},
 		{"/api/sessions/c1/seen", `{}`, 200},
 		{"/api/sessions/c1/login", `{}`, 200},
+		{"/api/sessions/c1/compact", `{}`, 200},
+		{"/api/sessions/nope/compact", `{}`, 404},
 	} {
 		if code, body := f.do(t, "POST", c.path, c.body, nil); code != c.want {
 			t.Errorf("%s %s: %d %s, want %d", c.path, c.body, code, body, c.want)
 		}
 	}
 	got := f.backend.chat.got()
-	for _, want := range []string{"send c1 hello", "answer c1 r1", "interrupt c1", "mode c1 edits", "model c1 sonnet", "seen c1", "login c1"} {
+	for _, want := range []string{"send c1 hello", "answer c1 r1", "interrupt c1", "mode c1 edits", "model c1 sonnet", "seen c1", "login c1", "compact c1"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("calls %q lack %q", got, want)
 		}
@@ -193,6 +208,14 @@ func TestChatActions(t *testing.T) {
 	}
 	if code, _ := f.do(t, "POST", "/api/sessions/busy/terminal", `{}`, nil); code != 409 {
 		t.Errorf("busy terminal: %d", code)
+	}
+	if code, body := f.do(t, "POST", "/api/sessions/c1/fork", `{}`, nil); code != 200 || !strings.Contains(body, `"id":"f1"`) || !strings.Contains(body, `"fork":true`) {
+		t.Errorf("fork: %d %s", code, body)
+	}
+	for path, want := range map[string]int{"/api/sessions/busy/fork": 409, "/api/sessions/nope/fork": 404, "/api/sessions/new/fork": 400} {
+		if code, body := f.do(t, "POST", path, `{}`, nil); code != want {
+			t.Errorf("%s: %d %s, want %d", path, code, body, want)
+		}
 	}
 }
 

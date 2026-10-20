@@ -52,6 +52,9 @@ type Session struct {
 	// ChosenModel is one the user picked from the harness's list; empty
 	// leaves the choice to the harness.
 	ChosenModel string `json:"chosen_model,omitempty"`
+	// Fork: the next start continues a copy of Resume's conversation, not
+	// Resume itself. It clears once the copy has its own ID.
+	Fork bool `json:"fork,omitempty"`
 	// State is a chat's activity (Chat* below) and Note what it waits on or
 	// why it failed; the inbox sorts on them.
 	State   string    `json:"state,omitempty"`

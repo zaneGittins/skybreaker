@@ -23,6 +23,7 @@ type Options struct {
 	Model  string // a model the user chose from the harness's list
 	Resume string // the harness's conversation to continue
 	NewID  string // an ID for a new conversation, for harnesses that take one
+	Fork   bool   // with Resume: continue a copy of that conversation, under a new ID
 	MCP    string // Skybreaker's MCP URL for this conversation (the board and its other tools)
 }
 
@@ -57,6 +58,8 @@ type Driver interface {
 	SetMode(mode string) ([][]byte, error)
 	// SetModel switches to one of the models the harness listed.
 	SetModel(model string) ([][]byte, error)
+	// Compact summarises the conversation so far to free its context.
+	Compact() ([][]byte, error)
 	// Login starts a sign-in, or reports that this harness signs in only
 	// in its terminal UI.
 	Login() ([][]byte, error)

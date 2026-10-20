@@ -146,6 +146,15 @@ type Info struct {
 	Version  string   `json:"version,omitempty"`
 	Commands []string `json:"commands,omitempty"`
 	Models   []Model  `json:"models,omitempty"`
+	Context  *Context `json:"context,omitempty"`
+}
+
+// Context is how full the conversation's context window is: the tokens the
+// last request used, and the window when the harness has said. A zero
+// Window keeps the one reported before.
+type Context struct {
+	Used   int64 `json:"used"`
+	Window int64 `json:"window,omitempty"`
 }
 
 // Model is one the harness offers, as it describes it.

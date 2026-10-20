@@ -355,6 +355,14 @@ body.chat-mode { overflow: hidden; }
 .chat-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; line-height: 1.2; padding-left: 2px; }
 .chat-title .title { font-weight: 750; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-title .sub { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The session button: a ring that fills with the context in use. */
+.ctx-btn svg.ctx-ring { width: 22px; height: 22px; transform: rotate(-90deg); }
+.ctx-ring circle { fill: none; stroke-width: 2.6; }
+.ctx-ring .track { stroke: var(--border-strong); }
+.ctx-ring .fill { stroke: var(--live); stroke-linecap: round; transition: stroke-dasharray .4s ease, stroke .4s; }
+.ctx-ring.none .fill { stroke: transparent; }
+.ctx-ring.warn .fill { stroke: var(--sun); }
+.ctx-ring.full .fill { stroke: var(--danger); }
 .state.work { background: var(--working-bg); color: var(--working); }
 .state.work .dot { animation: breathe 1.4s ease-in-out infinite; }
 
@@ -569,6 +577,9 @@ pre.dc-detail { padding: 10px 12px; font: 500 12.5px/1.5 var(--mono); white-spac
 .menu-item span span, .menu-item .mi-text span { font-size: 12.5px; color: var(--muted); line-height: 1.35; }
 .menu-item svg { width: 16px; height: 16px; color: var(--live); }
 .menu-item.danger b { color: var(--danger); }
+.menu-note { display: grid; gap: 2px; padding: 8px 12px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
+.menu-note b { font-size: 13.5px; font-weight: 700; }
+.menu-note span { font-size: 12.5px; color: var(--muted); }
 
 /* Diffs */
 /* ---- files an agent showed ---- */

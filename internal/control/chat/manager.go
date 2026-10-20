@@ -225,7 +225,7 @@ func (m *Manager) ensure(r *run) error {
 		return fmt.Errorf("harness %s has no chat driver", s.Harness)
 	}
 	opts := m.c.Options(s)
-	opts.Mode, opts.Resume, opts.Model = s.PermMode, s.Resume, s.ChosenModel
+	opts.Mode, opts.Resume, opts.Model, opts.Fork = s.PermMode, s.Resume, s.ChosenModel, s.Fork
 	if opts.Mode == "" {
 		opts.Mode = ModeAsk
 	}
@@ -309,7 +309,7 @@ func (m *Manager) read(r *run, gen int, p *Proc, exited chan struct{}) {
 				m.emit(r, e)
 			}
 			if out.Resume != "" {
-				m.c.Sessions.UpdateSession(r.id, func(x *store.Session) { x.Resume = out.Resume })
+				m.c.Sessions.UpdateSession(r.id, func(x *store.Session) { x.Resume, x.Fork = out.Resume, false })
 			}
 			r.mu.Unlock()
 		}
@@ -677,6 +677,47 @@ func (m *Manager) Login(ctx context.Context, id string) error {
 	})
 	return nil
 }
+
+// Compact has the harness summarise the conversation to free its context
+// window. It runs as a turn of its own, between the agent's turns.
+func (m *Manager) Compact(ctx context.Context, id string) error {
+	s, err := m.chat(id)
+	if err != nil {
+		return err
+	}
+	if s.Resume == "" {
+		return errors.New("there's nothing to compact yet")
+	}
+	r := m.run(id)
+	r.mu.Lock()
+	if r.working || len(r.asks) > 0 {
+		r.mu.Unlock()
+		return errors.New("the agent is working; wait for it or stop it first")
+	}
+	r.used = time.Now()
+	m.emit(r, Event{Kind: KindTurn, Turn: &Turn{State: TurnWorking}})
+	r.mu.Unlock()
+	r.enqueue(func() {
+		if err := m.ensure(r); err != nil {
+			r.mu.Lock()
+			m.failTurn(r, "The agent didn't start: "+err.Error())
+			r.mu.Unlock()
+			return
+		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		lines, err := r.drv.Compact()
+		if err != nil {
+			m.failTurn(r, err.Error())
+			return
+		}
+		m.write(r, lines)
+	})
+	return nil
+}
+
+// Copy starts session to's conversation as a copy of from's, for a fork.
+func (m *Manager) Copy(from, to string) error { return m.c.Log.Copy(from, to) }
 
 // Note adds a notice from Skybreaker to the conversation.
 func (m *Manager) Note(id, text string) {

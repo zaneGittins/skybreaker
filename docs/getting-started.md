@@ -43,7 +43,8 @@ Open `https://skybreaker.<your-tailnet>.ts.net`, tap **+** and pick Claude or Co
 
 - **Sign in** once per project. For Claude, open the chat's terminal and run `/login`; Codex shows a sign-in code in the chat. Logins persist across restarts.
 - **Notifications:** on a phone, add Skybreaker to the home screen, open it from there and tap the bell.
-- **In a chat**, `/rename <title>` names it, `/color <colour>` tints it to tell it apart, and `/goal <text>` pins a goal and gives it to the agent. Other slash commands go to the agent as usual.
+- **In a chat**, `/rename <title>` names it, `/color <colour>` tints it to tell it apart, and `/goal <text>` pins a goal and gives it to the agent. `/compact` summarises the conversation to free up context, `/fork` copies it into a new chat that goes its own way, and `/clear` ends the chat and starts a fresh one with the same agent, mode and model. Other slash commands go to the agent as usual.
+- **The ring** at the top right of a chat fills as the conversation uses up the model's context window, turning yellow past 60% and red past 85%. Tap it to compact, fork, start a new chat or end the session.
 - **Boards:** each project has one, and agents use it through Skybreaker's MCP tools. To give your own Claude Code access to every board:
 
   ```sh

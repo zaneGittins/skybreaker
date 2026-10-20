@@ -126,9 +126,16 @@ func TestClaudeReplayBash(t *testing.T) {
 	if resume != "15e3d7db-82bd-455a-98c3-90e02034e81b" {
 		t.Errorf("resume = %q", resume)
 	}
-	info := find(events, KindInfo)
+	info := slices.DeleteFunc(find(events, KindInfo), func(e Event) bool { return e.Info.Context != nil })
 	if len(info) != 1 || info[0].Info.Model != "claude-opus-5-5" || info[0].Info.Mode != ModeAsk || !slices.Contains(info[0].Info.Commands, "compact") {
 		t.Fatalf("info = %+v", info)
+	}
+	// Two messages, each reporting how full the context is; the result
+	// adds the model's window. (The result's own usage sums the turn's
+	// requests, so it isn't the context.)
+	cs := contexts(events)
+	if len(cs) != 3 || cs[0].Used != 22390 || cs[2] != (Context{Used: cs[1].Used, Window: 1000000}) || cs[1].Used <= cs[0].Used {
+		t.Errorf("contexts = %+v", cs)
 	}
 	tools := find(events, KindTool)
 	if len(tools) != 2 {
