@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"slices"
+	"strconv"
 
 	"github.com/zaneGittins/skybreaker/internal/proxy/approval"
 	"github.com/zaneGittins/skybreaker/internal/proxy/audit"
@@ -49,23 +50,45 @@ func (s *server) decideRequest(w http.ResponseWriter, r *http.Request) {
 
 // activity is the security page: the broker's recent decisions, newest
 // first, and the sandboxes' live tokens.
+// activityPage is how many audit entries a page of the activity log holds.
+const activityPage = 50
+
+// activityScan bounds how far back the log is read for one page; older
+// entries stay in the audit log file.
+const activityScan = 20000
+
+// activity is a page of the broker's audit log, newest first, filtered to a
+// project or to what was blocked, and the sandboxes' tokens.
 func (s *server) activity(w http.ResponseWriter, r *http.Request) {
-	project := r.URL.Query().Get("project")
-	entries, err := s.Network.Audit(1000)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	log := []audit.Entry{}
-	for _, e := range slices.Backward(entries) {
-		if project == "" || e.Project == project {
-			log = append(log, e)
+	q := r.URL.Query()
+	project, blocked := q.Get("project"), q.Get("blocked") == "1"
+	page, _ := strconv.Atoi(q.Get("page"))
+	page = max(page, 1)
+	want := page*activityPage + 1 // one more says whether there's a next page
+	var matched []audit.Entry
+	for n := want; ; n = min(n*4, activityScan) {
+		entries, err := s.Network.Audit(n)
+		if err != nil {
+			fail(w, err)
+			return
 		}
-		if len(log) == 300 {
+		matched = matched[:0]
+		for _, e := range slices.Backward(entries) {
+			if (project == "" || e.Project == project) && (!blocked || e.Decision == "deny") {
+				matched = append(matched, e)
+			}
+		}
+		if len(matched) >= want || len(entries) < n || n == activityScan {
 			break
 		}
 	}
-	webutil.WriteJSONGzip(w, r, http.StatusOK, map[string]any{"log": log, "tokens": nonNil(s.Network.Tokens())})
+	log := []audit.Entry{}
+	if lo := (page - 1) * activityPage; lo < len(matched) {
+		log = matched[lo:min(lo+activityPage, len(matched))]
+	}
+	webutil.WriteJSONGzip(w, r, http.StatusOK, map[string]any{
+		"log": log, "page": page, "more": len(matched) >= want, "tokens": nonNil(s.Network.Tokens()),
+	})
 }
 
 func (s *server) revokeToken(w http.ResponseWriter, r *http.Request) {

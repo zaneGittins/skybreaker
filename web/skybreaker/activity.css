@@ -12,7 +12,7 @@
 .dock-card.approval.request { padding: 14px 16px; gap: 10px; max-height: 60vh; overflow: auto; }
 .dock-card.approval.request .req-title { font-size: 14.5px; }
 
-.activity .note { margin: 0 0 12px; color: var(--text-2); font-size: 14px; max-width: 64ch; }
+.activity p.note { margin: 0 0 12px; padding: 0; border: 0; background: none; border-radius: 0; color: var(--text-2); font-size: 14px; max-width: 64ch; }
 .activity .chips { margin-bottom: 12px; }
 .activity .proj { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); font-weight: 600; }
 .activity .proj .pdot { width: 7px; height: 7px; }
@@ -39,6 +39,11 @@ details.audit-item[open] summary .target { white-space: normal; overflow-wrap: a
 .kill-row .input { flex: 1; min-width: 180px; max-width: 300px; }
 
 #activity-btn.has { color: var(--sun); }
+
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 4px; }
+.pager .btn svg { width: 16px; height: 16px; }
+.pager .btn[disabled] { opacity: .4; pointer-events: none; }
+.pager-at { color: var(--muted); font-size: 13px; }
 
 @media (max-width: 760px) {
   .arow .when .proj { display: none; }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +21,7 @@ type fakeNetwork struct {
 	decided   map[string]string // id → "approve by" / "deny by"
 	revoked   []string
 	killed    string
+	log       []audit.Entry // oldest first, as the audit log holds them; nil for two
 }
 
 func newFakeNetwork() *fakeNetwork {
@@ -79,10 +81,13 @@ func (f *fakeNetwork) RevokeAll(by string) (int, error) {
 }
 
 func (f *fakeNetwork) Audit(n int) ([]audit.Entry, error) {
-	return []audit.Entry{
-		{Decision: "allow", Project: "bifract", Host: "proxy.golang.org"},
-		{Decision: "deny", Project: "orbit", Host: "evil.example", Reason: "host is not on the project's allow list"},
-	}, nil
+	if f.log == nil {
+		return []audit.Entry{
+			{Decision: "allow", Project: "bifract", Host: "proxy.golang.org"},
+			{Decision: "deny", Project: "orbit", Host: "evil.example", Reason: "host is not on the project's allow list"},
+		}, nil
+	}
+	return f.log[max(0, len(f.log)-n):], nil
 }
 
 func TestNetworkRequests(t *testing.T) {
@@ -167,5 +172,58 @@ func TestTokensAndKill(t *testing.T) {
 	code, body := f.do(t, "POST", "/api/kill", `{"confirm":"revoke all"}`, nil)
 	if code != 200 || !strings.Contains(body, `"revoked":1`) || f.network.killed != "zane@example.com" {
 		t.Fatalf("kill: %d %s by %q", code, body, f.network.killed)
+	}
+}
+
+// The activity log comes a page at a time, newest first, filtered on the
+// server so a page is always full.
+func TestActivityPages(t *testing.T) {
+	f := newFixture(t, you)
+	for i := range 130 {
+		e := audit.Entry{Decision: "allow", Project: "orbit", Host: "h.example", Reason: fmt.Sprint("#", i)}
+		if i%2 == 1 {
+			e.Project = "bifract"
+		}
+		if i%5 == 0 {
+			e.Decision = "deny"
+		}
+		f.network.log = append(f.network.log, e)
+	}
+	page := func(q string) (log []audit.Entry, more bool, n int) {
+		t.Helper()
+		code, body := f.do(t, "GET", "/api/activity"+q, "", nil)
+		var out struct {
+			Log  []audit.Entry `json:"log"`
+			Page int           `json:"page"`
+			More bool          `json:"more"`
+		}
+		if err := json.Unmarshal([]byte(body), &out); err != nil || code != 200 {
+			t.Fatalf("%s: %d %s", q, code, body)
+		}
+		return out.Log, out.More, out.Page
+	}
+	if log, more, n := page(""); len(log) != 50 || log[0].Reason != "#129" || !more || n != 1 {
+		t.Fatalf("first page: %d %v %d", len(log), more, n)
+	}
+	if log, more, _ := page("?page=3"); len(log) != 30 || log[0].Reason != "#29" || more {
+		t.Fatalf("last page: %d %q %v", len(log), log[0].Reason, more)
+	}
+	if log, more, _ := page("?page=9"); len(log) != 0 || more {
+		t.Fatalf("past the end: %d %v", len(log), more)
+	}
+	if _, _, n := page("?page=-2"); n != 1 {
+		t.Fatalf("bad page: %d", n)
+	}
+	log, more, _ := page("?blocked=1")
+	if len(log) != 26 || more || log[0].Reason != "#125" {
+		t.Fatalf("blocked: %d %v", len(log), more)
+	}
+	for _, e := range log {
+		if e.Decision != "deny" {
+			t.Fatalf("blocked has %+v", e)
+		}
+	}
+	if log, more, _ := page("?project=bifract&page=2"); len(log) != 15 || more || log[0].Project != "bifract" || log[0].Reason != "#29" {
+		t.Fatalf("project page 2: %d %v %+v", len(log), more, log[0])
 	}
 }

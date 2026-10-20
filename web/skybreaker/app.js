@@ -9,7 +9,7 @@
 const state = { meta: null, route: null, seq: 0, timers: [], term: null, chat: null };
 
 function navigate(path) {
-  if (location.pathname !== path) history.pushState(null, '', path);
+  if (location.pathname + location.search !== path) history.pushState(null, '', path);
   go();
 }
 
@@ -102,7 +102,8 @@ async function renderHome(seq) {
   const review = d.review || [];
   const next = d.next || [];
   const orphans = d.pending.filter(a => !d.sessions.some(s => s.id === a.session));
-  const earlier = [...g.recent, ...g.ended];
+  // Open chats stay in view; Earlier is only what has ended.
+  const earlier = g.ended;
   const needs = g.forYou.length + requests.length + review.length + orphans.length;
   const parts = [
     requests.length + orphans.length ? plural(requests.length + orphans.length, 'approval') : '',
@@ -121,6 +122,7 @@ async function renderHome(seq) {
     forYou.length ? el('div.row-list' + (g.forYou.length ? '' : '.phone-only'), null, forYou) : null,
     g.forYou.some(s => pendingFor(s.id).length) ? el('div.approvals', null, d.pending.filter(a => g.forYou.some(s => s.id === a.session)).map(a => approvalCard(a, tints[a.project]))) : null,
     g.working.length ? el('section.list-sec', null, secHead('Working', g.working.length), el('div.row-list', null, g.working.map(row))) : null,
+    g.recent.length ? el('section.list-sec', null, secHead('Open', g.recent.length), el('div.row-list', null, g.recent.map(row))) : null,
     !d.sessions.some(s => s.status === 'running') ? el('button.empty-add', { type: 'button', onclick: () => newSessionSheet(d.projects) }, svg(ICON.plus), 'Start a chat') : null,
     el('section.list-sec.phone-only', null, secHead('Projects'),
       el('div.tiles', null, d.projects.map(p => projectTile(p, review)),
@@ -266,23 +268,34 @@ function requestCard(a, tint, opts = {}) {
 
 // --- activity: what left the sandboxes ---------------------------------------
 
+// renderActivity pages through the broker's log on the server, newest
+// first; the page is in the address (?page=2), the filter a preference.
 async function renderActivity(seq) {
-  const [d, reqs, projects] = await Promise.all([api('GET', '/api/activity'), api('GET', '/api/requests'), api('GET', '/api/projects')]);
+  const filter = prefs.get('activityFilter') || 'all';
+  const page = Math.max(1, parseInt(new URLSearchParams(location.search).get('page'), 10) || 1);
+  const q = new URLSearchParams({ page: String(page) });
+  if (filter === 'blocked') q.set('blocked', '1');
+  else if (filter.startsWith('p:')) q.set('project', filter.slice(2));
+  const [d, reqs, projects] = await Promise.all([api('GET', '/api/activity?' + q), api('GET', '/api/requests'), api('GET', '/api/projects')]);
   if (seq !== state.seq) return;
+  if (filter !== 'all' && filter !== 'blocked' && !projects.some(p => 'p:' + p.name === filter)) {
+    prefs.set('activityFilter', 'all'); // a project that's gone
+    return navigate('/activity');
+  }
   crumb(null);
   const tints = Object.fromEntries(projects.map(p => [p.name, p.tint]));
   const pending = reqs.filter(a => a.state === 'pending');
   const decided = reqs.filter(a => a.state !== 'pending').slice(0, 10);
-  let filter = prefs.get('activityFilter') || 'all';
-  const list = el('div.row-list.audit');
-  const draw = () => {
-    const shown = d.log.filter(e => filter === 'all' ? true : filter === 'blocked' ? e.decision === 'deny' : e.project === filter).slice(0, 150);
-    list.replaceChildren(...(shown.length ? shown.map(e => auditItem(e, tints)) : [el('div.empty-note.flat', null, 'Nothing here yet.')]));
-    chips.forEach(c => c.classList.toggle('on', c.dataset.f === filter));
-  };
-  const chip = (f, label) => el('button.chip', { type: 'button', 'data-f': f, onclick: () => { filter = f; prefs.set('activityFilter', f); draw() } }, label);
-  const chips = [chip('all', 'Everything'), chip('blocked', 'Blocked'), ...projects.map(p => chip(p.name, p.name))];
-  draw();
+  const at = n => n > 1 ? '/activity?page=' + n : '/activity';
+  const chip = (f, label) => el('button.chip' + (f === filter ? '.on' : ''), { type: 'button', 'aria-pressed': String(f === filter), onclick: () => { prefs.set('activityFilter', f); navigate('/activity') } }, label);
+  const chips = [chip('all', 'Everything'), chip('blocked', 'Blocked'), ...projects.map(p => chip('p:' + p.name, p.name))];
+  const turn = n => () => { navigate(at(n)); $('#net-log')?.scrollIntoView({ block: 'start' }) };
+  const pager = page > 1 || d.more ? el('nav.pager', { 'aria-label': 'Pages' },
+    el('button.btn.sm.ghost', { type: 'button', disabled: page === 1 || null, onclick: turn(page - 1) }, svg(ICON.back), 'Newer'),
+    el('span.pager-at', null, 'Page ' + page),
+    el('button.btn.sm.ghost', { type: 'button', disabled: !d.more || null, onclick: turn(page + 1) }, 'Older', svg(ICON.chevron))) : null;
+  const list = el('div.row-list.audit', null,
+    d.log.length ? d.log.map(e => auditItem(e, tints)) : el('div.empty-note.flat', null, page > 1 ? 'Nothing older.' : 'Nothing here yet.'));
 
   const revoke = async t => {
     if (!confirm(`Cut ${t.project}'s sandbox off? It loses all network access until its sandbox restarts.`)) return;
@@ -304,16 +317,16 @@ async function renderActivity(seq) {
     pending.length ? el('section', null,
       el('div.sec-head', null, el('h2', null, 'Waiting for you'), el('span.count', null, String(pending.length))),
       el('div.approvals', null, pending.map(a => requestCard(a, tints[a.project], { full: true })))) : null,
-    decided.length ? el('section.inbox-sec', null,
+    decided.length && page === 1 ? el('section.inbox-sec', null,
       el('div.sec-head', null, el('h2', null, 'Decided')),
       el('div.row-list', null, decided.map(a => el('div.arow', null,
         el('span.tag.' + (a.state === 'approved' || a.state === 'used' ? 'ok' : 'bad'), null, a.state),
         el('span.target.mono', null, a.view?.title || `${a.method} ${a.host}${a.path}`),
         el('span.when', null, [a.decided_by, ago(a.decided || a.created)].filter(Boolean).join(' · ')))))) : null,
-    el('section.inbox-sec', null,
+    el('section.inbox-sec', { id: 'net-log' },
       el('div.sec-head', null, el('h2', null, 'Network')),
       el('div.chips', null, chips),
-      list),
+      list, pager),
     el('section.inbox-sec', null,
       el('div.sec-head', null, el('h2', null, 'Sandbox access')),
       el('p.note', null, 'Each running sandbox holds one token for the broker. Revoking it cuts that sandbox off at once, open connections included.'),
