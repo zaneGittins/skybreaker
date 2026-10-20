@@ -44,7 +44,8 @@ func TestOverlay(t *testing.T) {
 
 // TestPagesReferenceEmbeddedFiles catches a script or stylesheet added to a
 // page but not to the build (it would 404 only in a built binary), and inline
-// scripts or style attributes, which the CSP blocks.
+// scripts or handlers, which the CSP blocks, and style attributes, which the
+// app's CSP allows (xterm.js needs inline styles), so this test keeps out.
 func TestPagesReferenceEmbeddedFiles(t *testing.T) {
 	for name, fsys := range map[string]fs.FS{"skybreaker": Skybreaker()} {
 		index, err := fs.ReadFile(fsys, "index.html")
@@ -70,10 +71,28 @@ func TestPagesReferenceEmbeddedFiles(t *testing.T) {
 	}
 }
 
+// scripts are the page's scripts, as index.html loads them, and the service
+// worker: every script the app runs.
+func scripts(t *testing.T) []string {
+	t.Helper()
+	index, err := fs.ReadFile(Skybreaker(), "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, m := range regexp.MustCompile(`<script src="/([^"?]+)"`).FindAllStringSubmatch(string(index), -1) {
+		out = append(out, m[1])
+	}
+	if len(out) < 6 {
+		t.Fatalf("only %d scripts in index.html", len(out))
+	}
+	return append(out, "sw.js")
+}
+
 func TestNoInnerHTML(t *testing.T) {
 	// Agent-written text reaches these pages; it must only ever be text.
-	for _, f := range []string{"shared/dom.js", "skybreaker/app.js", "skybreaker/chat.js", "skybreaker/chatlib.js", "skybreaker/sw.js", "skybreaker/board.js"} {
-		b, err := fs.ReadFile(files, f)
+	for _, f := range scripts(t) {
+		b, err := fs.ReadFile(Skybreaker(), f)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,8 +101,9 @@ func TestNoInnerHTML(t *testing.T) {
 				t.Errorf("%s uses %s", f, bad)
 			}
 		}
-		if regexp.MustCompile(`\bstyle:\s`).Match(b) {
-			t.Errorf("%s sets a style attribute, which the CSP blocks", f)
+		// An attribute is set with a string: el('div', {style: '...'}).
+		if regexp.MustCompile("\\bstyle:\\s*['\"`]").Match(b) {
+			t.Errorf("%s sets a style attribute; the app's CSP allows them, so nothing else stops one", f)
 		}
 	}
 }
@@ -94,8 +114,11 @@ func TestNoInnerHTML(t *testing.T) {
 func TestNoGlobalCollisions(t *testing.T) {
 	decl := regexp.MustCompile(`(?m)^(?:async\s+)?(?:function\s+([A-Za-z_$][\w$]*)|(?:const|let|var)\s+([A-Za-z_$][\w$]*))`)
 	seen := map[string]string{}
-	for _, f := range []string{"shared/lib.js", "shared/dom.js", "skybreaker/chatlib.js", "skybreaker/chat.js", "skybreaker/board.js", "skybreaker/app.js"} {
-		b, err := fs.ReadFile(files, f)
+	for _, f := range scripts(t) {
+		if f == "sw.js" {
+			continue // a worker: its own scope
+		}
+		b, err := fs.ReadFile(Skybreaker(), f)
 		if err != nil {
 			t.Fatal(err)
 		}

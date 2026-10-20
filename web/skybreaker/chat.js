@@ -36,7 +36,6 @@ Object.assign(ICON, {
   alert: ['M12 3l10 18H2z', 'M12 10v4', 'M12 17h.01'],
   branch: ['M6 3v12', 'M18 3a3 3 0 1 0 0 6a3 3 0 1 0 0-6', 'M6 15a3 3 0 1 0 0 6a3 3 0 1 0 0-6', 'M18 9a9 9 0 0 1-9 9'],
   image: ['M4 5h16v14H4z', 'M4 16l5-5 4 4 3-3 4 4', 'M15.5 8.5h.01'],
-  external: ['M14 4h6v6', 'M20 4l-9 9', 'M18 14v5H5V6h5'],
 });
 
 const TOOL_ICON = { command: 'term', edit: 'pencil', read: 'file', search: 'search', web: 'globe', agent: 'agent', todo: 'list', mcp: 'plug', other: 'bolt' };
@@ -100,7 +99,9 @@ function codeBlock(text, lang) {
 // show their first lines and a button for the rest.
 function diffView(diff, { open = 3, limit = 400 } = {}) {
   const files = diffFiles(diff);
-  if (!files.length) return el('pre.diff-raw', null, diff);
+  // Diffs are agent text a person approves or ships: characters that would
+  // hide or reorder code (bidi overrides, zero-width) are shown, not obeyed.
+  if (!files.length) return el('pre.diff-raw', null, reveal(diff));
   return el('div.diffs', null, files.map((f, i) => {
     const rows = [];
     let shown = 0;
@@ -110,13 +111,13 @@ function diffView(diff, { open = 3, limit = 400 } = {}) {
       shown = 0;
       for (const h of f.hunks) {
         if (shown >= max) break;
-        lines.append(el('div.dl.hunk', null, el('span.ln'), el('span.ln'), el('span.dt', null, h.context ? '@@ ' + h.context : '⋯')));
+        lines.append(el('div.dl.hunk', null, el('span.ln'), el('span.ln'), el('span.dt', null, h.context ? '@@ ' + reveal(h.context) : '⋯')));
         for (const l of h.lines) {
           if (shown++ >= max) break;
           lines.append(el('div.dl.' + l.k, null,
             el('span.ln', null, l.o != null ? String(l.o) : ''),
             el('span.ln', null, l.n != null ? String(l.n) : ''),
-            el('span.dt', null, (l.k === 'add' ? '+' : l.k === 'del' ? '−' : ' ') + l.text)));
+            el('span.dt', null, (l.k === 'add' ? '+' : l.k === 'del' ? '−' : ' ') + reveal(l.text))));
         }
       }
       const total = f.hunks.reduce((n, h) => n + h.lines.length, 0);
@@ -127,7 +128,7 @@ function diffView(diff, { open = 3, limit = 400 } = {}) {
     return el('details.diff-file', { open: i < open },
       el('summary', null,
         svg(ICON.chevron, 'chev'),
-        el('span.df-path', null, f.path),
+        el('span.df-path', null, reveal(f.path)),
         f.isNew ? el('span.df-tag', null, 'new') : null,
         f.isDeleted ? el('span.df-tag.del', null, 'deleted') : null,
         el('span.grow'),
@@ -792,12 +793,17 @@ async function renderChat(seq, d) {
         el('div.dc-acts', null, el('button.btn.primary', { type: 'button', onclick: () => openTerminal() }, svg(ICON.term), 'Open the terminal')));
     }
     if (l.url && l.code) {
-      const href = safeHref(l.url);
+      // The link comes from the harness in the sandbox: its host is shown,
+      // and one that isn't the vendor's own sign-in host is flagged.
+      const where = signInHost(l.url);
       return el('div.dock-card.login', null,
         el('div.dc-head', null, svg(ICON.key), el('span.dc-kicker', null, `Sign in to ${who}`)),
         el('div.dc-reason', null, 'Open the sign-in page, sign in with your account, and enter this code:'),
-        el('button.device-code', { type: 'button', onclick: () => copyText(l.code), title: 'Copy' }, l.code, svg(ICON.copy)),
-        el('div.dc-acts', null, href ? el('a.btn.primary', { href, target: '_blank', rel: 'noopener noreferrer' }, 'Open sign-in page') : el('span.mono', null, l.url)),
+        el('button.device-code', { type: 'button', onclick: () => copyText(l.code), title: 'Copy' }, reveal(l.code), svg(ICON.copy)),
+        where && !where.known ? el('div.dc-reason.dc-warn', null, `This sign-in page is on ${where.host}, not ${who}'s own site. Don't enter your password unless you expected that.`) : null,
+        el('div.dc-acts', null, where
+          ? el('a.btn' + (where.known ? '.primary' : ''), { href: l.url, target: '_blank', rel: 'noopener noreferrer' }, 'Open sign-in page on ' + where.host)
+          : el('span.mono', null, reveal(l.url))),
         el('div.dc-wait', null, el('span.spinner'), 'Waiting for you to finish signing in…'));
     }
     return el('div.dock-card.login', null,

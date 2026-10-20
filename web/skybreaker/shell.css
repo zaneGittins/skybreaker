@@ -177,7 +177,6 @@ details.earlier .row-list { margin-top: 4px; }
   @keyframes halo-fade { 50% { opacity: .45; } }
 }
 
-
 /* ---- the sandbox sheet ---- */
 .sb-status { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 18px; background: var(--surface-2); color: var(--text-2); }
 .sb-status .dot { width: 10px; height: 10px; flex-shrink: 0; border-radius: 50%; background: var(--dot-backlog); }
@@ -235,7 +234,7 @@ details.earlier .row-list { margin-top: 4px; }
 /* Approval cards: one quiet border, no stripe. */
 .approval.request { border: 1px solid color-mix(in srgb, var(--sun) 38%, var(--border)); }
 .approval.request .head { row-gap: 2px; }
-.approval .details-input summary, .approval details.input summary { font-size: 13px; }
+.approval details.input summary { font-size: 13px; }
 
 /* ---- phones and tablets ---- */
 @media (max-width: 1023px) {

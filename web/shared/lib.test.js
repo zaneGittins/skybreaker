@@ -2,7 +2,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { ago, until, route, toolSummary, toolInput, reveal, tail, duration, messageBytes, termFont, sgrRuns } = require('./lib.js');
+const { ago, until, route, toolSummary, toolInput, reveal, duration, messageBytes, termFont, sgrRuns } = require('./lib.js');
 
 test('ago', () => {
   const now = Date.parse('2026-10-17T12:00:00Z');
@@ -52,11 +52,6 @@ test('toolInput is the whole input, so the card never hides what is approved', (
   assert.ok(s.includes('x'.repeat(500)), 'content was cut');
   assert.ok(s.endsWith('<U+2066>"\n}'), s.slice(-20));
   assert.equal(toolInput(null), '');
-});
-
-test('tail keeps the last non-empty lines', () => {
-  assert.equal(tail('a\nb\nc\n\n\n', 2), 'b\nc');
-  assert.equal(tail('', 3), '');
 });
 
 test('duration', () => {

@@ -192,6 +192,18 @@ function safeHref(u) {
   return /^(https?:\/\/[^\s]+|mailto:[^\s]+)$/i.test(s) ? s : null;
 }
 
+// signInHost is where a harness's sign-in link goes, and whether that's
+// one of the vendors' own sign-in hosts. The link comes from the harness in
+// the sandbox, so the page shows the host, and warns about any other.
+const SIGN_IN_HOSTS = ['auth.openai.com', 'chatgpt.com', 'claude.ai', 'platform.claude.com', 'console.anthropic.com'];
+function signInHost(u) {
+  if (!safeHref(u) || !/^https:/i.test(u)) return null;
+  try {
+    const host = new URL(u).hostname.toLowerCase();
+    return { host, known: SIGN_IN_HOSTS.includes(host) };
+  } catch { return null }
+}
+
 const SPECIAL = /[\\`\n[<*_~]|https?:\/\//g;
 const CODE_SPAN = /(`+)([\s\S]*?[^`])\1(?!`)/y;
 const LINK = /\[((?:[^\[\]\\]|\\.)*)\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)/y;
@@ -213,6 +225,18 @@ function mdInline(src) {
     if (text) { out.push({ t: 'text', text }); text = '' }
     if (node) out.push(node);
   };
+  // Where a full scan for a delimiter's closer first failed: from any later
+  // opener of the same kind it fails too (the closers it could use are a
+  // subset), so it isn't scanned again. Without this, text full of
+  // unmatched markers rescans to the end for each one.
+  const failed = {};
+  const scan = (key, re, scanned) => {
+    if (failed[key] !== undefined && i >= failed[key]) return null;
+    const m = sticky(re, s, i);
+    if (!m && scanned && failed[key] === undefined) failed[key] = i;
+    return m;
+  };
+  const space = j => j >= s.length || /\s/.test(s[j]);
   let i = 0;
   while (i < s.length) {
     SPECIAL.lastIndex = i;
@@ -224,7 +248,9 @@ function mdInline(src) {
     let m;
     if (c === '\\' && i + 1 < s.length && /[\\`*_{}[\]()#+\-.!~|>]/.test(s[i + 1])) { text += s[i + 1]; i += 2; continue }
     if (c === '\n') { push({ t: 'br' }); i++; continue }
-    if (c === '`' && (m = sticky(CODE_SPAN, s, i))) {
+    let run = 0;
+    if (c === '`') while (s[i + run] === '`') run++;
+    if (c === '`' && (m = scan('`'.repeat(run), CODE_SPAN, true))) {
       let t = m[2];
       if (t.length > 2 && t.startsWith(' ') && t.endsWith(' ')) t = t.slice(1, -1);
       push({ t: 'code', text: t });
@@ -241,13 +267,13 @@ function mdInline(src) {
       let url = m[0].replace(/[.,:;!?)\]}]+$/, '');
       if (url.length > 8) { push({ t: 'a', href: url, children: [{ t: 'text', text: url }] }); i += url.length; continue }
     }
-    if ((c === '*' || c === '_') && s[i + 1] === c && !(c === '_' && word(prev)) && (m = sticky(STRONG, s, i))) {
+    if ((c === '*' || c === '_') && s[i + 1] === c && !(c === '_' && word(prev)) && (m = scan(c + c, STRONG, !space(i + 2)))) {
       push({ t: 'b', children: mdInline(m[2]) });
       i += m[0].length;
       continue;
     }
-    if (c === '~' && (m = sticky(STRIKE, s, i))) { push({ t: 's', children: mdInline(m[1]) }); i += m[0].length; continue }
-    if ((c === '*' || c === '_') && !(c === '_' && word(prev)) && (m = sticky(EM, s, i)) && !/^\s/.test(m[2])) {
+    if (c === '~' && s[i + 1] === '~' && (m = scan('~~', STRIKE, !space(i + 2)))) { push({ t: 's', children: mdInline(m[1]) }); i += m[0].length; continue }
+    if ((c === '*' || c === '_') && !(c === '_' && word(prev)) && (m = scan(c, EM, !space(i + 1))) && !/^\s/.test(m[2])) {
       push({ t: 'i', children: mdInline(m[2]) });
       i += m[0].length;
       continue;
@@ -527,4 +553,4 @@ function activityLabel(c) {
   return 'Working';
 }
 
-if (typeof module !== 'undefined') module.exports = { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel, contextUse, fmtTokens };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel, contextUse, fmtTokens };

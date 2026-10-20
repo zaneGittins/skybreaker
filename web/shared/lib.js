@@ -158,11 +158,6 @@ function sgrRuns(row) {
   return runs;
 }
 
-function tail(text, n) {
-  const lines = String(text || '').replace(/\s+$/, '').split('\n');
-  return lines.slice(-n).join('\n');
-}
-
 // dropPosition is where a card dropped between two others goes: the
 // midpoint of its neighbours' positions, or one past the end.
 function dropPosition(above, below) {
@@ -244,4 +239,4 @@ function activitySeries(hours, now = new Date(), days = 14) {
   return out;
 }
 
-if (typeof module !== 'undefined') module.exports = { activitySeries, boardSeries, rulesToText, rulesFromText, hostsFromText, ago, until, duration, route, auditRow, dropPosition, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal, tail };
+if (typeof module !== 'undefined') module.exports = { activitySeries, boardSeries, rulesToText, rulesFromText, hostsFromText, ago, until, duration, route, auditRow, dropPosition, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal };

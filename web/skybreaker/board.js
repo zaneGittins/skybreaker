@@ -134,7 +134,9 @@ async function openItem(ref) {
   const patch = async p => {
     try { it = await api('PATCH', itemPath(it.ref), p); draw() } catch (e) { toast(e.message, 'error') }
   };
-  let editing = false;
+  // Drafts outlive a redraw (a live update, a status tap): a note half
+  // typed, a description being edited (null when it isn't).
+  let noteDraft = '', descDraft = null;
 
   const draw = () => {
     const title = el('textarea.item-title', { rows: '1', 'aria-label': 'Title' });
@@ -152,7 +154,7 @@ async function openItem(ref) {
     labels.value = (it.labels || []).join(', ');
     labels.addEventListener('change', () => patch({ labels: labels.value.split(',').map(s => s.trim()).filter(Boolean) }));
 
-    const harnesses = state.boardChat || Object.keys(state.meta?.chat || {});
+    const harnesses = it.chat || [];
     const work = it.status === 'done' || !harnesses.length ? null : el('div.work', null,
       el('span.muted', null, 'Start a chat on it:'),
       harnesses.map((h, i) => el('button.btn.sm' + (i ? '' : '.primary'), { type: 'button', onclick: () => workOn(it, h) }, svg(ICON.bolt), harnessLabel(h))));
@@ -174,30 +176,38 @@ async function openItem(ref) {
       el('button.btn.danger.sm.delete-item', { type: 'button', onclick: () => deleteItem(it) }, svg(ICON.trash), 'Delete item'));
   };
 
+  // A live update waits while you're typing in the sheet, then lands when
+  // you leave the field.
+  let stale = false;
+  const typing = () => body.contains(document.activeElement) && /^(TEXTAREA|INPUT)$/.test(document.activeElement.tagName);
   const reload = async () => {
-    try { it = await api('GET', itemPath(it.ref)); if (!editing) draw() } catch { }
+    try { it = await api('GET', itemPath(it.ref)) } catch { return }
+    if (typing()) stale = true; else draw();
   };
+  body.addEventListener('focusout', () => setTimeout(() => {
+    if (stale && !typing()) { stale = false; draw() }
+  }, 0));
   state.itemSheet = { ref: it.ref, reload };
   draw();
 
   function description(it, patch) {
     const box = el('section.desc');
     const view = () => {
-      editing = false;
+      descDraft = null;
       box.replaceChildren(
         it.body ? markdown(it.body) : el('p.muted', null, 'No description yet.'),
         el('button.btn.sm.ghost', { type: 'button', onclick: edit }, svg(ICON.pencil), it.body ? 'Edit description' : 'Add a description'));
     };
     const edit = () => {
-      editing = true;
-      const ta = el('textarea.textarea', { rows: '8', 'aria-label': 'Description' });
-      ta.value = it.body || '';
+      if (descDraft === null) descDraft = it.body || '';
+      const ta = el('textarea.textarea', { rows: '8', 'aria-label': 'Description', oninput: () => { descDraft = ta.value } });
+      ta.value = descDraft;
       box.replaceChildren(ta, el('div.row', null,
-        el('button.btn.sm.primary', { type: 'button', onclick: () => { editing = false; patch({ body: ta.value }) } }, 'Save'),
+        el('button.btn.sm.primary', { type: 'button', onclick: () => { descDraft = null; patch({ body: ta.value }) } }, 'Save'),
         el('button.btn.sm.ghost', { type: 'button', onclick: view }, 'Cancel')));
       ta.focus();
     };
-    view();
+    if (descDraft !== null) edit(); else view();
     return box;
   }
 
@@ -218,12 +228,13 @@ async function openItem(ref) {
   }
 
   function noteBox(it) {
-    const ta = el('textarea.textarea', { rows: '2', placeholder: 'Add a note for the agent or yourself', 'aria-label': 'New note' });
+    const ta = el('textarea.textarea', { rows: '2', placeholder: 'Add a note for the agent or yourself', 'aria-label': 'New note', oninput: () => { noteDraft = ta.value } });
+    ta.value = noteDraft;
     return el('form.note-box', {
       onsubmit: async e => {
         e.preventDefault();
         if (!ta.value.trim()) return;
-        try { await api('POST', `${itemPath(it.ref)}/notes`, { body: ta.value }); ta.value = ''; reload() } catch (err) { toast(err.message, 'error') }
+        try { await api('POST', `${itemPath(it.ref)}/notes`, { body: ta.value }); ta.value = noteDraft = ''; reload() } catch (err) { toast(err.message, 'error') }
       },
     }, ta, el('button.btn.sm', { type: 'submit' }, 'Add note'));
   }
@@ -285,6 +296,8 @@ function boardSnapshot(p, b) {
 // boardChart is the board's last two weeks: a bar for what was finished
 // each day, and a line for how much was open at its end.
 function boardChart(h) {
+  // A board that has had nothing in it has nothing to chart.
+  if (!h.open_at_start && !(h.created || []).length && !(h.done || []).length) return null;
   const days = boardSeries(h);
   return dayChart(days, {
     label: `Finished per day and open items, last ${days.length} days`,

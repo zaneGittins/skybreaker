@@ -141,7 +141,7 @@ async function renderHome(seq) {
           el('span.tile-name', null, svg(ICON.plus), 'New project'), el('span.tile-sub', null, 'From a GitHub repo')))),
     earlier.length ? el('details.earlier', { open: prefs.get('earlierOpen') === '1', ontoggle: e => prefs.set('earlierOpen', e.target.open ? '1' : '0') },
       el('summary', null, el('span', null, 'Earlier'), el('span.n', null, String(earlier.length)), svg(ICON.chevron, 'chev')),
-      el('div.row-list', null, earlier.slice(0, 40).map(row))) : null);
+      el('div.row-list', null, earlier.map(row))) : null);
   const rail = el('aside.home-rail.desk-only', null,
     review.length ? el('section.rail-card', null, el('h2', null, 'Ready for review'), review.map(it => railItem(it))) : null,
     next.length ? el('section.rail-card', null, el('h2', null, 'Up next'), next.map(it => railItem(it))) : null);
@@ -390,8 +390,6 @@ async function renderProject(seq, name, tab = 'chats') {
   const [d, b] = await Promise.all([api('GET', '/api/projects/' + enc), api('GET', `/api/projects/${enc}/board`)]);
   if (seq !== state.seq) return;
   const p = d.project;
-  state.boardChat = b.chat;
-  state.here = p;
   crumb(p);
   markSidebar();
   const live = d.sessions.filter(s => s.status === 'running' && !s.parent);
@@ -436,7 +434,7 @@ function chatsView(p, d, b, live, ended) {
       el('summary', null, el('span', null, plural(ended.length, 'ended chat')), svg(ICON.chevron, 'chev')),
       el('div.row-list', null, ended.slice(0, 40).map(s => s.mode === 'chat' ? sessionRow(s) : endedRow(s)))) : null,
     upNext(p, b),
-    b.history ? el('section.list-sec.phone-only.p-chart', null, el('div.sec-title', null, el('h2', null, 'Board, last 14 days')), boardChart(b.history)) : null);
+    b.history && boardChart(b.history) ? el('section.list-sec.phone-only.p-chart', null, el('div.sec-title', null, el('h2', null, 'Board, last 14 days')), boardChart(b.history)) : null);
   return el('div.p-cols', null, main, el('aside.p-side.desk-only', null, boardSnapshot(p, b)));
 }
 
@@ -539,7 +537,6 @@ async function previewSheet(p) {
 
 Object.assign(ICON, {
   code: ['M8 7l-5 5 5 5', 'M16 7l5 5-5 5'],
-  ssh: ['M15 7a4 4 0 1 1-3.5 6L5 19.5V22H2v-3l6.5-6.5A4 4 0 0 1 15 7z'],
 });
 
 // vscodeSheet opens the project's sandbox in desktop VS Code over SSH:
@@ -576,7 +573,7 @@ async function vscodeSheet(p) {
           el('a.btn.sm.vs-open', { href, onclick: closeSheet }, svg(ICON.code), 'Open in VS Code'))),
       keys.length ? el('div.vs-keys', null,
         el('span.vs-label', null, 'Computers with access'),
-        keys.map(k => el('div.vs-key', null, svg(ICON.ssh),
+        keys.map(k => el('div.vs-key', null, svg(ICON.key),
           el('span.sa-text', null, el('span', null, k.name),
             el('span.sa-sub', null, k.fingerprint.slice(0, 19) + '…', ' · ', ago(k.added))),
           el('button.btn.sm.ghost', { type: 'button', onclick: () => remove(k), 'aria-label': 'Remove ' + k.name + "'s key" }, 'Remove')))) : null,

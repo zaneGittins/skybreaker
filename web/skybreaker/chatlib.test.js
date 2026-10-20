@@ -318,3 +318,25 @@ test('fmtTokens: short counts', () => {
   assert.equal(fmtTokens(1000000), '1M');
   assert.equal(fmtTokens(1250000), '1.3M');
 });
+
+test('mdInline is fast on unmatched markers', () => {
+  // A hostile agent's text: every unmatched ** or * rescanned to the end.
+  for (const s of ['**a '.repeat(16000), '*a **b '.repeat(6000), '`a ``b '.repeat(6000), '~~a '.repeat(16000)]) {
+    const t0 = Date.now();
+    mdInline(s);
+    assert.ok(Date.now() - t0 < 500, `${s.slice(0, 8)}… took ${Date.now() - t0}ms`);
+  }
+  // Skipping what can't close changes no parse: these are as before.
+  const golden = "{\"** a **b**\": [{\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"* a \"}, {\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"*b\"}]}]}], \"* a *b*\": [{\"t\": \"text\", \"text\": \"* a \"}, {\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"b\"}]}], \"**x **y**\": [{\"t\": \"b\", \"children\": [{\"t\": \"text\", \"text\": \"x **y\"}]}], \"`a ``b `c`\": [{\"t\": \"code\", \"text\": \"a ``b \"}, {\"t\": \"text\", \"text\": \"c`\"}], \"a * b * c\": [{\"t\": \"text\", \"text\": \"a * b * c\"}], \"**bold** and *em* and __u__ and _e_\": [{\"t\": \"b\", \"children\": [{\"t\": \"text\", \"text\": \"bold\"}]}, {\"t\": \"text\", \"text\": \" and \"}, {\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"em\"}]}, {\"t\": \"text\", \"text\": \" and \"}, {\"t\": \"b\", \"children\": [{\"t\": \"text\", \"text\": \"u\"}]}, {\"t\": \"text\", \"text\": \" and \"}, {\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"e\"}]}], \"~~ x ~~y~~\": [{\"t\": \"text\", \"text\": \"~~ x \"}, {\"t\": \"s\", \"children\": [{\"t\": \"text\", \"text\": \"y\"}]}], \"snake_case_name *x*\": [{\"t\": \"text\", \"text\": \"snake_case_name \"}, {\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"x\"}]}], \"``` x ``\": [{\"t\": \"code\", \"text\": \"` x \"}], \"**a *b* c**\": [{\"t\": \"b\", \"children\": [{\"t\": \"text\", \"text\": \"a \"}, {\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"b\"}]}, {\"t\": \"text\", \"text\": \" c\"}]}], \"*a **b** c*\": [{\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"a \"}, {\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"*b\"}]}]}, {\"t\": \"text\", \"text\": \" c*\"}], \"x**y**z\": [{\"t\": \"text\", \"text\": \"x\"}, {\"t\": \"b\", \"children\": [{\"t\": \"text\", \"text\": \"y\"}]}, {\"t\": \"text\", \"text\": \"z\"}], \"_a_b_\": [{\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"a_b\"}]}], \"**\\n**\": [{\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"*\"}, {\"t\": \"br\"}, {\"t\": \"text\", \"text\": \"*\"}]}], \"* *\": [{\"t\": \"text\", \"text\": \"* *\"}], \"****\": [{\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"**\"}]}], \"*a`*`b*\": [{\"t\": \"i\", \"children\": [{\"t\": \"text\", \"text\": \"a`\"}]}, {\"t\": \"text\", \"text\": \"`b*\"}]}";
+  for (const [src, want] of Object.entries(JSON.parse(golden))) assert.deepEqual(mdInline(src), want, JSON.stringify(src));
+});
+
+test('signInHost', () => {
+  const { signInHost } = require('./chatlib.js');
+  assert.deepEqual(signInHost('https://auth.openai.com/codex/device'), { host: 'auth.openai.com', known: true });
+  assert.deepEqual(signInHost('https://claude.ai/oauth/x'), { host: 'claude.ai', known: true });
+  // The link comes from the sandbox's harness: an unknown host is shown as one.
+  assert.deepEqual(signInHost('https://auth.openai.com.evil.example/x'), { host: 'auth.openai.com.evil.example', known: false });
+  assert.deepEqual(signInHost('https://user@auth.openai.com@evil.example/'), { host: 'evil.example', known: false });
+  assert.equal(signInHost('javascript:alert(1)'), null);
+});

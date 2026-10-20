@@ -130,9 +130,14 @@ func (s *server) createItem(w http.ResponseWriter, r *http.Request) {
 	webutil.WriteJSON(w, http.StatusOK, it)
 }
 
+// getItem is an item, with the agents its project can chat with, for its
+// "start a chat on it" buttons.
 func (s *server) getItem(w http.ResponseWriter, r *http.Request) {
 	if it, ok := s.item(w, r.PathValue("ref")); ok {
-		webutil.WriteJSON(w, http.StatusOK, it)
+		webutil.WriteJSON(w, http.StatusOK, struct {
+			board.Item
+			Chat []string `json:"chat"`
+		}{it, s.chatHarnesses(it.Project)})
 	}
 }
 

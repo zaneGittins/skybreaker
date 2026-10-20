@@ -165,15 +165,6 @@ h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; }
 .crumb-pill span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pdot { width: 10px; height: 10px; border-radius: 50%; background: var(--pdot); flex-shrink: 0; }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-
-.top-search {
-  display: flex; align-items: center; gap: 8px; height: 42px; width: 300px; max-width: 34vw;
-  padding: 0 8px 0 16px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--muted);
-}
-.top-search:focus-within { border-color: var(--border-strong); }
-.top-search svg { width: 16px; height: 16px; flex-shrink: 0; }
-.top-search input { border: 0; outline: none; background: transparent; width: 100%; min-width: 0; color: var(--text); font-size: 14px; }
-
 .live {
   display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 999px;
   background: var(--surface-2); color: var(--muted); font-size: 13px; font-weight: 700; white-space: nowrap;
@@ -238,12 +229,6 @@ h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; }
 .chip.t-chore.on { background: var(--t-chore-bg); border-color: transparent; color: var(--t-chore); }
 .chip.st.on { background: var(--col); border-color: transparent; color: var(--ink); }
 .chip .n { font-size: 12px; font-weight: 700; opacity: .8; }
-
-.kbd {
-  font: 600 11.5px var(--mono); color: var(--muted); border: 1px solid var(--border-strong);
-  border-radius: 6px; padding: 1px 7px; line-height: 18px; background: var(--surface);
-}
-
 /* ---- toasts ---- */
 .toasts { position: fixed; z-index: 80; left: 50%; bottom: calc(24px + var(--safe-b)); transform: translateX(-50%); display: grid; gap: 8px; justify-items: center; pointer-events: none; }
 .toast {
@@ -257,9 +242,6 @@ h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; }
 :root[data-theme="light"] .toast.error { color: #FFFFFF; }
 .toast .ref { color: inherit; opacity: .75; }
 .toast button { border: 0; background: none; color: inherit; font-weight: 700; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
-
-.spin-in { animation: fade .25s ease-out; }
-
 @keyframes flash { 0% { border-color: var(--sun); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sun) 40%, transparent); } 100% { } }
 @keyframes fade { from { opacity: 0; } }
 @keyframes slide-in { from { transform: translateX(40px); opacity: 0; } }

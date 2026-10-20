@@ -71,7 +71,6 @@ const ICON = {
   clock: ['M12 7v5l3 2', 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18'],
   shield: ['M12 3l7 3v5c0 5-3.5 8.5-7 10c-3.5-1.5-7-5-7-10V6z'],
   bolt: ['M13 3L5 14h6l-1 7 8-11h-6z'],
-  kill: ['M12 3v9', 'M6.3 7a8 8 0 1 0 11.4 0'],
   send: ['M12 19V5', 'M6 11l6-6 6 6'],
   chevron: ['M9 6l6 6-6 6'],
   pencil: ['M4 20h4L19 9l-4-4L4 16z', 'M13.5 6.5l4 4'],
@@ -122,23 +121,15 @@ function setupTheme() {
   apply(current());
 }
 
-// liveEvents keeps an EventSource open, shows its state in the top bar's
-// #live pill if the page has one and calls onEvent for each message. It
-// reconnects with backoff.
+// liveEvents keeps an EventSource open and calls onEvent for each message.
+// It reconnects with backoff.
 function liveEvents(onEvent) {
-  const pill = $('#live');
-  const show = (on, text) => {
-    if (!pill) return;
-    pill.classList.toggle('on', on);
-    $('.txt', pill).textContent = text;
-  };
   let wait = 1000;
   const connect = () => {
     const es = new EventSource('/api/events');
-    es.onopen = () => { wait = 1000; show(true, 'Live') };
+    es.onopen = () => { wait = 1000 };
     es.onmessage = e => { try { onEvent(JSON.parse(e.data)) } catch { } };
     es.onerror = () => {
-      show(false, 'Reconnecting');
       es.close();
       setTimeout(connect, wait);
       wait = Math.min(wait * 2, 30000);

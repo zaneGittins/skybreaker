@@ -45,6 +45,10 @@ func TestBoardFromTheUI(t *testing.T) {
 		t.Fatalf("note: %d", code)
 	}
 	code, body = f.do(t, "GET", "/api/items/orb-1", "", nil)
+	// The item names its own project's chat agents, wherever it's opened.
+	if !strings.Contains(body, `"chat":["claude"]`) {
+		t.Fatalf("item chat: %s", body)
+	}
 	if code != 200 || !strings.Contains(body, `"author":"zane@example.com","body":"looks good"`) || !strings.Contains(body, "moved Backlog → Review") {
 		t.Fatalf("item: %d %s", code, body)
 	}
