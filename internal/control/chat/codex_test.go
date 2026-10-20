@@ -419,3 +419,40 @@ func TestCodexSteersOnlyAKnownTurn(t *testing.T) {
 		t.Fatalf("held message lost when the turn failed: %q", out.Write)
 	}
 }
+
+// A mode switched mid-turn holds at once: codex keeps the turn's old
+// policy, so the driver answers what the new mode allows itself.
+func TestCodexModeAppliesMidTurn(t *testing.T) {
+	cmd := []byte(`{"id":8,"method":"item/commandExecution/requestApproval","params":{"itemId":"cmd-3","threadId":"thr-1","turnId":"turn-1","command":"go test ./..."}}`)
+	edit := []byte(`{"id":9,"method":"item/fileChange/requestApproval","params":{"itemId":"fc-1","threadId":"thr-1","turnId":"turn-1"}}`)
+	decision := func(out Out) string {
+		for _, w := range out.Write {
+			var r struct {
+				Result struct {
+					Decision string `json:"decision"`
+				} `json:"result"`
+			}
+			if json.Unmarshal(w, &r) == nil && r.Result.Decision != "" {
+				return r.Result.Decision
+			}
+		}
+		return ""
+	}
+	d, _ := handshake(t, Options{Cwd: "/workspace", Mode: ModeAsk})
+	d.SetMode(ModeAuto)
+	out := d.Read(cmd)
+	if len(find(out.Events, KindAsk)) != 0 || decision(out) != "accept" {
+		t.Fatalf("auto still asks: %+v %q", out.Events, out.Write)
+	}
+	d.SetMode(ModeEdits)
+	if out := d.Read(edit); len(find(out.Events, KindAsk)) != 0 || decision(out) != "accept" {
+		t.Fatalf("edits asks for an edit: %+v", out.Events)
+	}
+	if out := d.Read(cmd); len(find(out.Events, KindAsk)) != 1 {
+		t.Fatalf("edits didn't ask for a command: %+v", out.Events)
+	}
+	d.SetMode(ModeAsk)
+	if out := d.Read(edit); len(find(out.Events, KindAsk)) != 1 {
+		t.Fatalf("ask mode didn't ask: %+v", out.Events)
+	}
+}

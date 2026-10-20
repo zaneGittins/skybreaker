@@ -147,7 +147,8 @@ func (c *codex) Interrupt() [][]byte {
 	return [][]byte{c.request("turn/interrupt", map[string]any{"threadId": c.thread, "turnId": c.turn})}
 }
 
-// SetMode takes effect from the next turn.
+// SetMode takes effect from the next turn, which carries its policy, and
+// at once for what the running turn asks (see serverRequest).
 func (c *codex) SetMode(mode string) ([][]byte, error) {
 	if err := validMode(c, mode); err != nil {
 		return nil, err
@@ -654,5 +655,12 @@ func (c *codex) serverRequest(l codexLine, now time.Time) Out {
 		return Out{Write: [][]byte{line(map[string]any{"id": l.ID, "error": map[string]any{"code": -32601, "message": "skybreaker does not handle " + l.Method}})}}
 	}
 	c.asks[askID] = ask
+	// codex keeps a turn's approval policy for the whole turn, so a mode
+	// switched mid-turn would go on asking: what the mode allows is
+	// answered here, at once.
+	if a.Kind == AskPermission && (c.mode == ModeAuto || c.mode == ModeEdits && a.Tool == "edit") {
+		lines, _ := c.Answer(askID, Answer{Allow: true})
+		return Out{Write: lines}
+	}
 	return Out{Events: []Event{{Time: now, Kind: KindAsk, ID: askID, Ask: a}}}
 }
