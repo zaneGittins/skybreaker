@@ -19,8 +19,8 @@ import (
 // readScript resolves $1 against $3 inside the sandbox and, if it is a
 // regular file under $3 or $4, prints "ok", its path and its size, each
 // ending in NUL, then at most $2 bytes of it. Anything else prints "err"
-// and why. The roots are arguments only so tests can run it; the app always
-// passes /workspace and /tmp. Paths go in as arguments, never into the script.
+// and why. The roots are arguments: the app passes the session's working
+// directory and /tmp. Paths go in as arguments, never into the script.
 const readScript = `cd "$3" || exit 1
 p=$(realpath -e -- "$1" 2>/dev/null) || { printf 'err\0no such file: %s' "$1"; exit 0; }
 case "$p" in "$3"|"$3"/*|"$4"|"$4"/*) ;; *) printf 'err\0%s is outside %s and %s' "$p" "$3" "$4"; exit 0;; esac
@@ -44,16 +44,20 @@ func parseRead(out []byte) (string, int64, []byte, error) {
 	return string(f[1]), size, f[3], nil
 }
 
-// ReadSandboxFile reads at most max bytes of a regular file under
-// /workspace or /tmp in the project's sandbox; p is resolved there, against
-// /workspace.
-func (a *App) ReadSandboxFile(ctx context.Context, project, p string, max int64) (string, int64, []byte, error) {
+// ReadSandboxFile reads at most max bytes of a regular file under the
+// session's working directory (its worktree, or /workspace) or /tmp in the
+// project's sandbox; p is resolved there, against the working directory.
+func (a *App) ReadSandboxFile(ctx context.Context, project, session, p string, max int64) (string, int64, []byte, error) {
 	if _, err := a.project(project); err != nil {
 		return "", 0, nil, err
 	}
+	dir := workspaceDir
+	if s, ok := a.store.Session(session); ok && s.Project == project {
+		dir = workdir(s)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	out, err := a.sandbox.Exec(ctx, project, "sh", "-c", readScript, "sh", p, strconv.FormatInt(max, 10), "/workspace", "/tmp")
+	out, err := a.sandbox.Exec(ctx, project, "sh", "-c", readScript, "sh", p, strconv.FormatInt(max, 10), dir, "/tmp")
 	if err != nil {
 		return "", 0, nil, errors.New("couldn't read the file in the sandbox")
 	}

@@ -59,7 +59,10 @@ func (b *fakeBackend) StopSandbox(_ context.Context, p string) error {
 	b.running[p] = false
 	return nil
 }
-func (b *fakeBackend) NewSession(_ context.Context, p, h, title string) (store.Session, error) {
+func (b *fakeBackend) NewSession(_ context.Context, p, h, title string, o app.NewOptions) (store.Session, error) {
+	if o != (app.NewOptions{}) {
+		b.chat.call("terminal " + p + " " + h + optsCall(o))
+	}
 	if h == "pi" {
 		return store.Session{}, errors.New(`harness "pi" is not enabled for orbit`)
 	}

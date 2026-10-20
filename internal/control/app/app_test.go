@@ -399,7 +399,7 @@ func TestHookToken(t *testing.T) {
 func TestSessions(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	s, err := f.app.NewSession(ctx, "orbit", "claude", "fix login")
+	s, err := f.app.NewSession(ctx, "orbit", "claude", "fix login", NewOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,10 +410,10 @@ func TestSessions(t *testing.T) {
 	if len(news) != 1 || !hasSeq(news[0], "-s", s.ID) || !slices.Contains(news[0], "SKYBREAKER_SESSION="+s.ID) || !hasSeq(news[0], "--", "claude") {
 		t.Fatalf("tmux new-session = %v", news)
 	}
-	if _, err := f.app.NewSession(ctx, "orbit", "pi", ""); err == nil {
+	if _, err := f.app.NewSession(ctx, "orbit", "pi", "", NewOptions{}); err == nil {
 		t.Error("harness not enabled for the project was started")
 	}
-	if _, err := f.app.NewSession(ctx, "bifract", "codex", ""); err == nil {
+	if _, err := f.app.NewSession(ctx, "bifract", "codex", "", NewOptions{}); err == nil {
 		t.Error("codex started on bifract, which only enables claude")
 	}
 
@@ -443,7 +443,7 @@ func TestSessions(t *testing.T) {
 func TestExitedSessionKeepsItsScreen(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	s, _ := f.app.NewSession(ctx, "orbit", "claude", "")
+	s, _ := f.app.NewSession(ctx, "orbit", "claude", "", NewOptions{})
 	// A second, live window keeps the session running.
 	f.docker.set(func() { f.docker.tmux["skybreaker-orbit"] = "1:3:" + s.ID + "\n0::" + s.ID + "\n" })
 	if list, _ := f.app.Sessions(ctx, "orbit"); list[0].Status != store.StatusRunning {
@@ -481,7 +481,7 @@ func TestOldScreensAreClosed(t *testing.T) {
 	ctx := context.Background()
 	var ids []string
 	for range keepScreens + 2 {
-		s, err := f.app.NewSession(ctx, "orbit", "claude", "")
+		s, err := f.app.NewSession(ctx, "orbit", "claude", "", NewOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -515,11 +515,11 @@ func TestOldScreensAreClosed(t *testing.T) {
 func TestNewSessionGivesClaudeTheOrbitMCP(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	withBoard, err := f.app.NewSession(ctx, "orbit", "claude", "")
+	withBoard, err := f.app.NewSession(ctx, "orbit", "claude", "", NewOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	without, err := f.app.NewSession(ctx, "bifract", "claude", "")
+	without, err := f.app.NewSession(ctx, "bifract", "claude", "", NewOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +553,7 @@ func TestNewSessionRestoresTmuxServer(t *testing.T) {
 			return "", nil
 		}
 	})
-	s, err := f.app.NewSession(ctx, "orbit", "claude", "")
+	s, err := f.app.NewSession(ctx, "orbit", "claude", "", NewOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +576,7 @@ func TestNewSessionRestoresTmuxServer(t *testing.T) {
 func TestKillSession(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	s, _ := f.app.NewSession(ctx, "orbit", "claude", "")
+	s, _ := f.app.NewSession(ctx, "orbit", "claude", "", NewOptions{})
 	if err := f.app.KillSession(ctx, s.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -688,7 +688,7 @@ func TestStartClonesRepo(t *testing.T) {
 func TestSnapshotTarget(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	s, _ := f.app.NewSession(ctx, "orbit", "claude", "")
+	s, _ := f.app.NewSession(ctx, "orbit", "claude", "", NewOptions{})
 	f.app.Snapshot(ctx, s.ID, 10)
 	// tmux 3.4 needs "=name:" for a pane target; "=name" alone fails.
 	if len(f.docker.find(func(c []string) bool { return hasSeq(c, "capture-pane") && slices.Contains(c, "="+s.ID+":") })) != 1 {
@@ -699,7 +699,7 @@ func TestSnapshotTarget(t *testing.T) {
 func TestHistory(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	s, _ := f.app.NewSession(ctx, "orbit", "claude", "")
+	s, _ := f.app.NewSession(ctx, "orbit", "claude", "", NewOptions{})
 	reply := ""
 	f.docker.set(func() {
 		f.docker.execOut = func(args []string) (string, error) {
@@ -740,7 +740,7 @@ func TestHistory(t *testing.T) {
 func TestNoTmuxServer(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	s, _ := f.app.NewSession(ctx, "orbit", "claude", "")
+	s, _ := f.app.NewSession(ctx, "orbit", "claude", "", NewOptions{})
 	gone := errors.New("error connecting to /tmp/tmux-0/default (No such file or directory)")
 	f.docker.set(func() {
 		f.docker.execOut = func(args []string) (string, error) {
@@ -754,7 +754,7 @@ func TestNoTmuxServer(t *testing.T) {
 	if err != nil || list[0].Status != store.StatusExited {
 		t.Fatalf("Sessions with no tmux server = %+v, %v", list, err)
 	}
-	s2, _ := f.app.NewSession(ctx, "orbit", "claude", "")
+	s2, _ := f.app.NewSession(ctx, "orbit", "claude", "", NewOptions{})
 	if err := f.app.KillSession(ctx, s2.ID); err != nil {
 		t.Fatalf("KillSession with no tmux server: %v", err)
 	}
@@ -796,7 +796,7 @@ func TestRenewTokens(t *testing.T) {
 	}
 
 	// Inside the margin with a live session: warn, but don't kill it yet.
-	s, _ := f.app.NewSession(ctx, "orbit", "claude", "")
+	s, _ := f.app.NewSession(ctx, "orbit", "claude", "", NewOptions{})
 	f.docker.set(func() { f.docker.tmux["skybreaker-orbit"] = "0::" + s.ID + "\n" })
 	now = t0.Add(SandboxTokenTTL - 2*24*time.Hour)
 	f.app.RenewTokens(ctx)

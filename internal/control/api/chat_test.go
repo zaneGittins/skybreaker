@@ -52,8 +52,8 @@ func known(id string) error {
 	return nil
 }
 
-func (b *fakeBackend) NewChat(_ context.Context, p, h string) (store.Session, error) {
-	b.chat.call("new " + p + " " + h)
+func (b *fakeBackend) NewChat(_ context.Context, p, h string, o app.NewOptions) (store.Session, error) {
+	b.chat.call("new " + p + " " + h + optsCall(o))
 	return store.Session{ID: "c1", Project: p, Harness: h, Mode: store.ModeChat, Status: store.StatusRunning}, nil
 }
 func (b *fakeBackend) ChatSend(_ context.Context, id, text string) error {
@@ -139,6 +139,25 @@ func (b *fakeBackend) MarkSeen(id string) error { b.chat.call("seen " + id); ret
 func (b *fakeBackend) Review(_ context.Context, p string) (app.Review, error) {
 	return app.Review{Branch: "feature/x", Diff: "+new", Files: []app.FileChange{{Path: "a.go", Added: 1}}}, nil
 }
+func (b *fakeBackend) ReviewSession(_ context.Context, id string) (app.Review, error) {
+	b.chat.call("review " + id)
+	if err := known(id); err != nil {
+		return app.Review{}, err
+	}
+	return app.Review{Branch: "skybreaker/" + id}, nil
+}
+
+// optsCall is how a fake call records where a session works.
+func optsCall(o app.NewOptions) string {
+	out := ""
+	if o.OwnBranch {
+		out += " own-branch"
+	}
+	if o.Continues != "" {
+		out += " continues " + o.Continues
+	}
+	return out
+}
 
 func TestNewSessionModes(t *testing.T) {
 	f := newFixture(t, you)
@@ -162,6 +181,30 @@ func TestNewSessionModes(t *testing.T) {
 	}
 	if got := f.backend.chat.got(); !slices.Equal(got, []string{"new orbit claude"}) {
 		t.Errorf("chat calls = %q", got)
+	}
+}
+
+func TestNewSessionOnItsOwnBranch(t *testing.T) {
+	f := newFixture(t, you)
+	for _, body := range []string{
+		`{"harness":"claude","own_branch":true}`,
+		`{"harness":"claude","continues":"c1"}`,
+		`{"harness":"codex","mode":"terminal","own_branch":true}`,
+	} {
+		if code, out := f.do(t, "POST", "/api/projects/orbit/sessions", body, nil); code != 200 {
+			t.Fatalf("%s: %d %s", body, code, out)
+		}
+	}
+	want := []string{"new orbit claude own-branch", "new orbit claude continues c1", "terminal orbit codex own-branch"}
+	if got := f.backend.chat.got(); !slices.Equal(got, want) {
+		t.Errorf("calls = %q, want %q", got, want)
+	}
+	code, body := f.do(t, "GET", "/api/sessions/c1/review", "", nil)
+	if code != 200 || !strings.Contains(body, `"branch":"skybreaker/c1"`) {
+		t.Errorf("session review: %d %s", code, body)
+	}
+	if code, _ := f.do(t, "GET", "/api/sessions/nope/review", "", nil); code != 404 {
+		t.Errorf("unknown session's review: %d", code)
 	}
 }
 

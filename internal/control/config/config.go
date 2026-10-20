@@ -332,7 +332,7 @@ func (c *Config) validate() error {
 			}
 			keys[p.Key] = name
 		}
-		if !validBranch(p.Branch) {
+		if !ValidBranch(p.Branch) {
 			bad("project %s: branch %q is not a plain git branch name", name, p.Branch)
 		}
 		if err := sandbox.ValidateEnv(p.Env); err != nil {
@@ -455,10 +455,10 @@ func (c *Config) Job(name string) (*Job, bool) {
 	return c.Jobs[i], true
 }
 
-// validBranch accepts a plain git branch name. It reaches git as
+// ValidBranch accepts a plain git branch name. It reaches git as
 // origin/<branch>, so nothing git reads as an option, a revision expression
 // (.., ~, ^, @{) or a glob gets through.
-func validBranch(b string) bool {
+func ValidBranch(b string) bool {
 	return branchRe.MatchString(b) && !strings.Contains(b, "..") && !strings.Contains(b, "//") &&
 		!strings.Contains(b, "/.") && !strings.HasSuffix(b, "/") && !strings.HasSuffix(b, ".") && !strings.HasSuffix(b, ".lock")
 }

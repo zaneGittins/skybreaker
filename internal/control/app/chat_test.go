@@ -81,7 +81,7 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 func TestNewChat(t *testing.T) {
 	f, _ := chatFixture(t)
 	ctx := context.Background()
-	s, err := f.app.NewChat(ctx, "orbit", "claude")
+	s, err := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,13 +91,13 @@ func TestNewChat(t *testing.T) {
 	if got := f.docker.find(func(c []string) bool { return hasSeq(c, "tmux", "new-session") && slices.Contains(c, s.ID) }); len(got) != 0 {
 		t.Errorf("a chat made a tmux session: %q", got)
 	}
-	if _, err := f.app.NewChat(ctx, "orbit", "shell"); err == nil {
+	if _, err := f.app.NewChat(ctx, "orbit", "shell", NewOptions{}); err == nil {
 		t.Error("shell became a chat")
 	}
-	if _, err := f.app.NewChat(ctx, "bifract", "codex"); err == nil {
+	if _, err := f.app.NewChat(ctx, "bifract", "codex", NewOptions{}); err == nil {
 		t.Error("chat with a harness the project doesn't enable")
 	}
-	if _, err := f.app.NewChat(ctx, "nope", "claude"); err == nil {
+	if _, err := f.app.NewChat(ctx, "nope", "claude", NewOptions{}); err == nil {
 		t.Error("chat in an unknown project")
 	}
 	if modes := f.app.ChatModes("codex"); !slices.Equal(modes, []string{chat.ModeAsk, chat.ModeEdits, chat.ModeAuto}) {
@@ -111,7 +111,7 @@ func TestNewChat(t *testing.T) {
 func TestChatRunsHarnessInItsSandbox(t *testing.T) {
 	f, sp := chatFixture(t)
 	ctx := context.Background()
-	s, _ := f.app.NewChat(ctx, "orbit", "claude")
+	s, _ := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
 	if err := f.app.ChatSend(ctx, s.ID, "hello"); err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestChatRunsHarnessInItsSandbox(t *testing.T) {
 
 func TestChatCodexGetsSkybreakerMCP(t *testing.T) {
 	f, sp := chatFixture(t)
-	s, _ := f.app.NewChat(context.Background(), "orbit", "codex")
+	s, _ := f.app.NewChat(context.Background(), "orbit", "codex", NewOptions{})
 	f.app.ChatSend(context.Background(), s.ID, "hi")
 	waitUntil(t, "the spawn", func() bool { return sp.last() != nil })
 	if argv := sp.last(); !hasSeq(argv, "codex", "app-server", "-c", "mcp_servers.skybreaker.url="+strconv.Quote(f.app.MCPURL("orbit", s.ID))) {
@@ -165,7 +165,7 @@ func TestChatCodexGetsSkybreakerMCP(t *testing.T) {
 func TestChatTerminalHandoff(t *testing.T) {
 	f, sp := chatFixture(t)
 	ctx := context.Background()
-	s, _ := f.app.NewChat(ctx, "orbit", "claude")
+	s, _ := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
 	f.app.ChatSend(ctx, s.ID, "hello")
 	waitUntil(t, "the turn", func() bool { x, _ := f.app.store.Session(s.ID); return x.Resume != "" && x.State == store.ChatIdle })
 
@@ -208,7 +208,7 @@ func TestChatTerminalHandoff(t *testing.T) {
 
 func TestChatTerminalRefusedWhileWorking(t *testing.T) {
 	f, _ := chatFixture(t)
-	s, _ := f.app.NewChat(context.Background(), "orbit", "claude")
+	s, _ := f.app.NewChat(context.Background(), "orbit", "claude", NewOptions{})
 	f.app.store.UpdateSession(s.ID, func(x *store.Session) { x.State = store.ChatWorking })
 	if _, err := f.app.ChatTerminal(context.Background(), s.ID); err != ErrBusy {
 		t.Errorf("err = %v", err)
@@ -218,7 +218,7 @@ func TestChatTerminalRefusedWhileWorking(t *testing.T) {
 func TestKillChat(t *testing.T) {
 	f, _ := chatFixture(t)
 	ctx := context.Background()
-	s, _ := f.app.NewChat(ctx, "orbit", "claude")
+	s, _ := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
 	f.app.ChatSend(ctx, s.ID, "hello")
 	waitUntil(t, "running", func() bool { return f.app.chat.Running(s.ID) })
 	if err := f.app.KillSession(ctx, s.ID); err != nil {
@@ -243,7 +243,7 @@ func TestKillChat(t *testing.T) {
 func TestStopSandboxKeepsChats(t *testing.T) {
 	f, _ := chatFixture(t)
 	ctx := context.Background()
-	s, _ := f.app.NewChat(ctx, "orbit", "claude")
+	s, _ := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
 	f.app.ChatSend(ctx, s.ID, "hello")
 	waitUntil(t, "running", func() bool { return f.app.chat.Running(s.ID) })
 	if err := f.app.StopSandbox(ctx, "orbit"); err != nil {
@@ -283,7 +283,7 @@ func withState(s store.Session, st string) store.Session { s.State = st; return 
 
 func TestRecoverChats(t *testing.T) {
 	f, _ := chatFixture(t)
-	s, _ := f.app.NewChat(context.Background(), "orbit", "claude")
+	s, _ := f.app.NewChat(context.Background(), "orbit", "claude", NewOptions{})
 	f.app.store.UpdateSession(s.ID, func(x *store.Session) { x.State = store.ChatWorking })
 	f.app.RecoverChats()
 	if x, _ := f.app.store.Session(s.ID); x.State != store.ChatIdle {
@@ -363,7 +363,7 @@ func TestRefreshSandboxesWaitsForIdle(t *testing.T) {
 	}
 	f.docker.set(func() { f.docker.imageID = "sha256:new" })
 	// A chat that's working holds the restart off; so does one used just now.
-	s, _ := f.app.NewChat(ctx, "orbit", "claude")
+	s, _ := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
 	f.app.store.UpdateSession(s.ID, func(x *store.Session) { x.State = store.ChatWorking; x.Updated = time.Now() })
 	f.app.RefreshSandboxes(ctx)
 	if restarts() != 0 {
@@ -396,7 +396,7 @@ func TestRefreshSandboxesWaitsForIdle(t *testing.T) {
 
 func TestMCPCaller(t *testing.T) {
 	f, _ := chatFixture(t)
-	s, _ := f.app.NewChat(context.Background(), "orbit", "claude")
+	s, _ := f.app.NewChat(context.Background(), "orbit", "claude", NewOptions{})
 	orbit := f.app.cfg.Subnet("orbit").Addr().Next().Next().String() + ":40000"
 	bifract := f.app.cfg.Subnet("bifract").Addr().Next().Next().String() + ":40000"
 	tok := f.app.HookToken("orbit")
@@ -424,7 +424,7 @@ func TestMCPCaller(t *testing.T) {
 		}
 	}
 	// Another project's session can't be named from orbit's sandbox.
-	other, _ := f.app.NewChat(context.Background(), "bifract", "claude")
+	other, _ := f.app.NewChat(context.Background(), "bifract", "claude", NewOptions{})
 	if _, err := try(orbit, "/mcp/orbit/"+tok+"/"+other.ID); err == nil {
 		t.Error("bifract's chat named from orbit")
 	}
@@ -467,8 +467,8 @@ func TestEndingTheLastSessionStopsContainers(t *testing.T) {
 	ctx := context.Background()
 	f.app.StartSandbox(ctx, "orbit")
 	innerContainers(f, "c1\nc2\n")
-	a, _ := f.app.NewChat(ctx, "orbit", "claude")
-	b, _ := f.app.NewChat(ctx, "orbit", "claude")
+	a, _ := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
+	b, _ := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
 	// Another session is still live: its stack may be in use.
 	f.app.KillSession(ctx, a.ID)
 	time.Sleep(50 * time.Millisecond)
@@ -487,7 +487,7 @@ func TestSweepStopsContainersOnceIdle(t *testing.T) {
 	ctx := context.Background()
 	f.app.StartSandbox(ctx, "orbit")
 	innerContainers(f, "c1\n")
-	s, _ := f.app.NewChat(ctx, "orbit", "claude")
+	s, _ := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
 	f.app.store.UpdateSession(s.ID, func(x *store.Session) { x.State = store.ChatIdle; x.Updated = time.Now() })
 	f.app.SweepContainers(ctx)
 	if len(containerStops(f)) != 0 {
@@ -522,7 +522,7 @@ func TestSweepStopsContainersOnceIdle(t *testing.T) {
 func TestChatFork(t *testing.T) {
 	f, sp := chatFixture(t)
 	ctx := context.Background()
-	s, _ := f.app.NewChat(ctx, "orbit", "claude")
+	s, _ := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
 	if _, err := f.app.ChatFork(ctx, s.ID); err == nil {
 		t.Error("forked a chat with no conversation yet")
 	}
@@ -576,7 +576,7 @@ func TestChatFork(t *testing.T) {
 func TestChatCompact(t *testing.T) {
 	f, sp := chatFixture(t)
 	ctx := context.Background()
-	s, _ := f.app.NewChat(ctx, "orbit", "claude")
+	s, _ := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
 	if err := f.app.ChatCompact(ctx, s.ID); err == nil {
 		t.Error("compacted an empty chat")
 	}

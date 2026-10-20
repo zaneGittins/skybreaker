@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zaneGittins/skybreaker/internal/board"
+	"github.com/zaneGittins/skybreaker/internal/control/app"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
 	"github.com/zaneGittins/skybreaker/internal/tsauth"
 	"github.com/zaneGittins/skybreaker/internal/webutil"
@@ -210,7 +211,8 @@ func (s *server) workItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Harness string `json:"harness"`
+		Harness   string `json:"harness"`
+		OwnBranch bool   `json:"own_branch"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -222,7 +224,7 @@ func (s *server) workItem(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, http.StatusBadRequest, in.Harness+" can't chat in "+it.Project)
 		return
 	}
-	sess, err := s.Backend.NewChat(r.Context(), it.Project, in.Harness)
+	sess, err := s.Backend.NewChat(r.Context(), it.Project, in.Harness, app.NewOptions{OwnBranch: in.OwnBranch})
 	if err != nil {
 		fail(w, err)
 		return

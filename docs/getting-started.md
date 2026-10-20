@@ -41,9 +41,10 @@ Open **Settings** and choose **Create GitHub App** (for your account or an organ
 
 Open `https://skybreaker.<your-tailnet>.ts.net`, tap **+** and pick Claude or Codex. Skybreaker supports three agents: Claude Code and Codex, as chats or in their terminal UIs, and pi in its terminal UI (see [pi and local models](#pi-and-local-models)).
 
+- **Own branch:** by default each new session works in its own copy of the repository, on a branch of its own (`skybreaker/<session>`), so agents working side by side never touch each other's files. Untick **On its own branch** in the picker to work in the project's `/workspace` instead. A fresh copy has no ignored files such as `node_modules` or `.env`, so the agent installs what it needs. The branch shows under the chat's title, Changes shows that chat's work, and Ship it has the agent rename the branch, push it and open a pull request. When a chat ends, its copy is tidied away and its branch is kept. A copy with uncommitted work or ignored files (a `.env`, say) stays for the ten most recently ended; past that, its uncommitted work is saved first, but its ignored files go. A sandbox started by an earlier version restarts to make room for these copies once nothing in it is in use.
 - **Sign in** once per project. For Claude, open the chat's terminal and run `/login`; Codex shows a sign-in code in the chat. Logins persist across restarts.
 - **Notifications:** on a phone, add Skybreaker to the home screen, open it from there and tap the bell.
-- **In a chat**, `/rename <title>` names it, `/color <colour>` tints it to tell it apart, and `/goal <text>` pins a goal and gives it to the agent. `/compact` summarises the conversation to free up context, `/fork` copies it into a new chat that goes its own way, and `/clear` ends the chat and starts a fresh one with the same agent, mode and model. `/prompt <name>` sends one of the prompts saved in Settings: type `/prompt ` to pick from them, and anything after the name is added below it. Other slash commands go to the agent as usual.
+- **In a chat**, `/rename <title>` names it, `/color <colour>` tints it to tell it apart, and `/goal <text>` pins a goal and gives it to the agent. `/compact` summarises the conversation to free up context, `/fork` copies it into a new chat that goes its own way (on a branch of its own, with a copy of the files as they are), and `/clear` ends the chat and starts a fresh one with the same agent, mode, model and branch. `/prompt <name>` sends one of the prompts saved in Settings: type `/prompt ` to pick from them, and anything after the name is added below it. Other slash commands go to the agent as usual.
 - **The ring** at the top right of a chat fills as the conversation uses up the model's context window, turning yellow past 60% and red past 85%. Tap it to compact, fork, start a new chat or end the session.
 - **Boards:** each project has one, and agents use it through Skybreaker's MCP tools. To give your own Claude Code access to every board:
 
@@ -71,7 +72,7 @@ skybreaker vscode setup     # once: makes this computer a key, adds it, writes ~
 skybreaker code <project>   # or Open in VS Code in the project's menu
 ```
 
-The project is in `/workspace`. A VS Code window is one more shell in the sandbox: it reaches only what the project's policy allows, through the broker. The sandbox can't download VS Code's server itself, so Remote - SSH downloads it on your computer and copies it over; set `"remote.downloadExtensionsLocally": true` in VS Code to install extensions the same way. Remove a computer's key in the same menu; its open windows disconnect.
+The project is in `/workspace`, and sessions on their own branch are in `/skybreaker/worktrees/<session>`. A VS Code window is one more shell in the sandbox: it reaches only what the project's policy allows, through the broker. The sandbox can't download VS Code's server itself, so Remote - SSH downloads it on your computer and copies it over; set `"remote.downloadExtensionsLocally": true` in VS Code to install extensions the same way. Remove a computer's key in the same menu; its open windows disconnect.
 
 ## pi and local models
 

@@ -117,7 +117,7 @@ func TestReadSandboxFileRunsInTheSandbox(t *testing.T) {
 			return "ok\x00/workspace/a.txt\x005\x00hello", nil
 		}
 	})
-	p, size, data, err := f.app.ReadSandboxFile(context.Background(), "orbit", "a.txt", 64)
+	p, size, data, err := f.app.ReadSandboxFile(context.Background(), "orbit", "", "a.txt", 64)
 	if err != nil || p != "/workspace/a.txt" || size != 5 || string(data) != "hello" {
 		t.Fatalf("read = %q %d %q %v", p, size, data, err)
 	}
@@ -125,7 +125,7 @@ func TestReadSandboxFileRunsInTheSandbox(t *testing.T) {
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("exec = %q", got)
 	}
-	if _, _, _, err := f.app.ReadSandboxFile(context.Background(), "nope", "a.txt", 64); err == nil {
+	if _, _, _, err := f.app.ReadSandboxFile(context.Background(), "nope", "", "a.txt", 64); err == nil {
 		t.Error("read from an unknown project")
 	}
 }

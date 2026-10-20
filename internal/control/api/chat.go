@@ -267,6 +267,21 @@ func (s *server) review(w http.ResponseWriter, r *http.Request) {
 	webutil.WriteJSONGzip(w, r, http.StatusOK, rv)
 }
 
+// sessionReview is what a session has changed, in its own worktree or the
+// project's workspace.
+func (s *server) sessionReview(w http.ResponseWriter, r *http.Request) {
+	rv, err := s.Backend.ReviewSession(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, app.ErrNotFound) {
+			fail(w, err)
+			return
+		}
+		webutil.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	webutil.WriteJSONGzip(w, r, http.StatusOK, rv)
+}
+
 // inboxSession is a session with its project's tint, for the inbox.
 type inboxSession struct {
 	store.Session

@@ -25,6 +25,7 @@ import (
 
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/config"
+	"github.com/zaneGittins/skybreaker/internal/control/harness"
 	"github.com/zaneGittins/skybreaker/internal/control/hooks"
 	"github.com/zaneGittins/skybreaker/internal/control/preview"
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
@@ -484,7 +485,7 @@ func newSessionID() string {
 
 // NewSession starts a harness TUI in a new tmux session in the project's
 // sandbox, starting the sandbox if needed.
-func (a *App) NewSession(ctx context.Context, project, harnessName, title string) (store.Session, error) {
+func (a *App) NewSession(ctx context.Context, project, harnessName, title string, opts NewOptions) (store.Session, error) {
 	p, err := a.project(project)
 	if err != nil {
 		return store.Session{}, err
@@ -496,25 +497,43 @@ func (a *App) NewSession(ctx context.Context, project, harnessName, title string
 	if !ok {
 		return store.Session{}, fmt.Errorf("harness %q: %w", harnessName, ErrNotFound)
 	}
+	s := store.Session{ID: newSessionID(), Project: project, Harness: harnessName, Title: title, Created: time.Now().UTC(), Status: store.StatusRunning}
+	// First, as it may restart the sandbox.
+	if err := a.placeSession(ctx, &s, opts); err != nil {
+		return store.Session{}, err
+	}
 	if err := a.StartSandbox(ctx, project); err != nil {
 		return store.Session{}, err
 	}
 	if err := a.EnsureTmux(ctx, project); err != nil {
 		return store.Session{}, err
 	}
-	s := store.Session{ID: newSessionID(), Project: project, Harness: harnessName, Title: title, Created: time.Now().UTC(), Status: store.StatusRunning}
-	env := map[string]string{"SKYBREAKER_SESSION": s.ID}
-	for k, v := range m.Env {
-		env[k] = v
+	if s.Worktree != "" {
+		if err := a.waitReady(ctx, project); err != nil {
+			return store.Session{}, err
+		}
 	}
-	if _, err := a.sandbox.Exec(ctx, project, tmux.NewSession(s.ID, "/workspace", env, m.TUIArgs(MCPPath))...); err != nil {
-		return store.Session{}, fmt.Errorf("start %s session: %w", harnessName, err)
-	}
-	if err := a.store.CreateSession(s); err != nil {
+	// Saved once its tmux session runs, so the reconciliation in Sessions
+	// never takes it for one that ended; its worktree is held until then,
+	// so tidying never takes that for an orphan.
+	err = a.ensureWorktree(ctx, &s, func() error {
+		if _, err := a.sandbox.Exec(ctx, project, tmux.NewSession(s.ID, workdir(s), a.sessionEnv(s, m), m.TUIArgs(MCPPath))...); err != nil {
+			return fmt.Errorf("start %s session: %w", harnessName, err)
+		}
+		return a.store.CreateSession(s)
+	})
+	if err != nil {
 		return store.Session{}, err
 	}
 	a.Publish(Event{Type: "session", Project: project, Session: s.ID, Data: "started"})
 	return s, nil
+}
+
+// sessionEnv is a terminal session's environment.
+func (a *App) sessionEnv(s store.Session, m harness.Manifest) map[string]string {
+	env := map[string]string{"SKYBREAKER_SESSION": s.ID}
+	maps.Copy(env, m.Env)
+	return env
 }
 
 func (a *App) session(id string) (store.Session, error) {
@@ -533,7 +552,7 @@ func (a *App) KillSession(ctx context.Context, id string) error {
 	if s.Mode == store.ModeChat {
 		a.killChat(ctx, s)
 		a.Publish(Event{Type: "session", Project: s.Project, Session: id, Data: "killed"})
-		a.sessionEnded(s.Project)
+		a.sessionEnded(s)
 		return nil
 	}
 	if _, err := a.sandbox.Exec(ctx, s.Project, tmux.Kill(id)...); err != nil && !strings.Contains(err.Error(), "can't find session") && !noTmuxServer(err) {
@@ -547,7 +566,7 @@ func (a *App) KillSession(ctx context.Context, id string) error {
 		}
 	})
 	a.Publish(Event{Type: "session", Project: s.Project, Session: id, Data: "killed"})
-	a.sessionEnded(s.Project)
+	a.sessionEnded(s)
 	return nil
 }
 
@@ -711,7 +730,10 @@ func (a *App) AttachArgv(id string) ([]string, error) {
 
 // gitSafe are flags for every git command the control plane runs in an
 // agent's repository: repo config can name programs to run (fsmonitor,
-// hooks, diff drivers, textconv), and none of them may.
+// hooks, diff drivers, textconv), and these never do. Clean and smudge
+// filters can't be turned off by name, so commands that read or write files
+// may still run one; they run in the sandbox, as the agent could anyway,
+// and what they print reaches the user only cut short (gitFailed).
 var gitSafe = []string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "diff.external=", "--no-pager"}
 
 func GitArgs(dir string, args ...string) []string {

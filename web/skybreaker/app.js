@@ -274,7 +274,7 @@ function newSessionSheet(projects) {
     el('div.picker', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New session' },
       el('div.picker-grip'),
       el('div.picker-head', null, el('h2', null, 'New session')),
-      chips, list,
+      chips, list, ownBranchBox(),
       el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Cancel')));
   $('.pick', list)?.focus({ preventScroll: true });
 }
@@ -744,7 +744,7 @@ function harnessPicks(p) {
     busy = true;
     try {
       prefs.set('lastProject', p.name);
-      const s = await api('POST', `/api/projects/${p.name}/sessions`, { harness: h, title: '' });
+      const s = await api('POST', `/api/projects/${p.name}/sessions`, { harness: h, title: '', own_branch: ownBranch() });
       closeSheet();
       navigate('/s/' + s.id);
     } catch (err) { toast(err.message, 'error') } finally { busy = false }
@@ -769,9 +769,17 @@ function pickHarness(p) {
       el('div.picker-head', null,
         el('h2', null, 'New session'),
         el('p', null, p.running ? 'in ' + p.name : `in ${p.name} · starts the sandbox first`)),
-      list,
+      list, ownBranchBox(),
       el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Cancel')));
   $('.pick', list)?.focus({ preventScroll: true });
+}
+
+// ownBranchBox turns ownBranch on and off, for every new session after.
+function ownBranchBox() {
+  return el('label.np-check.pick-branch', null,
+    el('input', { type: 'checkbox', checked: ownBranch() || null, onchange: e => prefs.set('ownBranch', e.target.checked ? 'on' : 'off') }),
+    el('span.np-check-text', null, el('b', null, 'On its own branch'),
+      el('span', null, 'In a copy of the repository just for this session, so agents side by side never touch each other\u2019s files.')));
 }
 
 // sessionName is a session's title, or its harness when it has none.

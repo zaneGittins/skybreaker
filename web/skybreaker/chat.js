@@ -16,7 +16,11 @@ const MODE_INFO = {
   auto: { label: 'Full auto', short: 'Auto', desc: 'Never asks. The sandbox and broker still apply.' },
 };
 
-const SHIP_MESSAGE = 'Ship it: commit the work with a clear message on a feature/, fix/, docs/ or chore/ branch (never main), push it, and open a pull request. Reply with the PR link.';
+const SHIP_MESSAGE = 'Ship it: commit the work with a clear message on a feature/, fix/, docs/ or chore/ branch (never main; rename the branch you\'re on if it isn\'t one), push it, and open a pull request. Reply with the PR link.';
+
+// ownBranch is whether new sessions get a branch of their own, in their own
+// copy of the repository: yes, unless you've turned it off in the picker.
+const ownBranch = () => prefs.get('ownBranch') !== 'off';
 
 Object.assign(ICON, {
   flag: ['M5 21V4', 'M5 4h11l-2 4 2 4H5'],
@@ -264,6 +268,7 @@ async function renderChat(seq, d) {
       el('button.icon-btn.bare.sm', { type: 'button', 'aria-label': 'Unpin the goal', title: 'Unpin the goal', onclick: () => runCommand({ cmd: 'goal', arg: '' }) }, svg(ICON.x)));
     const model = chatModel();
     sub.textContent = [harnessLabel(session.harness), project.name, model && (model.name || model.id)].filter(Boolean).join(' · ');
+    if (session.worktree) sub.append(el('span.sub-branch', { title: session.worktree_gone ? 'Its copy of the repository was tidied away; the branch stays' : session.worktree }, svg(ICON.branch), session.branch || 'its own branch'));
     const m = MODE_INFO[session.perm_mode] || MODE_INFO.ask;
     modeBtn.replaceChildren(svg(ICON.shield), el('span', null, m.short));
     modeBtn.title = m.label + ': ' + m.desc;
@@ -443,10 +448,11 @@ async function renderChat(seq, d) {
       return true;
     } catch (e) { toast(e.message, 'error'); return false }
   };
-  // clearChat starts a fresh chat like this one (same agent, mode and
-  // model) and ends this one, which stays readable.
+  // clearChat starts a fresh chat like this one (same agent, mode, model
+  // and branch) and ends this one, which stays readable.
   const clearChat = async () => {
-    const n = await api('POST', `/api/projects/${project.name}/sessions`, { harness: session.harness });
+    // A chat on its own branch carries on in it.
+    const n = await api('POST', `/api/projects/${project.name}/sessions`, session.worktree ? { harness: session.harness, continues: id } : { harness: session.harness });
     const mode = session.perm_mode || 'ask';
     if (mode !== 'ask') await api('POST', `/api/sessions/${n.id}/mode`, { mode }).catch(() => { });
     if (session.chosen_model) await api('POST', `/api/sessions/${n.id}/model`, { model: session.chosen_model }).catch(() => { });
@@ -938,14 +944,15 @@ function closeMenu() {
 
 // --- review ---------------------------------------------------------------------
 
-// openReview shows what the project's workspace has changed, and from a
-// chat, a button that asks the agent to ship it.
+// openReview shows what the project's workspace has changed or, from a
+// chat, what the chat has (on its own branch, if it has one), and a button
+// that asks the agent to ship it.
 async function openReview(project, chatId) {
   const body = el('div.review', null, el('div.review-load', null, el('span.spinner'), 'Reading the workspace…'));
   const shipBar = el('div.review-foot', { hidden: true });
   sheet('Changes', el('div.review-wrap', null, body, shipBar));
   let r;
-  try { r = await api('GET', `/api/projects/${project}/review`) } catch (e) {
+  try { r = await api('GET', chatId ? `/api/sessions/${encodeURIComponent(chatId)}/review` : `/api/projects/${project}/review`) } catch (e) {
     body.replaceChildren(el('div.empty-note', null, e.message));
     return;
   }
@@ -978,7 +985,7 @@ async function openReview(project, chatId) {
 
 async function newChatIn(projectName, harness) {
   try {
-    const s = await api('POST', `/api/projects/${projectName}/sessions`, { harness });
+    const s = await api('POST', `/api/projects/${projectName}/sessions`, { harness, own_branch: ownBranch() });
     navigate('/s/' + s.id);
   } catch (e) { toast(e.message, 'error') }
 }

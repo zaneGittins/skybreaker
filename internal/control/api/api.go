@@ -46,7 +46,7 @@ type Backend interface {
 	SandboxState(ctx context.Context, project string) (sandbox.State, error)
 	StartSandbox(ctx context.Context, project string) error
 	StopSandbox(ctx context.Context, project string) error
-	NewSession(ctx context.Context, project, harness, title string) (store.Session, error)
+	NewSession(ctx context.Context, project, harness, title string, opts app.NewOptions) (store.Session, error)
 	KillSession(ctx context.Context, id string) error
 	Sessions(ctx context.Context, project string) ([]store.Session, error)
 	Snapshot(ctx context.Context, id string, lines int) (string, error)
@@ -55,7 +55,7 @@ type Backend interface {
 	Diff(ctx context.Context, project string) (string, error)
 	Subscribe() (<-chan app.Event, func())
 
-	NewChat(ctx context.Context, project, harness string) (store.Session, error)
+	NewChat(ctx context.Context, project, harness string, opts app.NewOptions) (store.Session, error)
 	ChatSend(ctx context.Context, id, text string) error
 	ChatAnswer(ctx context.Context, id, ask string, a chat.Answer) error
 	ChatInterrupt(ctx context.Context, id string) error
@@ -71,6 +71,7 @@ type Backend interface {
 	ChatModes(harness string) []string
 	MarkSeen(id string) error
 	Review(ctx context.Context, project string) (app.Review, error)
+	ReviewSession(ctx context.Context, id string) (app.Review, error)
 	Listening(ctx context.Context, project string) ([]preview.Listening, error)
 	EditSession(id string, e app.SessionEdit) (store.Session, error)
 	// SetAuthorizedKeys gives every sandbox's sshd these keys.
@@ -192,6 +193,7 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("GET /api/sessions/{id}", s.session)
 	m.HandleFunc("PATCH /api/sessions/{id}", s.editSession)
 	m.HandleFunc("GET /api/sessions/{id}/snapshot", s.snapshot)
+	m.HandleFunc("GET /api/sessions/{id}/review", s.sessionReview)
 	m.HandleFunc("GET /api/sessions/{id}/history", s.history)
 	m.HandleFunc("GET /api/sessions/{id}/attach", s.attach)
 	m.HandleFunc("GET /api/approvals", s.approvals)
@@ -391,6 +393,10 @@ func (s *server) newSession(w http.ResponseWriter, r *http.Request) {
 		// Mode is "chat" or "terminal"; by default a harness that can
 		// chat does.
 		Mode string `json:"mode"`
+		// OwnBranch gives it a worktree and branch of its own; Continues
+		// names a session whose worktree it carries on in.
+		OwnBranch bool   `json:"own_branch"`
+		Continues string `json:"continues"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -420,10 +426,11 @@ func (s *server) newSession(w http.ResponseWriter, r *http.Request) {
 	}
 	var sess store.Session
 	var err error
+	opts := app.NewOptions{OwnBranch: in.OwnBranch, Continues: in.Continues}
 	if in.Mode == "chat" {
-		sess, err = s.Backend.NewChat(r.Context(), name, in.Harness)
+		sess, err = s.Backend.NewChat(r.Context(), name, in.Harness, opts)
 	} else {
-		sess, err = s.Backend.NewSession(r.Context(), name, in.Harness, in.Title)
+		sess, err = s.Backend.NewSession(r.Context(), name, in.Harness, in.Title, opts)
 	}
 	if err != nil {
 		webutil.Error(w, http.StatusBadRequest, err.Error())

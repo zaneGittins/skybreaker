@@ -242,7 +242,7 @@ async function openItem(ref) {
 
 async function workOn(it, harness) {
   try {
-    const s = await api('POST', `${itemPath(it.ref)}/work`, { harness });
+    const s = await api('POST', `${itemPath(it.ref)}/work`, { harness, own_branch: ownBranch() });
     closeSheet();
     navigate('/s/' + s.id);
   } catch (e) { toast(e.message, 'error') }
