@@ -287,7 +287,8 @@ async function renderActivity(seq) {
   const q = new URLSearchParams({ page: String(page) });
   if (filter === 'blocked') q.set('blocked', '1');
   else if (filter.startsWith('p:')) q.set('project', filter.slice(2));
-  const [d, reqs, projects] = await Promise.all([api('GET', '/api/activity?' + q), api('GET', '/api/requests'), api('GET', '/api/projects')]);
+  const cq = filter.startsWith('p:') ? '?project=' + encodeURIComponent(filter.slice(2)) : '';
+  const [d, reqs, projects, ch] = await Promise.all([api('GET', '/api/activity?' + q), api('GET', '/api/requests'), api('GET', '/api/projects'), api('GET', '/api/activity/chart' + cq)]);
   if (seq !== state.seq) return;
   if (filter !== 'all' && filter !== 'blocked' && !projects.some(p => 'p:' + p.name === filter)) {
     prefs.set('activityFilter', 'all'); // a project that's gone
@@ -337,6 +338,7 @@ async function renderActivity(seq) {
     el('section.inbox-sec', { id: 'net-log' },
       el('div.sec-head', null, el('h2', null, 'Network')),
       el('div.chips', null, chips),
+      activityChart(ch),
       list, pager),
     el('section.inbox-sec', null,
       el('div.sec-head', null, el('h2', null, 'Sandbox access')),
@@ -354,6 +356,19 @@ async function renderActivity(seq) {
       el('div.sec-head', null, el('h2', null, 'Kill switch')),
       el('p.note', null, 'Cuts every sandbox off from the network at once. Restart a sandbox to give it access again.'),
       el('form.kill-row', { onsubmit: kill }, killInput, el('button.btn.danger', { type: 'submit' }, 'Cut off everything')))));
+}
+
+// activityChart is the broker's last two weeks: what it let out, asked
+// about and blocked each day, for the project picked (or all).
+function activityChart(ch) {
+  const days = activitySeries(ch.hours);
+  const sum = k => days.reduce((n, d) => n + d[k], 0);
+  return el('div.act-chart', null, dayChart(days, {
+    label: `Requests allowed, asked about and blocked per day, last ${days.length} days`,
+    stack: [['allowed', 'bc-allowed'], ['asked', 'bc-asked'], ['blocked', 'bc-blocked']],
+    title: d => `${d.allowed} allowed, ${d.asked} asked, ${d.blocked} blocked`,
+    stats: [[sum('allowed'), 'allowed', 'done'], [sum('asked'), 'asked', 'asked'], [sum('blocked'), 'blocked', 'blocked']],
+  }));
 }
 
 // auditItem is one broker decision; tap it for the details.
@@ -420,7 +435,8 @@ function chatsView(p, d, b, live, ended) {
     ended.length ? el('details.earlier', null,
       el('summary', null, el('span', null, plural(ended.length, 'ended chat')), svg(ICON.chevron, 'chev')),
       el('div.row-list', null, ended.slice(0, 40).map(s => s.mode === 'chat' ? sessionRow(s) : endedRow(s)))) : null,
-    upNext(p, b));
+    upNext(p, b),
+    b.history ? el('section.list-sec.phone-only.p-chart', null, el('div.sec-title', null, el('h2', null, 'Board, last 14 days')), boardChart(b.history)) : null);
   return el('div.p-cols', null, main, el('aside.p-side.desk-only', null, boardSnapshot(p, b)));
 }
 

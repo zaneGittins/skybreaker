@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -672,5 +673,44 @@ func TestNormalize(t *testing.T) {
 		if got := NormalizeType(in); got != want {
 			t.Errorf("NormalizeType(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// History is what the project page charts: what was open when the window
+// starts, and every item created and finished since.
+func TestHistory(t *testing.T) {
+	s := open(t)
+	mustProject(t, s, "orbit")
+	mustProject(t, s, "comet")
+	var clock time.Time
+	s.now = func() time.Time { return clock }
+	day := func(d int) time.Time { return time.Date(2026, 10, d, 12, 0, 0, 0, time.UTC) }
+	at := func(d int, f func()) { clock = day(d); f() }
+	done := "done"
+	var c, e Item
+	at(1, func() {
+		a := mustItem(t, s, "orbit", ItemInput{Title: "finished long ago"})
+		at(2, func() { s.UpdateItem(a.Ref, ItemPatch{Status: &done}, "z") })
+	})
+	at(1, func() { mustItem(t, s, "orbit", ItemInput{Title: "open all along"}) })
+	at(3, func() { c = mustItem(t, s, "orbit", ItemInput{Title: "open, then done"}) })
+	at(6, func() { mustItem(t, s, "orbit", ItemInput{Title: "new and open"}) })
+	at(7, func() { s.UpdateItem(c.Ref, ItemPatch{Status: &done}, "z") })
+	at(8, func() { e = mustItem(t, s, "orbit", ItemInput{Title: "new and done"}) })
+	at(9, func() { s.UpdateItem(e.Ref, ItemPatch{Status: &done}, "z") })
+	at(9, func() { mustItem(t, s, "comet", ItemInput{Title: "another board"}) })
+
+	h, err := s.History("orbit", day(5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.OpenAtStart != 2 {
+		t.Errorf("open at start %d", h.OpenAtStart)
+	}
+	if !slices.Equal(h.Created, []time.Time{day(6), day(8)}) || !slices.Equal(h.Done, []time.Time{day(7), day(9)}) {
+		t.Errorf("created %v done %v", h.Created, h.Done)
+	}
+	if _, err := s.History("nope", day(5)); err == nil {
+		t.Error("history of a project that isn't there")
 	}
 }

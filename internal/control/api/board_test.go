@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zaneGittins/skybreaker/internal/board"
 	"github.com/zaneGittins/skybreaker/internal/tsauth"
@@ -50,6 +51,14 @@ func TestBoardFromTheUI(t *testing.T) {
 	code, body = f.do(t, "GET", "/api/projects/orbit/board", "", nil)
 	if code != 200 || !strings.Contains(body, `"key":"ORB"`) || !strings.Contains(body, `"ref":"ORB-2"`) {
 		t.Fatalf("board: %d %s", code, body)
+	}
+	// The project page's chart: two items made just now, none finished.
+	var b struct {
+		History board.History `json:"history"`
+	}
+	json.Unmarshal([]byte(body), &b)
+	if len(b.History.Created) != 2 || len(b.History.Done) != 0 || b.History.OpenAtStart != 0 || time.Since(b.History.Since) < 14*24*time.Hour {
+		t.Fatalf("history: %+v", b.History)
 	}
 	// Items waiting in Review are yours to look at.
 	_, body = f.do(t, "GET", "/api/inbox", "", nil)

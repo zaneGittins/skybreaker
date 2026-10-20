@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -225,5 +226,56 @@ func TestActivityPages(t *testing.T) {
 	}
 	if log, more, _ := page("?project=bifract&page=2"); len(log) != 15 || more || log[0].Project != "bifract" || log[0].Reason != "#29" {
 		t.Fatalf("project page 2: %d %v %+v", len(log), more, log[0])
+	}
+}
+
+func (f *fakeNetwork) AuditBack(each func(audit.Entry) bool) error {
+	for _, e := range slices.Backward(f.log) {
+		if !each(e) {
+			break
+		}
+	}
+	return nil
+}
+
+// The activity chart counts what the broker let out, asked about and
+// blocked, by hour, for the last fifteen days.
+func TestActivityChart(t *testing.T) {
+	f := newFixture(t, you)
+	hour := time.Now().UTC().Truncate(time.Hour)
+	add := func(at time.Time, decision, project string) {
+		f.network.log = append(f.network.log, audit.Entry{Time: at, Decision: decision, Project: project})
+	}
+	add(hour.Add(-20*24*time.Hour), "deny", "orbit") // too old
+	add(hour.Add(-3*time.Hour+10*time.Minute), "allow", "orbit")
+	add(hour.Add(-3*time.Hour+20*time.Minute), "allow", "bifract")
+	add(hour, "deny", "orbit")
+	add(hour, "ask", "orbit")
+	add(hour, "mint", "orbit") // not a request
+	slices.SortFunc(f.network.log, func(a, b audit.Entry) int { return a.Time.Compare(b.Time) })
+	type bucket struct {
+		T                       time.Time
+		Allowed, Asked, Blocked int
+	}
+	get := func(q string) []bucket {
+		t.Helper()
+		_, body := f.do(t, "GET", "/api/activity/chart"+q, "", nil)
+		var out struct {
+			Hours []bucket `json:"hours"`
+		}
+		if err := json.Unmarshal([]byte(body), &out); err != nil {
+			t.Fatalf("%s: %s", q, body)
+		}
+		return out.Hours
+	}
+	all := get("")
+	if len(all) != 2 || !all[0].T.Equal(hour.Add(-3*time.Hour)) || all[0].Allowed != 2 {
+		t.Fatalf("all: %+v", all)
+	}
+	if last := all[1]; last.Blocked != 1 || last.Asked != 1 || last.Allowed != 0 {
+		t.Fatalf("this hour: %+v", last)
+	}
+	if b := get("?project=bifract"); len(b) != 1 || b[0].Allowed != 1 {
+		t.Fatalf("bifract: %+v", b)
 	}
 }

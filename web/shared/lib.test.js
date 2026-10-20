@@ -165,3 +165,35 @@ test('settings audit rows', () => {
   assert.deepEqual(auditRow({ decision: 'config', by: 'z', reason: 'added secret openai for api.openai.com' }),
     { tone: 'info', verb: 'Settings', target: 'added secret openai for api.openai.com' });
 });
+
+test('boardSeries', () => {
+  const { boardSeries } = require('./lib.js');
+  const at = (d, h = 12) => new Date(2026, 9, d, h).toISOString();
+  const now = new Date(2026, 9, 19, 15);
+  const h = { since: at(4), open_at_start: 3, created: [at(10), at(18, 23), at(19, 9)], done: [at(12), at(19, 10), at(19, 11)] };
+  const s = boardSeries(h, now);
+  assert.equal(s.length, 14);
+  assert.equal(s[13].day.getDate(), 19);
+  assert.equal(s[0].day.getDate(), 6);
+  assert.deepEqual(s.map(x => x.done), [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 2]);
+  // Open at each day's end: 3, +1 on the 10th, -1 on the 12th, +1 late on
+  // the 18th, then today +1 -2.
+  assert.deepEqual(s.map(x => x.open), [3, 3, 3, 3, 4, 4, 3, 3, 3, 3, 3, 3, 4, 3]);
+  assert.equal(boardSeries({ since: at(4), open_at_start: 0, created: [], done: [] }, now).every(x => !x.done && !x.open), true);
+});
+
+test('activitySeries', () => {
+  const { activitySeries } = require('./lib.js');
+  const now = new Date(2026, 9, 19, 15);
+  const hr = (d, h) => new Date(2026, 9, d, h).toISOString();
+  const s = activitySeries([
+    { t: hr(4, 10), allowed: 50, asked: 0, blocked: 0 }, // before the window
+    { t: hr(18, 1), allowed: 3, asked: 1, blocked: 0 },
+    { t: hr(18, 23), allowed: 2, asked: 0, blocked: 4 },
+    { t: hr(19, 9), allowed: 7, asked: 0, blocked: 1 },
+  ], now);
+  assert.equal(s.length, 14);
+  assert.deepEqual(s[12], { day: new Date(2026, 9, 18), allowed: 5, asked: 1, blocked: 4 });
+  assert.deepEqual(s[13], { day: new Date(2026, 9, 19), allowed: 7, asked: 0, blocked: 1 });
+  assert.equal(s.slice(0, 12).every(x => !x.allowed && !x.asked && !x.blocked), true);
+});

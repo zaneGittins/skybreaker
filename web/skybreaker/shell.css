@@ -110,6 +110,35 @@ details.earlier .row-list { margin-top: 4px; }
 .snap-bar span { flex: 1; background: var(--c-dot); }
 .snap-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
 .snap-group { margin-top: 20px; }
+
+/* The board's last two weeks, in the snapshot. */
+.bchart { margin-top: 20px; }
+.bc-head { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+.bc-stat { display: inline-flex; align-items: center; gap: 6px; }
+.bc-stat b { font: 750 18px var(--display, var(--font)); }
+.bc-key { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; line-height: 1; color: var(--muted); }
+.bc-key::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--live); }
+.bc-key.open::before { height: 2px; border-radius: 1px; background: var(--sun); }
+.bc-key.asked::before { background: var(--working); }
+.bc-key.blocked::before { background: var(--danger); }
+.bc-when { margin-left: auto; font-size: 12px; color: var(--muted); }
+.bc-svg { display: block; width: 100%; height: 64px; overflow: visible; }
+.bc-hit { fill: transparent; }
+.bc-bar, .bc-allowed { fill: var(--live); opacity: .85; }
+.bc-asked { fill: var(--working); opacity: .9; }
+.bc-blocked { fill: var(--danger); opacity: .9; }
+.bc-none { fill: var(--border-strong); }
+.bc-day:hover rect:not(.bc-hit) { opacity: 1; }
+.bc-day:hover .bc-hit { fill: var(--surface-2); }
+.bc-open { fill: none; stroke: var(--sun); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.bc-now { fill: var(--sun); }
+.p-chart .bchart { margin-top: 0; padding: 14px 16px 10px; border-radius: 18px; background: var(--surface); border: 1px solid var(--border); }
+.p-chart .bc-when { display: none; }
+@media (max-width: 760px) {
+  .bc-head { flex-wrap: wrap; gap: 6px 14px; }
+  .bc-when { display: none; }
+}
+.bc-axis { display: flex; justify-content: space-between; margin-top: 4px; font-size: 11.5px; color: var(--muted); }
 .snap-head { display: flex; align-items: center; gap: 8px; font: 750 13px var(--font); color: var(--c-ink); }
 .snap-head .n { margin-left: auto; font: 600 12px var(--mono); opacity: 0.8; }
 .snap-card {

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/zaneGittins/skybreaker/internal/board"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
@@ -67,8 +68,8 @@ func (s *server) item(w http.ResponseWriter, ref string) (board.Item, bool) {
 	return it, true
 }
 
-// getBoard is a project's whole board: every open item in column order and
-// the newest done ones.
+// getBoard is a project's whole board: every open item in column order, the
+// newest done ones, and its history for the project page's chart.
 func (s *server) getBoard(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("p")
 	if !s.known(w, name) {
@@ -85,7 +86,14 @@ func (s *server) getBoard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	done, _ := s.Board.ListItems(board.Filter{Project: name, Statuses: []string{"done"}, Limit: 50})
-	webutil.WriteJSONGzip(w, r, http.StatusOK, map[string]any{"board": p, "items": append(open, done...), "tint": s.tints[name], "chat": s.chatHarnesses(name)})
+	// Fifteen days, so the page can chart its last fourteen in its own time
+	// zone.
+	history, err := s.Board.History(name, time.Now().Add(-15*24*time.Hour))
+	if err != nil {
+		boardFail(w, err)
+		return
+	}
+	webutil.WriteJSONGzip(w, r, http.StatusOK, map[string]any{"board": p, "items": append(open, done...), "history": history, "tint": s.tints[name], "chat": s.chatHarnesses(name)})
 }
 
 // createItem files an item. "text" is the quick-capture line ("bug: crash

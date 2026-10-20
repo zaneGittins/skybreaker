@@ -177,3 +177,28 @@ func TestTailAcrossChunkBoundaries(t *testing.T) {
 		t.Fatalf("Tail(1000) = %d entries, first status %d", len(all), all[0].Status)
 	}
 }
+
+// Back walks the log newest first, across chunks, until told to stop.
+func TestBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	l, _ := Open(path)
+	for i := 0; i < 300; i++ {
+		l.Log(Entry{Decision: "allow", Path: "/" + strings.Repeat("x", 700), Status: i})
+	}
+	l.Close()
+	var seen []int
+	if err := Back(path, func(e Entry) bool { seen = append(seen, e.Status); return e.Status > 120 }); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 180 || seen[0] != 299 || seen[len(seen)-1] != 120 {
+		t.Fatalf("saw %d, first %d, last %d", len(seen), seen[0], seen[len(seen)-1])
+	}
+	n := 0
+	Back(path, func(Entry) bool { n++; return true })
+	if n != 300 {
+		t.Fatalf("whole log: %d", n)
+	}
+	if err := Back(filepath.Join(t.TempDir(), "none"), func(Entry) bool { t.Fatal("called"); return false }); err != nil {
+		t.Fatal(err)
+	}
+}

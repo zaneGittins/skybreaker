@@ -1,9 +1,12 @@
 package api
 
 import (
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/zaneGittins/skybreaker/internal/proxy/approval"
 	"github.com/zaneGittins/skybreaker/internal/proxy/audit"
@@ -89,6 +92,83 @@ func (s *server) activity(w http.ResponseWriter, r *http.Request) {
 	webutil.WriteJSONGzip(w, r, http.StatusOK, map[string]any{
 		"log": log, "page": page, "more": len(matched) >= want, "tokens": nonNil(s.Network.Tokens()),
 	})
+}
+
+// chartDays is how far back the activity chart reaches: a day more than it
+// shows, so the page can draw its last fourteen in its own time zone.
+const chartDays = 15
+
+type chartHour struct {
+	T       time.Time `json:"t"`
+	Allowed int       `json:"allowed"`
+	Asked   int       `json:"asked"`
+	Blocked int       `json:"blocked"`
+}
+
+// chartCache keeps a chart for a few seconds: the activity page redraws on
+// every live event, and a busy log is long.
+type chartCache struct {
+	mu sync.Mutex
+	m  map[string]chartEntry
+}
+
+type chartEntry struct {
+	at    time.Time
+	hours []chartHour
+}
+
+// activityChart counts the broker's requests by hour (UTC), allowed, asked
+// and blocked, for one project or all.
+func (s *server) activityChart(w http.ResponseWriter, r *http.Request) {
+	project := r.URL.Query().Get("project")
+	now := time.Now()
+	s.chart.mu.Lock()
+	c, ok := s.chart.m[project]
+	s.chart.mu.Unlock()
+	if !ok || now.Sub(c.at) > 15*time.Second {
+		since := now.Add(-chartDays * 24 * time.Hour)
+		by := map[time.Time]*chartHour{}
+		err := s.Network.AuditBack(func(e audit.Entry) bool {
+			if e.Time.Before(since) {
+				return false
+			}
+			if project != "" && e.Project != project {
+				return true
+			}
+			h := e.Time.UTC().Truncate(time.Hour)
+			b := by[h]
+			if b == nil {
+				b = &chartHour{T: h}
+			}
+			switch e.Decision {
+			case "allow":
+				b.Allowed++
+			case "ask":
+				b.Asked++
+			case "deny":
+				b.Blocked++
+			default:
+				return true
+			}
+			by[h] = b
+			return true
+		})
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		c = chartEntry{at: now, hours: []chartHour{}}
+		for _, h := range slices.SortedFunc(maps.Keys(by), time.Time.Compare) {
+			c.hours = append(c.hours, *by[h])
+		}
+		s.chart.mu.Lock()
+		if s.chart.m == nil {
+			s.chart.m = map[string]chartEntry{}
+		}
+		s.chart.m[project] = c
+		s.chart.mu.Unlock()
+	}
+	webutil.WriteJSONGzip(w, r, http.StatusOK, map[string]any{"days": chartDays, "hours": c.hours})
 }
 
 func (s *server) revokeToken(w http.ResponseWriter, r *http.Request) {

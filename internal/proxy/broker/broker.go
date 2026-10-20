@@ -243,6 +243,9 @@ func (b *Broker) RevokeAll(by string) (int, error) {
 // Audit returns the last n audit entries, oldest first.
 func (b *Broker) Audit(n int) ([]audit.Entry, error) { return audit.Tail(b.auditPath, n) }
 
+// AuditBack walks the audit log newest first until each returns false.
+func (b *Broker) AuditBack(each func(audit.Entry) bool) error { return audit.Back(b.auditPath, each) }
+
 // Notify buzzes the phone for new pending approvals until ctx ends.
 func (b *Broker) Notify(ctx context.Context, n notify.Notifier, uiURL string) {
 	notifyApprovals(ctx, b.approvals, n, uiURL)

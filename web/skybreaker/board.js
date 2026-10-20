@@ -276,9 +276,69 @@ function boardSnapshot(p, b) {
       COLUMNS.filter(([k]) => k !== 'done').flatMap(([k]) => Array.from({ length: Math.min(counts[k] || 0, Math.ceil(60 * (counts[k] || 0) / total)) }, () => el('span.st-' + k)))) : null,
     total ? el('div.snap-legend', null, COLUMNS.filter(([k]) => k !== 'done').map(([k, l]) => el('span', null, `${counts[k] || 0} ${l.toLowerCase()}`)))
       : el('p.muted', null, 'Nothing on the board. Capture work from the Board tab.'),
+    b.history ? boardChart(b.history) : null,
     group('in_progress', 'In progress', items('in_progress')),
     group('review', 'Review', items('review')),
     group(queue[0], queue[1], queue[2]));
+}
+
+// boardChart is the board's last two weeks: a bar for what was finished
+// each day, and a line for how much was open at its end.
+function boardChart(h) {
+  const days = boardSeries(h);
+  return dayChart(days, {
+    label: `Finished per day and open items, last ${days.length} days`,
+    stack: [['done', 'bc-bar']], line: 'open',
+    title: d => `${d.done} finished, ${d.open} open`,
+    stats: [[days.reduce((n, d) => n + d.done, 0), 'finished', 'done'], [days[days.length - 1].open, 'open now', 'open']],
+  });
+}
+
+// dayChart draws one bar per day, stacked from o.stack ([key, class] pairs,
+// bottom first), and optionally a line for o.line, as SVG from numbers
+// only; each day's title carries its counts. It's shared by the project
+// page's board chart and the activity page's.
+function dayChart(days, o) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const node = (tag, attrs, ...kids) => {
+    const n = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    n.append(...kids);
+    return n;
+  };
+  const W = 20, H = 56, top = 6;
+  const total = d => o.stack.reduce((n, [k]) => n + d[k], 0);
+  const maxBar = Math.max(1, ...days.map(total));
+  const maxLine = o.line ? Math.max(1, ...days.map(d => d[o.line])) : 1;
+  const y = (v, max) => top + (H - top) * (1 - v / max);
+  const label = d => d.day.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const bars = (d, i) => {
+    const out = [];
+    let base = H;
+    for (const [k, cls] of o.stack) {
+      if (!d[k]) continue;
+      // A day with a little of something still shows it.
+      const h = Math.max(2, (H - top) * d[k] / maxBar);
+      out.push(node('rect', { class: cls, x: i * W + 4, y: base - h, width: W - 8, height: h }));
+      base -= h;
+    }
+    return out.length ? out : [node('rect', { class: 'bc-none', x: i * W + 4, y: H - 1.5, width: W - 8, height: 1.5 })];
+  };
+  const chart = node('svg', { viewBox: `0 0 ${W * days.length} ${H}`, class: 'bc-svg', preserveAspectRatio: 'none', role: 'img', 'aria-label': o.label },
+    ...days.map((d, i) => node('g', { class: 'bc-day' },
+      node('title', {}, `${label(d)}: ${o.title(d)}`),
+      node('rect', { class: 'bc-hit', x: i * W, y: 0, width: W, height: H }),
+      ...bars(d, i))),
+    ...(o.line ? [
+      node('polyline', { class: 'bc-open', points: days.map((d, i) => `${i * W + W / 2},${y(d[o.line], maxLine)}`).join(' ') }),
+      node('circle', { class: 'bc-now', cx: (days.length - 1) * W + W / 2, cy: y(days[days.length - 1][o.line], maxLine), r: 3 })] : []));
+  const short = d => d.day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return el('div.bchart', null,
+    el('div.bc-head', null,
+      o.stats.map(([n, text, key]) => el('span.bc-stat', null, el('b', null, n.toLocaleString()), el('span.bc-key.' + key, null, text))),
+      el('span.bc-when', null, 'last ' + days.length + ' days')),
+    chart,
+    el('div.bc-axis', null, el('span', null, short(days[0])), el('span', null, 'Today')));
 }
 
 function snapCard(it) {

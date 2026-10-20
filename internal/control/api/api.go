@@ -94,6 +94,8 @@ type Network interface {
 	RevokeToken(id, by string) error
 	RevokeAll(by string) (int, error)
 	Audit(n int) ([]audit.Entry, error)
+	// AuditBack walks the audit log newest first until each returns false.
+	AuditBack(each func(audit.Entry) bool) error
 }
 
 // Push is the web push service.
@@ -134,6 +136,7 @@ type server struct {
 	tints map[string]int
 	ssh   relays
 	gh    ghStates
+	chart chartCache
 }
 
 func New(d Deps) (http.Handler, error) {
@@ -191,6 +194,7 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("GET /api/requests", s.requests)
 	m.HandleFunc("POST /api/requests/{id}/{verb}", s.decideRequest)
 	m.HandleFunc("GET /api/activity", s.activity)
+	m.HandleFunc("GET /api/activity/chart", s.activityChart)
 	m.HandleFunc("POST /api/tokens/{id}/revoke", s.revokeToken)
 	m.HandleFunc("POST /api/kill", s.kill)
 	m.HandleFunc("POST /api/jobs/{name}/run", s.runJob)

@@ -395,6 +395,45 @@ func statusIndex(st string) int { return slices.Index(Statuses, st) }
 
 // ListItems returns matching items, board by board, each column in its board
 // order; Done is newest first.
+// History is a board's recent past, for a chart: how many items were open
+// at since, and when each item created or finished after it was. Callers
+// bucket the times into their own days.
+type History struct {
+	Since       time.Time   `json:"since"`
+	OpenAtStart int         `json:"open_at_start"`
+	Created     []time.Time `json:"created"`
+	Done        []time.Time `json:"done"`
+}
+
+func (s *Store) History(project string, since time.Time) (History, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, err := s.project(project)
+	if err != nil {
+		return History{}, err
+	}
+	h := History{Since: since, Created: []time.Time{}, Done: []time.Time{}}
+	for _, it := range s.st.Items {
+		if it.Project != p.Slug {
+			continue
+		}
+		done := it.Status == "done" && it.CompletedAt != nil
+		if it.CreatedAt.Before(since) {
+			if !done || !it.CompletedAt.Before(since) {
+				h.OpenAtStart++
+			}
+		} else {
+			h.Created = append(h.Created, it.CreatedAt)
+		}
+		if done && !it.CompletedAt.Before(since) {
+			h.Done = append(h.Done, *it.CompletedAt)
+		}
+	}
+	slices.SortFunc(h.Created, time.Time.Compare)
+	slices.SortFunc(h.Done, time.Time.Compare)
+	return h, nil
+}
+
 func (s *Store) ListItems(f Filter) ([]Item, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

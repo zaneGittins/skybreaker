@@ -208,4 +208,40 @@ function rulesFromText(text) {
 // hostsFromText splits a list of hosts typed with commas, spaces or lines.
 const hostsFromText = text => String(text).split(/[\s,]+/).map(h => h.trim()).filter(Boolean);
 
-if (typeof module !== 'undefined') module.exports = { rulesToText, rulesFromText, hostsFromText, ago, until, duration, route, auditRow, dropPosition, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal, tail };
+// boardSeries buckets a board's history (see board.History) into the last
+// `days` days in local time: items finished each day, and how many were
+// open when it ended (today: now).
+function boardSeries(h, now = new Date(), days = 14) {
+  const created = (h.created || []).map(Date.parse);
+  const done = (h.done || []).map(Date.parse);
+  const upTo = (ts, t) => ts.filter(x => x < t).length;
+  const out = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const next = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1);
+    const end = Math.min(next.getTime(), now.getTime() + 1);
+    out.push({
+      day,
+      done: done.filter(x => x >= day.getTime() && x < next.getTime()).length,
+      open: (h.open_at_start || 0) + upTo(created, end) - upTo(done, end),
+    });
+  }
+  return out;
+}
+
+// activitySeries adds the broker's hourly counts up into the last `days`
+// days in local time.
+function activitySeries(hours, now = new Date(), days = 14) {
+  const out = [];
+  for (let i = days - 1; i >= 0; i--) {
+    out.push({ day: new Date(now.getFullYear(), now.getMonth(), now.getDate() - i), allowed: 0, asked: 0, blocked: 0 });
+  }
+  for (const h of hours || []) {
+    const t = new Date(h.t);
+    const d = out.find(x => x.day.getFullYear() === t.getFullYear() && x.day.getMonth() === t.getMonth() && x.day.getDate() === t.getDate());
+    if (d) { d.allowed += h.allowed || 0; d.asked += h.asked || 0; d.blocked += h.blocked || 0 }
+  }
+  return out;
+}
+
+if (typeof module !== 'undefined') module.exports = { activitySeries, boardSeries, rulesToText, rulesFromText, hostsFromText, ago, until, duration, route, auditRow, dropPosition, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal, tail };

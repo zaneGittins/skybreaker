@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 )
@@ -84,26 +85,41 @@ func Tail(path string, n int) ([]Entry, error) {
 	if n <= 0 {
 		return nil, nil
 	}
+	var out []Entry // newest first while collecting
+	err := Back(path, func(e Entry) bool {
+		out = append(out, e)
+		return len(out) < n
+	})
+	if err != nil {
+		return nil, err
+	}
+	slices.Reverse(out)
+	return out, nil
+}
+
+// Back calls each with the log's well-formed entries, newest first, until
+// it returns false. It reads the file backwards in chunks, so stopping
+// early costs only what was read.
+func Back(path string, each func(Entry) bool) error {
 	f, err := os.Open(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("audit: %w", err)
+		return fmt.Errorf("audit: %w", err)
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("audit: %w", err)
+		return fmt.Errorf("audit: %w", err)
 	}
 
 	const chunk = 64 << 10
 	var (
-		out  []Entry // newest first while collecting
-		tail []byte  // partial line carried between chunks
+		tail []byte // partial line carried between chunks
 		pos  = fi.Size()
 	)
-	for pos > 0 && len(out) < n {
+	for pos > 0 {
 		size := int64(chunk)
 		if pos < size {
 			size = pos
@@ -111,7 +127,7 @@ func Tail(path string, n int) ([]Entry, error) {
 		pos -= size
 		buf := make([]byte, size, size+int64(len(tail)))
 		if _, err := f.ReadAt(buf, pos); err != nil {
-			return nil, fmt.Errorf("audit: %w", err)
+			return fmt.Errorf("audit: %w", err)
 		}
 		buf = append(buf, tail...)
 		lines := bytes.Split(buf, []byte{'\n'})
@@ -122,16 +138,13 @@ func Tail(path string, n int) ([]Entry, error) {
 		} else {
 			lines = lines[1:]
 		}
-		for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
-			if e, ok := parse(lines[i]); ok {
-				out = append(out, e)
+		for i := len(lines) - 1; i >= 0; i-- {
+			if e, ok := parse(lines[i]); ok && !each(e) {
+				return nil
 			}
 		}
 	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
-	return out, nil
+	return nil
 }
 
 func parse(line []byte) (Entry, bool) {
