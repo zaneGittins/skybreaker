@@ -175,7 +175,7 @@ function dropPosition(above, below) {
 // auditRow turns a broker audit entry into one line of the activity page: a
 // tone, a verb and what it was about.
 const AUDIT = {
-  allow: ['ok', 'Allowed'], approve: ['ok', 'Approved'], deny: ['bad', 'Blocked'], ask: ['wait', 'Asked'],
+  allow: ['ok', 'Allowed'], approve: ['ok', 'Approved'], reject: ['bad', 'Denied'], deny: ['bad', 'Blocked'], ask: ['wait', 'Asked'],
   mint: ['info', 'Token issued'], revoke: ['bad', 'Revoked'], config: ['info', 'Settings'],
 };
 function auditRow(e) {

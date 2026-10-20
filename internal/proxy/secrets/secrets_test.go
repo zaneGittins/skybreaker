@@ -146,6 +146,10 @@ func writeKey(t *testing.T) string {
 func TestGitHubAppKind(t *testing.T) {
 	var mints int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/app/installations/9" {
+			fmt.Fprint(w, `{"id": 9, "account": {"login": "zaneGittins"}}`)
+			return
+		}
 		if r.URL.Path != "/app/installations/9/access_tokens" {
 			http.NotFound(w, r)
 			return

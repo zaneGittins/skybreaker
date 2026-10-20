@@ -143,3 +143,35 @@ func TestLastUsed(t *testing.T) {
 		t.Fatalf("%v", s.LastUsed())
 	}
 }
+
+// A file holding a secret is refused when others can read it, as the
+// secrets file itself is.
+func TestSecretFilesMustBePrivate(t *testing.T) {
+	dir := t.TempDir()
+	open := filepath.Join(dir, "token")
+	os.WriteFile(open, []byte("v"), 0o644)
+	os.Chmod(open, 0o644)
+	key := filepath.Join(dir, "app.pem")
+	os.WriteFile(key, []byte(keyPEM(t)), 0o644)
+	os.Chmod(key, 0o644)
+	for name, sp := range map[string]Spec{
+		"file":     {Name: "a", Kind: "file", File: open, Hosts: []string{"h"}},
+		"key_file": {Name: "g", Kind: "github_app", Hosts: []string{"github.com"}, GitHubApp: &GitHubAppSpec{AppID: "1", KeyFile: key}},
+	} {
+		if _, err := NewStore([]Spec{sp}, nil); err == nil || !strings.Contains(err.Error(), "readable") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+// A minted token stays redactable for mintedMemory, so a k8s token may not
+// outlive that.
+func TestTokenRequestTTLBounded(t *testing.T) {
+	bearer := filepath.Join(t.TempDir(), "b")
+	os.WriteFile(bearer, []byte("cred"), 0o600)
+	_, err := NewStore([]Spec{{Name: "k", Kind: "k8s_tokenrequest", Hosts: []string{"k.example"},
+		TokenRequest: &TokenRequestSpec{APIServer: "https://k.example", BearerFile: bearer, Namespace: "n", ServiceAccount: "sa", TTL: "24h"}}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "ttl") {
+		t.Fatalf("a 24h token: %v", err)
+	}
+}

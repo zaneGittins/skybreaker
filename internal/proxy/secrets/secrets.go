@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zaneGittins/skybreaker/internal/configfile"
 	"github.com/zaneGittins/skybreaker/internal/proxy/githubapp"
 	"github.com/zaneGittins/skybreaker/internal/proxy/k8s"
 )
@@ -178,10 +179,11 @@ func githubAppMinter(g *GitHubAppSpec, httpClient *http.Client) (*githubapp.App,
 	}
 	pemBytes := []byte(g.Key)
 	if g.KeyFile != "" {
-		var err error
-		if pemBytes, err = os.ReadFile(g.KeyFile); err != nil {
+		k, err := readTrimmed(g.KeyFile)
+		if err != nil {
 			return nil, nil, err
 		}
+		pemBytes = []byte(k)
 	}
 	key, err := githubapp.ParseKey(pemBytes)
 	if err != nil {
@@ -216,6 +218,11 @@ func tokenRequestMinter(k *TokenRequestSpec, httpClient *http.Client) (func(cont
 		if err != nil {
 			return nil, "", fmt.Errorf("ttl: %w", err)
 		}
+		// A minted token is redacted from what agents see for mintedMemory;
+		// one that lived longer would stop being.
+		if d > mintedMemory {
+			return nil, "", fmt.Errorf("ttl %s is longer than %s", d, mintedMemory)
+		}
 		ttl = d
 	}
 	bearer, err := readTrimmed(k.BearerFile)
@@ -242,19 +249,13 @@ func tokenRequestMinter(k *TokenRequestSpec, httpClient *http.Client) (func(cont
 	return func(ctx context.Context, _ Scope) (string, error) { return src.Token(ctx) }, bearer, nil
 }
 
+// readTrimmed reads a file that holds a secret, refusing one that others
+// can read, as the secrets file is refused.
 func readTrimmed(path string) (string, error) {
 	if path == "" {
 		return "", errors.New("file is required")
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	v := strings.TrimSpace(string(b))
-	if v == "" {
-		return "", fmt.Errorf("%s is empty", path)
-	}
-	return v, nil
+	return configfile.ReadSecret(path)
 }
 
 // specHost validates a configured host: an exact name or IP, no wildcard,

@@ -16,6 +16,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/zaneGittins/skybreaker/internal/configfile"
@@ -402,6 +403,11 @@ func buildRoute(capName string, e *Entry, vars map[string]string, p *Project) (*
 	u, err := url.Parse(e.Upstream)
 	if err != nil || u.Scheme != "https" || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.User != nil {
 		return nil, errors.New("upstream must be an https origin such as https://host[:port]")
+	}
+	if p := u.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
+			return nil, fmt.Errorf("upstream port %s is out of range", p)
+		}
 	}
 	u.Path = ""
 	if err := checkInject(e.Inject); err != nil {

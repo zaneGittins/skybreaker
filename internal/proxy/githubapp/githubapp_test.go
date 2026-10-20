@@ -147,6 +147,8 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"message":"Not Found"}`)
 	case r.Method == "GET" && r.URL.Path == "/app":
 		fmt.Fprint(w, `{"slug":"skybreaker-test","html_url":"https://github.com/apps/skybreaker-test"}`)
+	case r.Method == "GET" && r.URL.Path == fmt.Sprintf("/app/installations/%d", f.installation()):
+		fmt.Fprintf(w, `{"id": %d, "account": {"login": "zaneGittins"}}`, f.installation())
 	case r.Method == "GET" && r.URL.Path == "/repos/zaneGittins/orbit/installation":
 		f.lookups.Add(1)
 		fmt.Fprintf(w, `{"id": %d}`, f.installation())
@@ -218,6 +220,24 @@ func TestTokenMintsScopedToOneRepoAndCaches(t *testing.T) {
 	}
 	if f.lookups.Load() != 0 {
 		t.Error("looked up the installation although its ID was configured")
+	}
+}
+
+// A configured installation belongs to one account: a repo of any other
+// owner is refused, not minted for the installation's same-named repo.
+func TestFixedInstallationKeepsToItsAccount(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	f := &fakeGitHub{t: t, expires: now.Add(time.Hour)}
+	a := newApp(t, f, &now)
+	a.InstallationID = 4242
+	if _, err := a.Token(context.Background(), "someoneelse/orbit"); err == nil {
+		t.Fatal("minted for another owner's repo")
+	}
+	if f.mints.Load() != 0 {
+		t.Fatal("a token was minted")
+	}
+	if _, err := a.Token(context.Background(), "ZaneGittins/orbit"); err != nil {
+		t.Fatalf("the installation's own repo: %v", err)
 	}
 }
 

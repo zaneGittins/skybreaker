@@ -121,6 +121,8 @@ test('auditRow', () => {
     { tone: 'bad', verb: 'Blocked', target: 'POST api.github.com/repos/x/y/pulls' });
   assert.deepEqual(auditRow({ decision: 'ask', method: 'PUT', host: 'api.github.com', path: '/m' }).tone, 'wait');
   assert.deepEqual(auditRow({ decision: 'approve', method: 'PUT', host: 'h', path: '/m', by: 'z' }).verb, 'Approved');
+  // You refusing a card is told apart from the broker blocking a request.
+  assert.deepEqual(auditRow({ decision: 'reject', method: 'PUT', host: 'h', path: '/m', by: 'z' }).verb, 'Denied');
   // Token changes have no host: the reason says what happened.
   assert.deepEqual(auditRow({ decision: 'mint', project: 'orbit', reason: 'session abc' }), { tone: 'info', verb: 'Token issued', target: 'session abc' });
   assert.deepEqual(auditRow({ decision: 'revoke', reason: 'kill switch: 2 sessions' }), { tone: 'bad', verb: 'Revoked', target: 'kill switch: 2 sessions' });

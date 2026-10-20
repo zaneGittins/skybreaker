@@ -173,6 +173,8 @@ func TestInvalid(t *testing.T) {
 		"route trailing slash":  {`"route": "/orbit"`, `"route": "/orbit/"`},
 		"route http upstream":   {`"https://orbit.example.ts.net"`, `"http://orbit.example.ts.net"`},
 		"route upstream path":   {`"https://orbit.example.ts.net"`, `"https://orbit.example.ts.net/x?y"`},
+		"route port zero":       {`"https://orbit.example.ts.net"`, `"https://orbit.example.ts.net:0"`},
+		"route port too big":    {`"https://orbit.example.ts.net"`, `"https://orbit.example.ts.net:99999"`},
 		"route two kinds":       {`"rules": [{"match": "POST /mcp", "action": "auto"}],`, `"rules": [{"match": "POST /mcp", "action": "auto"}], "k8s": {"auto": ["get"]},`},
 		"route no kind":         {`"rules": [{"match": "POST /mcp", "action": "auto"}],`, ``},
 		"bad k8s policy":        {`"auto": ["get", "list", "watch"]`, `"auto": ["fly"]`},

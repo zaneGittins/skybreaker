@@ -234,11 +234,14 @@ func (b *Broker) Decide(id string, approve bool, by string) (approval.Approval, 
 	if err != nil {
 		return a, err
 	}
-	decision := "deny"
+	// A refusal is "reject", apart from the broker's own "deny": the held
+	// request it refuses is logged as a deny when it ends, and counting
+	// both would count it twice.
+	decision := "reject"
 	if approve {
 		decision = "approve"
 	}
-	b.audit.Log(audit.Entry{Sender: by, By: by, Project: a.Project, Host: a.Host, Method: a.Method, Path: a.Path, Decision: decision, ApprovalID: a.ID})
+	b.audit.Log(audit.Entry{Sender: by, By: by, Project: a.Project, Host: a.Host, Method: a.Method, Path: b.secrets.Redact(a.Path), Decision: decision, ApprovalID: a.ID})
 	return a, nil
 }
 

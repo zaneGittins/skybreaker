@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Load decodes the file at path into v.
@@ -62,7 +63,7 @@ func checkDuplicateKeys(b []byte) error {
 				if err != nil {
 					return err
 				}
-				k := strings.ToLower(kt.(string))
+				k := fold(kt.(string))
 				if seen[k] {
 					return fmt.Errorf("duplicate key %q (keys are matched ignoring case)", kt)
 				}
@@ -85,6 +86,12 @@ func checkDuplicateKeys(b []byte) error {
 		return nil
 	}
 	return walk()
+}
+
+// fold is how encoding/json compares a key with a field name: each rune
+// upper-cased after lower-casing, so the long s (U+017F) is an s.
+func fold(k string) string {
+	return strings.Map(func(r rune) rune { return unicode.ToUpper(unicode.ToLower(r)) }, k)
 }
 
 // Duration is a time.Duration written as "30s" or "15m".

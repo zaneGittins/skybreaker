@@ -110,6 +110,10 @@ func TestDuplicateKeysRejected(t *testing.T) {
 		"exact repeat":  `{"name":"x","name":"y"}`,
 		"nested":        `{"name":"x","sub":{"a":1,"A":2}}`,
 		"inside a list": `{"list":[{"k":1,"K":2}]}`,
+		// encoding/json folds Unicode case too: long s and the Kelvin sign
+		// match s and k.
+		"long s": "{\"hosts\":[\"a\"],\"ho\u017fts\":[\"b\"]}",
+		"kelvin": "{\"key\":1,\"\u212aey\":2}",
 	} {
 		var v map[string]any
 		if err := DecodeJSON([]byte(body), &v); err == nil || !strings.Contains(err.Error(), "duplicate") {

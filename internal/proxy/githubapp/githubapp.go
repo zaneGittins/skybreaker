@@ -65,8 +65,9 @@ type App struct {
 	HTTP           *http.Client
 	Now            func() time.Time
 
-	mu    sync.Mutex
-	repos map[string]*repoEntry
+	mu      sync.Mutex
+	repos   map[string]*repoEntry
+	account string // the configured installation's owner, once looked up
 }
 
 // repoEntry serialises minting per repo, so concurrent pushes share a token.
@@ -130,6 +131,17 @@ func (a *App) Token(ctx context.Context, repo string) (string, error) {
 		return e.token, nil
 	}
 	if a.InstallationID != 0 {
+		// GitHub reads the repositories a token is narrowed to as names in
+		// the installation's account: another owner's repo would get a
+		// token for the account's repo of the same name.
+		owner, _, _ := strings.Cut(repo, "/")
+		account, err := a.installationAccount(ctx)
+		if err != nil {
+			return "", err
+		}
+		if !strings.EqualFold(owner, account) {
+			return "", fmt.Errorf("githubapp: %s isn't in installation %d, which is %s's", repo, a.InstallationID, account)
+		}
 		return e.mint(ctx, a, a.InstallationID, repo)
 	}
 	if e.installation != 0 {
@@ -192,6 +204,31 @@ func (a *App) InstallURL(ctx context.Context) (string, error) {
 		return "", errors.New("githubapp: GitHub didn't give the App's address")
 	}
 	return strings.TrimSuffix(out.HTMLURL, "/") + "/installations/new", nil
+}
+
+// installationAccount is the login that owns the configured installation.
+func (a *App) installationAccount(ctx context.Context) (string, error) {
+	a.mu.Lock()
+	account := a.account
+	a.mu.Unlock()
+	if account != "" {
+		return account, nil
+	}
+	var out struct {
+		Account struct {
+			Login string `json:"login"`
+		} `json:"account"`
+	}
+	if err := a.call(ctx, http.MethodGet, fmt.Sprintf("/app/installations/%d", a.InstallationID), nil, http.StatusOK, &out); err != nil {
+		return "", err
+	}
+	if out.Account.Login == "" {
+		return "", fmt.Errorf("githubapp: installation %d has no account", a.InstallationID)
+	}
+	a.mu.Lock()
+	a.account = out.Account.Login
+	a.mu.Unlock()
+	return out.Account.Login, nil
 }
 
 func (a *App) lookupInstallation(ctx context.Context, repo string) (int64, error) {
