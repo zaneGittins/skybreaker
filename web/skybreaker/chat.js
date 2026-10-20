@@ -851,11 +851,17 @@ function menu(anchor, items) {
     }, el('span.mi-text', null, el('b', null, it.label), it.desc ? el('span', null, it.desc) : null), it.on ? svg(ICON.check) : null)));
   const shade = el('div.menu-shade', { onclick: closeMenu });
   document.body.append(shade, box);
+  // Below the anchor if it fits, else above; if neither, on the roomier
+  // side, scrolling, so a long list (a harness's models) never runs off
+  // the screen.
   const w = box.offsetWidth, h = box.offsetHeight;
-  const left = Math.max(8, Math.min(r.left, innerWidth - w - 8));
-  const top = r.bottom + 6 + h > innerHeight ? Math.max(8, r.top - h - 6) : r.bottom + 6;
-  box.style.left = left + 'px';
-  box.style.top = top + 'px';
+  const below = innerHeight - r.bottom - 14, above = r.top - 14;
+  const down = h <= below || (h > above && below >= above);
+  const room = down ? below : above;
+  if (h > room) box.style.maxHeight = Math.max(room, 120) + 'px';
+  const shown = Math.min(h, Math.max(room, 120));
+  box.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
+  box.style.top = (down ? r.bottom + 6 : Math.max(8, r.top - shown - 6)) + 'px';
 }
 
 function closeMenu() {
