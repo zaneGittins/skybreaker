@@ -58,6 +58,9 @@ type Access struct {
 
 // Grant is a project's access from one source.
 type Grant struct {
+	// Repo is the repo of the project the app granted to, so a later
+	// project that takes the name doesn't inherit what this one was given.
+	Repo         string          `json:"repo,omitempty"`
 	Capabilities []string        `json:"capabilities,omitempty"`
 	Allow        []*policy.Entry `json:"allow,omitempty"`
 }
@@ -115,6 +118,9 @@ func (f *AppFiles) SetGrant(project string, g Grant) {
 
 var bundleRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,39}$`)
 
+// BundleName reports whether name can name a bundle made in the app.
+func BundleName(name string) bool { return bundleRe.MatchString(name) }
+
 // checkAppEntry refuses what the app may not add: anything but a host.
 func checkAppEntry(e *policy.Entry) error {
 	switch {
@@ -152,7 +158,7 @@ func (c *Config) mergeAccess(a Access, path string) error {
 	}
 	for _, name := range slices.Sorted(maps.Keys(a.Projects)) {
 		g, p := a.Projects[name], c.Projects[name]
-		if g == nil || p == nil {
+		if g == nil || p == nil || g.Repo != "" && !strings.EqualFold(g.Repo, p.Repo) {
 			continue
 		}
 		for _, e := range g.Allow {
@@ -196,8 +202,12 @@ var editMu sync.Mutex
 // what changed only if the whole configuration still loads and passes
 // check (the broker's secret bindings), which sees the app's secrets as
 // they would be saved. It returns the configuration before and after; a dry
-// run checks and reports but saves nothing. On any failure every file is
-// left as it was.
+// run checks and reports but saves nothing. A failed check leaves every
+// file as it was. The changed files are renamed into place one at a time,
+// projects.json first: the one change that touches two (a grant for a
+// project made in the app) empties its projects.json bundles before
+// access.json has them, so a crash between the renames leaves less access,
+// never more.
 func Edit(configPath string, change func(*AppFiles) error, check func(*Config) error, dry bool) (before, after *Config, err error) {
 	editMu.Lock()
 	defer editMu.Unlock()
@@ -217,6 +227,23 @@ func Edit(configPath string, change func(*AppFiles) error, check func(*Config) e
 	}
 	if err := change(&f); err != nil {
 		return nil, nil, err
+	}
+	// Grants keep to the project they were made for: each is stamped with
+	// its project's repo, and a grant for a project that's gone is dropped.
+	for name, g := range f.Access.Projects {
+		repo, exists := "", false
+		if p := before.Projects[name]; p != nil {
+			repo, exists = p.Repo, true
+		}
+		if a := f.Projects[name]; a != nil {
+			repo, exists = a.Repo, true
+		}
+		switch {
+		case !exists || g == nil || g.Repo != "" && !strings.EqualFold(g.Repo, repo):
+			delete(f.Access.Projects, name)
+		case g.Repo == "":
+			g.Repo = repo
+		}
 	}
 	if len(f.Secrets.Secrets) > 0 && f.Secrets.Key == "" {
 		k := make([]byte, 16)

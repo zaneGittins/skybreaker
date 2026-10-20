@@ -140,6 +140,13 @@ func (s *Scheduler) Tick(ctx context.Context, now time.Time) {
 	}
 }
 
+// Busy reports whether a run is going.
+func (s *Scheduler) Busy() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.running) > 0
+}
+
 // Wait blocks until every started run has finished.
 func (s *Scheduler) Wait() { s.wg.Wait() }
 

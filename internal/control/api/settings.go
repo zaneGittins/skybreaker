@@ -69,7 +69,6 @@ const ghSecret = "github_app"
 
 var (
 	secretNameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,47}$`)
-	bundleNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,39}$`)
 	secretHostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 	errNoSecret  = errors.New("no such secret added in the app")
 	errNoBundle  = errors.New("no such bundle made in the app")
@@ -476,7 +475,7 @@ func (s *server) saveBundle(w http.ResponseWriter, r *http.Request) {
 	if !decodeStrict(w, r, &in) {
 		return
 	}
-	if !bundleNameRe.MatchString(name) {
+	if !config.BundleName(name) {
 		webutil.Error(w, http.StatusBadRequest, "bundle name: use lowercase letters, digits, dashes and underscores")
 		return
 	}

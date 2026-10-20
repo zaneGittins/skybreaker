@@ -3,6 +3,7 @@ package board
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -705,5 +706,25 @@ func TestSyncKeyClash(t *testing.T) {
 		if p, _ := fresh.GetProject("other"); p.Key != "BIF" {
 			t.Fatalf("other got %s", p.Key)
 		}
+	}
+}
+
+// A change that can't be saved is undone in memory too: the caller was
+// told it failed, so it mustn't land with the next save.
+func TestFailedSaveIsUndone(t *testing.T) {
+	s := open(t)
+	mustProject(t, s, "orbit")
+	mustItem(t, s, "orbit", ItemInput{Title: "one"})
+	dir := filepath.Dir(s.path)
+	os.Chmod(dir, 0o500)
+	if _, err := s.CreateItem("orbit", ItemInput{Title: "lost"}, "z"); err == nil {
+		os.Chmod(dir, 0o700)
+		t.Skip("the directory stayed writable (running as root?)")
+	}
+	os.Chmod(dir, 0o700)
+	it := mustItem(t, s, "orbit", ItemInput{Title: "two"})
+	items, _ := s.ListItems(Filter{Project: "orbit", IncludeDone: true})
+	if len(items) != 2 || it.Number != 2 {
+		t.Fatalf("%d items, the new one numbered %d", len(items), it.Number)
 	}
 }

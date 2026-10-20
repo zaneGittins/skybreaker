@@ -195,6 +195,47 @@ func TestEditSecretsReachCheck(t *testing.T) {
 	}
 }
 
+// A grant is for the project it was made for: a later project that takes
+// the name (another repo) doesn't inherit it, and a save drops grants for
+// projects that are gone.
+func TestGrantsStayWithTheirProject(t *testing.T) {
+	path := mainConfig(t)
+	if _, _, err := Edit(path, func(f *AppFiles) error {
+		f.SetGrant("orbit", Grant{Allow: []*policy.Entry{{Host: "pypi.org", Mode: policy.ModeTunnel}}})
+		return nil
+	}, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := ReadAppFiles(appPaths(t, path))
+	if g := f.Access.Projects["orbit"]; g == nil || g.Repo != "zaneGittins/orbit" {
+		t.Fatalf("grant %+v", g)
+	}
+	b, _ := os.ReadFile(path)
+	os.WriteFile(path, []byte(strings.Replace(string(b), `"repo": "zaneGittins/orbit"`, `"repo": "someoneelse/orbit"`, 1)), 0o600)
+	if pp, _ := mustLoad(t, path).Policy.Project("orbit"); pp.Host("pypi.org") != nil {
+		t.Fatal("a new orbit inherited the old one's grant")
+	}
+	gone := strings.Replace(string(b), `"orbit": {"repo"`, `"comet": {"repo"`, 1)
+	os.WriteFile(path, []byte(strings.Replace(gone, `"project": "orbit"`, `"project": "comet"`, 1)), 0o600)
+	if _, _, err := Edit(path, func(*AppFiles) error { return nil }, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := ReadAppFiles(appPaths(t, path)); f.Access.Projects["orbit"] != nil {
+		t.Fatal("a save kept a grant for a project that's gone")
+	}
+	// A project with no repo keeps its grants.
+	if _, _, err := Edit(path, func(f *AppFiles) error {
+		f.SetGrant("bifract", Grant{Allow: []*policy.Entry{{Host: "pypi.org", Mode: policy.ModeTunnel}}})
+		return nil
+	}, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	Edit(path, func(*AppFiles) error { return nil }, nil, false)
+	if pp, _ := mustLoad(t, path).Policy.Project("bifract"); pp == nil || pp.Host("pypi.org") == nil {
+		t.Fatal("bifract lost its grant")
+	}
+}
+
 // Grants for a project the config file no longer has are ignored: they
 // only ever add, so dropping them can't widen anything.
 func TestGrantForRemovedProject(t *testing.T) {

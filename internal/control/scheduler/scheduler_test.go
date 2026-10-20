@@ -213,8 +213,15 @@ func TestOneRunPerJob(t *testing.T) {
 	if _, err := s.Trigger(ctx, "nightly"); !errors.Is(err, ErrBusy) {
 		t.Fatalf("second trigger: %v, want ErrBusy", err)
 	}
+	// A restart waits for runs as it waits for chats.
+	if !s.Busy() {
+		t.Fatal("not busy with a run going")
+	}
 	cancel()
 	s.Wait()
+	if s.Busy() {
+		t.Fatal("busy with nothing running")
+	}
 }
 
 func TestUnknownJob(t *testing.T) {

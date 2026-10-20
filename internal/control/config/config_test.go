@@ -81,10 +81,6 @@ func TestSubnets(t *testing.T) {
 	if got := c.HookURL("orbit", "tok"); got != "http://"+c.Gateway("orbit").String()+":7701/hooks/claude/orbit/tok" {
 		t.Errorf("HookURL = %s", got)
 	}
-	all := c.Subnets()
-	if len(all) != 2 {
-		t.Errorf("Subnets() = %v", all)
-	}
 }
 
 func TestExplicitSubnet(t *testing.T) {

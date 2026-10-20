@@ -406,15 +406,6 @@ func (c *Config) validate() error {
 // Subnet is a project's sandbox network.
 func (c *Config) Subnet(project string) netip.Prefix { return c.subnets[project] }
 
-// Subnets lists every project's network, sorted by project name.
-func (c *Config) Subnets() []netip.Prefix {
-	var out []netip.Prefix
-	for _, name := range slices.Sorted(maps.Keys(c.subnets)) {
-		out = append(out, c.subnets[name])
-	}
-	return out
-}
-
 // Gateway is the host's address on a project's network, where the hook
 // listener answers.
 func (c *Config) Gateway(project string) netip.Addr { return sandbox.Gateway(c.subnets[project]) }

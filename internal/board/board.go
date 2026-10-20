@@ -101,6 +101,7 @@ type Store struct {
 
 	mu     sync.Mutex
 	st     state
+	saved  []byte   // st as last saved or loaded, to undo a change that failed to save
 	active []string // the configured projects, from the last Sync
 	// OnChange, if set, hears about every change: the project, and the item
 	// ref when one item changed. Called without the lock held.
@@ -124,6 +125,7 @@ func Open(path string) (*Store, error) {
 	if err := json.Unmarshal(b, &s.st); err != nil {
 		return nil, fmt.Errorf("board: %s: %w", path, err)
 	}
+	s.saved = b
 	if s.st.Projects == nil {
 		s.st.Projects = map[string]*Project{}
 	}
@@ -134,15 +136,33 @@ func Open(path string) (*Store, error) {
 }
 
 // save writes the snapshot to a temp file and renames it over the old one.
-// Callers hold s.mu.
+// When it can't, the change it was saving is undone in memory too: the
+// caller hears it failed, so it mustn't land with the next save. Callers
+// hold s.mu.
 func (s *Store) save() error {
 	if s.path == "" {
 		return nil
 	}
 	b, err := json.Marshal(s.st)
+	if err == nil {
+		err = s.write(b)
+	}
 	if err != nil {
+		var last state
+		if s.saved == nil || json.Unmarshal(s.saved, &last) != nil {
+			last = state{Projects: map[string]*Project{}, NextNote: 1}
+		}
+		if last.Projects == nil {
+			last.Projects = map[string]*Project{}
+		}
+		s.st = last
 		return err
 	}
+	s.saved = b
+	return nil
+}
+
+func (s *Store) write(b []byte) error {
 	dir := filepath.Dir(s.path)
 	f, err := os.CreateTemp(dir, ".board-*.json")
 	if err != nil {
@@ -441,8 +461,6 @@ func (s *Store) GetItem(ref string) (Item, error) {
 
 func statusIndex(st string) int { return slices.Index(Statuses, st) }
 
-// ListItems returns matching items, board by board, each column in its board
-// order; Done is newest first.
 // History is a board's recent past, for a chart: how many items were open
 // at since, and when each item created or finished after it was. Callers
 // bucket the times into their own days.
@@ -482,6 +500,8 @@ func (s *Store) History(project string, since time.Time) (History, error) {
 	return h, nil
 }
 
+// ListItems returns matching items, board by board, each column in its board
+// order; Done is newest first.
 func (s *Store) ListItems(f Filter) ([]Item, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

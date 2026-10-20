@@ -221,7 +221,7 @@ func Run(ctx context.Context, o Options) error {
 						return
 					case <-time.After(wait):
 					}
-					if !a.AgentsWorking() {
+					if !a.AgentsWorking() && !sched.Busy() {
 						restart <- struct{}{}
 						return
 					}
@@ -285,9 +285,13 @@ func Run(ctx context.Context, o Options) error {
 			}
 		}()
 	}
-	sched.SetContext(ctx)
+	// Runs end with the process, and with a restart: one started between
+	// the idle check and the restart is cancelled, not waited for.
+	runs, endRuns := context.WithCancel(ctx)
+	defer endRuns()
+	sched.SetContext(runs)
 	sched.Reconcile()
-	go sched.Loop(ctx)
+	go sched.Loop(runs)
 	go brk.Notify(ctx, n, cfg.UIURL)
 	go func() {
 		// The UI redraws when a request waits or is decided.
@@ -341,6 +345,7 @@ func Run(ctx context.Context, o Options) error {
 		log.Printf("skybreaker: restarting to apply a change made in the app")
 		result = ErrRestart
 	}
+	endRuns()
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for _, s := range servers {
