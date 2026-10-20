@@ -329,6 +329,17 @@ details.earlier .row-list { margin-top: 4px; }
 .side-new { width: 100%; border: 0; background: none; color: var(--muted); font: inherit; cursor: pointer; text-align: left; }
 .side-new svg { width: 16px; height: 16px; }
 .np-form { display: grid; gap: 14px; padding: 0 4px 4px; }
+/* Never taller than the screen; on a desktop, wide enough for two columns
+   (repo and name side by side, agents and bundles in a grid). */
+.picker.np-sheet { max-height: calc(100dvh - 32px); overflow-y: auto; }
+@media (min-width: 761px) {
+  .picker.np-sheet { width: min(760px, calc(100vw - 48px)); }
+  .np-sheet .np-form { grid-template-columns: 1fr 1fr; column-gap: 20px; }
+  .np-sheet .np-form > :not(.np-field) { grid-column: 1 / -1; }
+  .np-agents, .np-access { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); column-gap: 12px; }
+  .np-access > .np-hint { grid-column: 1 / -1; }
+  .np-sheet .np-form > .btn.primary { justify-self: end; min-width: 200px; }
+}
 .np-field { display: grid; gap: 6px; }
 .np-label, .np-group legend { font: 700 12px var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .np-input { height: 42px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: 500 15px var(--mono); }

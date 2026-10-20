@@ -628,8 +628,8 @@ async function newProjectSheet() {
   },
     field('Repository', repo, 'On GitHub. The agents clone it and open pull requests to it.'),
     field('Name', name, 'Lowercase letters, digits and dashes.'),
-    el('fieldset.np-group', null, el('legend', null, 'Agents'), agentBoxes),
-    el('fieldset.np-group', null, el('legend', null, 'Access'), capBoxes.length ? capBoxes : el('p.np-hint', null, 'No bundles yet: make one in Settings.'),
+    el('fieldset.np-group.np-agents', null, el('legend', null, 'Agents'), agentBoxes),
+    el('fieldset.np-group.np-access', null, el('legend', null, 'Access'), capBoxes.length ? capBoxes : el('p.np-hint', null, 'No bundles yet: make one in Settings.'),
       el('p.np-hint', null, 'What the sandbox may reach. Anything else is denied; add hosts later in Settings.')),
     error, create);
   const sheet = (...body) => $('#sheet-root').replaceChildren(
