@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zaneGittins/skybreaker/internal/control/sshkeys"
 	"github.com/zaneGittins/skybreaker/internal/tsauth"
 	"github.com/zaneGittins/skybreaker/internal/webutil"
 )
@@ -76,7 +77,11 @@ func (s *server) addSSHKey(w http.ResponseWriter, r *http.Request) {
 	p, _ := tsauth.FromContext(r.Context())
 	k, err := s.SSHKeys.Add(in.Name, in.Key, p.Name())
 	if err != nil {
-		webutil.Error(w, http.StatusBadRequest, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, sshkeys.ErrInvalid) {
+			status = http.StatusBadRequest
+		}
+		webutil.Error(w, status, err.Error())
 		return
 	}
 	if err := s.Backend.SetAuthorizedKeys(s.SSHKeys.AuthorizedKeys()); err != nil {
@@ -92,7 +97,11 @@ func (s *server) deleteSSHKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.SSHKeys.Delete(r.PathValue("id")); err != nil {
-		webutil.Error(w, http.StatusNotFound, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, sshkeys.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		webutil.Error(w, status, err.Error())
 		return
 	}
 	err := s.Backend.SetAuthorizedKeys(s.SSHKeys.AuthorizedKeys())

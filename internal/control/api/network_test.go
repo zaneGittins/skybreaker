@@ -23,6 +23,7 @@ type fakeNetwork struct {
 	revoked   []string
 	killed    string
 	log       []audit.Entry // oldest first, as the audit log holds them; nil for two
+	maxRead   int           // the most entries Audit was asked for
 }
 
 func newFakeNetwork() *fakeNetwork {
@@ -82,6 +83,7 @@ func (f *fakeNetwork) RevokeAll(by string) (int, error) {
 }
 
 func (f *fakeNetwork) Audit(n int) ([]audit.Entry, error) {
+	f.maxRead = max(f.maxRead, n)
 	if f.log == nil {
 		return []audit.Entry{
 			{Decision: "allow", Project: "bifract", Host: "proxy.golang.org"},
@@ -215,6 +217,17 @@ func TestActivityPages(t *testing.T) {
 	if _, _, n := page("?page=-2"); n != 1 {
 		t.Fatalf("bad page: %d", n)
 	}
+	// A page past what's read is empty, never a read of the whole log or
+	// an overflow.
+	f.network.maxRead = 0
+	for _, q := range []string{"?page=1000000", "?page=184467440737095518"} {
+		if log, more, _ := page(q); len(log) != 0 || more {
+			t.Fatalf("%s: %d %v", q, len(log), more)
+		}
+	}
+	if f.network.maxRead > activityScan {
+		t.Fatalf("read %d entries for one page", f.network.maxRead)
+	}
 	log, more, _ := page("?blocked=1")
 	if len(log) != 26 || more || log[0].Reason != "#125" {
 		t.Fatalf("blocked: %d %v", len(log), more)
@@ -275,7 +288,10 @@ func TestActivityChart(t *testing.T) {
 	if last := all[1]; last.Blocked != 1 || last.Asked != 1 || last.Allowed != 0 {
 		t.Fatalf("this hour: %+v", last)
 	}
-	if b := get("?project=bifract"); len(b) != 1 || b[0].Allowed != 1 {
-		t.Fatalf("bifract: %+v", b)
+	if b := get("?project=orbit"); len(b) != 2 {
+		t.Fatalf("orbit: %+v", b)
+	}
+	if code, _ := f.do(t, "GET", "/api/activity/chart?project=made-up", "", nil); code != 404 {
+		t.Fatalf("a project that isn't one: %d", code)
 	}
 }

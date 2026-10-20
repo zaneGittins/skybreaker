@@ -19,9 +19,9 @@ func (f fakeID) WhoIs(_ context.Context, addr string) (Peer, error) {
 }
 
 var (
-	agentHost = Peer{Node: "agent-vm", Tags: []string{"tag:agent-host"}, Addr: "100.64.0.2"}
-	you       = Peer{Node: "phone", Login: "Zane@example.com", Addr: "100.64.0.9"}
-	stranger  = Peer{Node: "laptop", Login: "eve@example.com", Addr: "100.64.0.7"}
+	agentHost = Peer{Node: "agent-vm", Tags: []string{"tag:agent-host"}}
+	you       = Peer{Node: "phone", Login: "Zane@example.com"}
+	stranger  = Peer{Node: "laptop", Login: "eve@example.com"}
 )
 
 func ids() fakeID {
@@ -112,13 +112,7 @@ func TestStatic(t *testing.T) {
 	}
 }
 
-func TestHasTag(t *testing.T) {
-	if !agentHost.HasTag("tag:other", "tag:agent-host") {
-		t.Error("HasTag missed a listed tag")
-	}
-	if agentHost.HasTag() || you.HasTag("tag:agent-host") {
-		t.Error("HasTag matched wrongly")
-	}
+func TestName(t *testing.T) {
 	if agentHost.Name() != "agent-vm" || you.Name() != "Zane@example.com" {
 		t.Errorf("Name: %q %q", agentHost.Name(), you.Name())
 	}

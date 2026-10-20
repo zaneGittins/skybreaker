@@ -10,12 +10,12 @@ import (
 
 func TestDevNetwork(t *testing.T) {
 	n := Dev(Peer{Node: "dev", Login: "zane@example.com"})
-	ln, err := n.Listen("127.0.0.1:0")
+	ln, err := n.ListenTLS("127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	if _, err := n.Listen("0.0.0.0:0"); err == nil {
+	if _, err := n.ListenTLS("0.0.0.0:0"); err == nil {
 		t.Fatal("dev network listened on a non-loopback address")
 	}
 	if _, err := n.ListenTLS("192.168.1.10:443"); err == nil {

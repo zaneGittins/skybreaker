@@ -5,6 +5,7 @@ package tsnetsrv
 import (
 	"errors"
 	"net/netip"
+	"slices"
 	"testing"
 
 	"tailscale.com/client/tailscale/apitype"
@@ -20,14 +21,14 @@ func TestPeerFrom(t *testing.T) {
 		Node:        &tailcfg.Node{ComputedName: "phone", Addresses: []netip.Prefix{netip.MustParsePrefix("100.64.0.9/32")}},
 		UserProfile: &tailcfg.UserProfile{LoginName: "zane@example.com"},
 	}
-	if p := peerFrom(user); p.Node != "phone" || p.Login != "zane@example.com" || len(p.Tags) != 0 || p.Addr != "100.64.0.9" {
+	if p := peerFrom(user); p.Node != "phone" || p.Login != "zane@example.com" || len(p.Tags) != 0 {
 		t.Fatalf("user peer = %+v", p)
 	}
 	tagged := &apitype.WhoIsResponse{
 		Node:        &tailcfg.Node{Name: "agent-vm.example.ts.net.", Tags: []string{"tag:agent-host"}},
 		UserProfile: &tailcfg.UserProfile{LoginName: "tagged-devices"},
 	}
-	if p := peerFrom(tagged); p.Node != "agent-vm.example.ts.net" || p.Login != "" || !p.HasTag("tag:agent-host") {
+	if p := peerFrom(tagged); p.Node != "agent-vm.example.ts.net" || p.Login != "" || !slices.Contains(p.Tags, "tag:agent-host") {
 		t.Fatalf("tagged peer = %+v", p)
 	}
 	if p := peerFrom(nil); p.Node != "" {

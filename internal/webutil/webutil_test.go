@@ -276,3 +276,20 @@ func TestHardenSetsOpenerPolicy(t *testing.T) {
 		t.Fatal("no opener policy: a page the app opened could steer it")
 	}
 }
+
+// A DELETE with no body has no content type to check (MCP clients end a
+// session so); a form can't send one, and cross-origin protection still
+// applies. With a body, it must be JSON like any write.
+func TestBodylessDelete(t *testing.T) {
+	ts := httptest.NewServer(HardenWith(AppCSP, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})))
+	defer ts.Close()
+	r, _ := http.NewRequest("DELETE", ts.URL, nil)
+	if resp, err := http.DefaultClient.Do(r); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("bodyless DELETE: %v %v", resp, err)
+	}
+	r, _ = http.NewRequest("DELETE", ts.URL, strings.NewReader("x"))
+	r.Header.Set("Content-Type", "text/plain")
+	if resp, err := http.DefaultClient.Do(r); err != nil || resp.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("DELETE with a text body: %v %v", resp, err)
+	}
+}

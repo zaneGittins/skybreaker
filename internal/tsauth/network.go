@@ -18,8 +18,6 @@ var ErrNotTailnet = errors.New("not a tailnet name")
 // tsnet node in production, loopback in development.
 type Network interface {
 	Identifier
-	// Listen opens a plain TCP listener on the tailnet address.
-	Listen(addr string) (net.Listener, error)
 	// ListenTLS opens an HTTPS listener with the node's tailnet certificate.
 	ListenTLS(addr string) (net.Listener, error)
 	Close() error
@@ -32,7 +30,7 @@ func Dev(peer Peer) Network { return devNet{peer} }
 
 type devNet struct{ peer Peer }
 
-func (d devNet) Listen(addr string) (net.Listener, error) {
+func (d devNet) listen(addr string) (net.Listener, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
@@ -45,7 +43,7 @@ func (d devNet) Listen(addr string) (net.Listener, error) {
 }
 
 // ListenTLS is plain HTTP in development.
-func (d devNet) ListenTLS(addr string) (net.Listener, error) { return d.Listen(addr) }
+func (d devNet) ListenTLS(addr string) (net.Listener, error) { return d.listen(addr) }
 
 func (d devNet) WhoIs(_ context.Context, remote string) (Peer, error) {
 	ap, err := netip.ParseAddrPort(remote)

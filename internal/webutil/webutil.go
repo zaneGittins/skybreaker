@@ -52,6 +52,15 @@ func HardenWith(csp string, next http.Handler) http.Handler {
 	inner := csrf.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		case http.MethodDelete:
+			// Without a body there's nothing to check, and no form sends a
+			// DELETE.
+			if r.ContentLength != 0 || r.Header.Get("Content-Type") != "" {
+				if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
+					WriteJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "writes must be application/json"})
+					return
+				}
+			}
 		default:
 			if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
 				WriteJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "writes must be application/json"})

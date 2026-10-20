@@ -17,17 +17,6 @@ type Peer struct {
 	Node  string   // machine name
 	Login string   // user login; meaningless for tagged nodes
 	Tags  []string // ACL tags; a tagged node is never a user
-	Addr  string   // tailnet IP
-}
-
-// HasTag reports whether the peer carries any of tags.
-func (p Peer) HasTag(tags ...string) bool {
-	for _, t := range tags {
-		if slices.Contains(p.Tags, t) {
-			return true
-		}
-	}
-	return false
 }
 
 // Name is the label used in audit logs: the login for people, the machine
@@ -65,8 +54,7 @@ func FromContext(ctx context.Context) (Peer, bool) {
 }
 
 // RequireUsers admits only untagged peers whose login is listed. An empty
-// list admits nobody: access has to be granted by name. (The proxy checks
-// agent tags itself, so it can audit the refusal.)
+// list admits nobody: access has to be granted by name.
 func RequireUsers(id Identifier, logins []string) func(http.Handler) http.Handler {
 	listed := func(p Peer) bool {
 		if len(p.Tags) > 0 || p.Login == "" {

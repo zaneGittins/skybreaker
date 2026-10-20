@@ -103,21 +103,37 @@ func (s *Store) List() []Key {
 	return slices.Clone(s.keys)
 }
 
+var (
+	// ErrInvalid is a key or name refused as given.
+	ErrInvalid = errors.New("invalid")
+	// ErrNotFound is a key that isn't there.
+	ErrNotFound = errors.New("not found")
+)
+
+// failure is an error that reads as its message and matches its kind.
+type failure struct {
+	kind error
+	msg  string
+}
+
+func (f failure) Error() string        { return f.msg }
+func (f failure) Is(target error) bool { return target == f.kind }
+
 // Add allows a key in, named for the machine it's on.
 func (s *Store) Add(name, line, by string) (Key, error) {
 	name = strings.TrimSpace(name)
 	if name == "" || utf8.RuneCountInString(name) > maxName || strings.ContainsAny(name, "\r\n") {
-		return Key{}, fmt.Errorf("name the key (up to %d characters)", maxName)
+		return Key{}, failure{ErrInvalid, fmt.Sprintf("name the key (up to %d characters)", maxName)}
 	}
 	k, err := Parse(line)
 	if err != nil {
-		return Key{}, err
+		return Key{}, failure{ErrInvalid, err.Error()}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, o := range s.keys {
 		if o.Blob == k.Blob {
-			return Key{}, fmt.Errorf("that key is already added, as %q", o.Name)
+			return Key{}, failure{ErrInvalid, fmt.Sprintf("that key is already added, as %q", o.Name)}
 		}
 	}
 	id := make([]byte, 6)
@@ -136,7 +152,7 @@ func (s *Store) Delete(id string) error {
 	defer s.mu.Unlock()
 	i := slices.IndexFunc(s.keys, func(k Key) bool { return k.ID == id })
 	if i < 0 {
-		return fmt.Errorf("no key %q", id)
+		return failure{ErrNotFound, fmt.Sprintf("no key %q", id)}
 	}
 	old := slices.Clone(s.keys)
 	s.keys = slices.Delete(s.keys, i, i+1)

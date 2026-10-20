@@ -66,10 +66,11 @@ func (s *server) activity(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	project, blocked := q.Get("project"), q.Get("blocked") == "1"
 	page, _ := strconv.Atoi(q.Get("page"))
-	page = max(page, 1)
+	// Pages run as far back as one read goes: activityScan entries.
+	page = min(max(page, 1), activityScan/activityPage+1)
 	want := page*activityPage + 1 // one more says whether there's a next page
 	var matched []audit.Entry
-	for n := want; ; n = min(n*4, activityScan) {
+	for n := min(want, activityScan); ; n = min(n*4, activityScan) {
 		entries, err := s.Network.Audit(n)
 		if err != nil {
 			fail(w, err)
@@ -121,6 +122,9 @@ type chartEntry struct {
 // and blocked, for one project or all.
 func (s *server) activityChart(w http.ResponseWriter, r *http.Request) {
 	project := r.URL.Query().Get("project")
+	if project != "" && !s.known(w, project) {
+		return // and so the cache holds only real projects
+	}
 	now := time.Now()
 	s.chart.mu.Lock()
 	c, ok := s.chart.m[project]

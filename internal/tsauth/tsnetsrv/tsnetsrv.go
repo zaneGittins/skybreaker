@@ -56,7 +56,6 @@ func Start(ctx context.Context, hostname, stateDir string) (tsauth.Network, erro
 	return &node{srv: s, lc: lc}, nil
 }
 
-func (n *node) Listen(addr string) (net.Listener, error)    { return n.srv.Listen("tcp", addr) }
 func (n *node) ListenTLS(addr string) (net.Listener, error) { return n.srv.ListenTLS("tcp", addr) }
 func (n *node) Close() error                                { return n.srv.Close() }
 
@@ -121,9 +120,6 @@ func peerFrom(w *apitype.WhoIsResponse) tsauth.Peer {
 		p.Node = strings.TrimSuffix(w.Node.Name, ".")
 	}
 	p.Tags = append([]string(nil), w.Node.Tags...)
-	if len(w.Node.Addresses) > 0 {
-		p.Addr = w.Node.Addresses[0].Addr().String()
-	}
 	if len(p.Tags) == 0 && w.UserProfile != nil {
 		p.Login = w.UserProfile.LoginName
 	}
