@@ -36,7 +36,7 @@ More in [docs/development.md](docs/development.md).
 
 - Go standard formatting (`gofmt`).
 - Concise comments.
-- The security rules in [CLAUDE.md](CLAUDE.md) hold for every change: deny by default, no credentials in sandboxes, agent text into the UI only as text.
+- The security rules in [docs/security.md](docs/security.md) hold for every change: deny by default, no credentials in sandboxes, agent text into the UI only as text.
 
 ## License
 

@@ -50,4 +50,4 @@ Open http://localhost:8099. Messages to Claude get a scripted turn with tools an
 
 ## Rules worth keeping
 
-[CLAUDE.md](../CLAUDE.md) lists them: deny by default, secrets bound to hosts in two places, gVisor or nothing, agent text into the UI only as text, no host git in agent worktrees.
+[security.md](security.md) sets them out: deny by default, secrets bound to hosts in two places, gVisor or nothing, agent text into the UI only as text, no host git in agent worktrees.

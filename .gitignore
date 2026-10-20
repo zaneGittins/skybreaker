@@ -2,3 +2,5 @@
 *.test
 .env
 .claude/
+# Notes for local coding agents; not part of the project.
+CLAUDE.md
