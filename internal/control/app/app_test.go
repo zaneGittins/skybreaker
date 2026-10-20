@@ -528,7 +528,7 @@ func TestNewSessionRestoresTmuxServer(t *testing.T) {
 		switch {
 		case hasSeq(c, "new-session", "-d", "-s", RunsSession):
 			order = append(order, "runs")
-		case hasSeq(c, "remain-on-exit", "on"):
+		case hasSeq(c, "remain-on-exit", "failed"):
 			order = append(order, "remain")
 		case hasSeq(c, "new-session", "-d", "-s", s.ID):
 			order = append(order, "session")

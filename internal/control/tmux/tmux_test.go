@@ -70,9 +70,8 @@ func TestEnsureServerOptions(t *testing.T) {
 		{"tmux", "set-option", "-g", "window-size", "latest"},
 		{"tmux", "set-option", "-g", "history-limit", "50000"},
 		{"tmux", "set-option", "-g", "mouse", "off"},
-		{"tmux", "set-option", "-g", "remain-on-exit", "on"},
+		{"tmux", "set-option", "-g", "remain-on-exit", "failed"},
 		{"tmux", "set-option", "-g", "status", "off"},
-		{"tmux", "set-hook", "-g", "pane-died", detachWhenDead},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q", got)
@@ -122,10 +121,11 @@ func TestParsePanes(t *testing.T) {
 	}
 }
 
-// When a session's last pane dies, its viewers are detached, so a terminal
-// client goes back where it came from instead of sitting on a blank screen.
-// The screen itself stays. Runs the options in a real tmux.
-func TestDeadSessionsLetViewersGo(t *testing.T) {
+// A harness that exits cleanly ends its session, so its viewer goes back
+// where it came from instead of sitting on a dead pane; one that fails
+// keeps its screen, and its viewer, to read why. Runs the options in a
+// real tmux.
+func TestExitsLetViewersGo(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("no tmux")
 	}
@@ -148,10 +148,9 @@ func TestDeadSessionsLetViewersGo(t *testing.T) {
 	for _, o := range EnsureServerOptions() {
 		run(o...)
 	}
-	run("tmux", "new-session", "-d", "-s", "a b;c", "sleep 2")
-	run("tmux", "new-session", "-d", "-s", "split", "sleep 2")
-	run("tmux", "split-window", "-t", "split:", "sleep 60")
-	for _, s := range []string{"a b;c", "split", "keep"} {
+	run("tmux", "new-session", "-d", "-s", "clean", "sleep 2")
+	run("tmux", "new-session", "-d", "-s", "failed", "sleep 2; echo why; exit 3")
+	for _, s := range []string{"clean", "failed", "keep"} {
 		// A control-mode viewer; its stdin stays open until the test ends.
 		c := exec.Command("tmux", "-S", sock, "-C", "attach", "-t", "="+s)
 		in, _ := c.StdinPipe()
@@ -161,15 +160,21 @@ func TestDeadSessionsLetViewersGo(t *testing.T) {
 		}
 		go c.Wait()
 	}
-	want := "[keep] [split]"
+	want := "[failed] [keep]"
 	var got string
 	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
 		out, _ := exec.Command("tmux", "-S", sock, "list-clients", "-F", "[#{session_name}]").Output()
 		f := strings.Fields(string(out))
 		slices.Sort(f)
-		if got = strings.Join(f, " "); got == want && strings.Contains(run("tmux", "ls"), "a b;c") {
+		if got = strings.Join(f, " "); got == want && !strings.Contains(run("tmux", "ls"), "clean") {
+			if p := run("tmux", "list-panes", "-t", "=failed", "-F", "#{pane_dead}:#{pane_dead_status}"); p != "1:3\n" {
+				t.Errorf("failed pane = %q", p)
+			}
+			if !strings.Contains(run("tmux", "capture-pane", "-p", "-S", "-", "-t", "=failed:"), "why") {
+				t.Error("the failed harness's screen wasn't kept")
+			}
 			return
 		}
 	}
-	t.Errorf("viewers = %s, want %s (and the dead session's screen kept)", got, want)
+	t.Errorf("viewers = %s, want %s (and the clean session gone)", got, want)
 }
