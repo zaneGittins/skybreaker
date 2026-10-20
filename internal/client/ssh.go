@@ -45,6 +45,10 @@ func SSHBlock(exe, key string) string {
 		"  UserKnownHostsFile /dev/null\n" +
 		"  LogLevel ERROR\n" +
 		"  ServerAliveInterval 30\n" +
+		// The block goes first; this hands what follows back to every
+		// other host, so the user's own top-level lines still apply to
+		// theirs, and none of them (another IdentityFile) to a sandbox.
+		"Host * !*" + sshSuffix + "\n" +
 		sshEnd + "\n"
 }
 

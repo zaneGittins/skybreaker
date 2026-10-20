@@ -26,11 +26,16 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o 
     && echo "deb [signed-by=/usr/share/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 
-# Go, pinned by checksum. Toolchain switches and modules come via the broker.
+# Go, pinned by checksum, for the image's own architecture (an arm64 host
+# builds an arm64 image). Toolchain switches and modules come via the broker.
 ARG GO_VERSION=1.27.2
-ARG GO_SHA256=ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5
-RUN curl -fsSL -o /tmp/go.tgz https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz \
-    && echo "${GO_SHA256}  /tmp/go.tgz" | sha256sum -c - \
+ARG GO_SHA256_amd64=ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5
+ARG GO_SHA256_arm64=94f3e30b8e374bc285e7dadc11e0865726b9bc6e85b841ccceaabc0214c6b7c8
+ARG TARGETARCH
+RUN arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
+    && case "$arch" in amd64) sum="$GO_SHA256_amd64" ;; arm64) sum="$GO_SHA256_arm64" ;; *) echo "no Go for $arch" >&2; exit 1 ;; esac \
+    && curl -fsSL -o /tmp/go.tgz "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" \
+    && echo "${sum}  /tmp/go.tgz" | sha256sum -c - \
     && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz
 ENV PATH=/usr/local/go/bin:/root/go/bin:$PATH
 

@@ -62,7 +62,8 @@ main() {
   chmod 755 "$TMP/$ASSET"
 
   SUDO=
-  [ "$(id -u)" = 0 ] || SUDO="sudo --preserve-env=GITHUB_TOKEN"
+  # TS_AUTHKEY carries an unattended install's Tailscale key through sudo.
+  [ "$(id -u)" = 0 ] || SUDO="sudo --preserve-env=GITHUB_TOKEN,TS_AUTHKEY"
   $SUDO install -m 755 "$TMP/$ASSET" "$BIN"
   echo "Installed $BIN"
   echo

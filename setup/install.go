@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/zaneGittins/skybreaker"
@@ -92,7 +94,7 @@ func (h *Host) Install(ctx context.Context, a *Answers, checks []Check) error {
 	h.Out.Done("The config and secrets check out")
 
 	h.Out.Step("Installing services")
-	if _, err := h.syncServices(); err != nil {
+	if _, err := h.syncServices(nil); err != nil {
 		return h.fail("Installing services", err)
 	}
 	if _, err := h.run(ctx, "systemctl", "daemon-reload"); err != nil {
@@ -108,7 +110,9 @@ func (h *Host) Install(ctx context.Context, a *Answers, checks []Check) error {
 	if _, err := h.run(ctx, "systemctl", "enable", "--now", units[0], units[1], units[3]); err != nil {
 		return h.fail("Starting Skybreaker", err)
 	}
-	if err := h.verify(ctx); err != nil {
+	// A repair replaced the binary under a service that may be running:
+	// restart it, or the old process would pass the check.
+	if err := h.restart(ctx); err != nil {
 		return h.fail("Starting Skybreaker", err)
 	}
 	h.Out.Done("Skybreaker " + rel + " is running")
@@ -163,12 +167,57 @@ func (h *Host) writeConfig(ctx context.Context, a *Answers) error {
 
 // syncServices installs the units, the weekly image rebuild and the image's
 // build context from this release, and reports how many files changed.
-func (h *Host) syncServices() (int, error) {
+// prior is a file as it was before syncServices changed it, to put back.
+type prior struct {
+	path    string
+	data    []byte
+	mode    os.FileMode
+	existed bool
+}
+
+// keep records path as it is now, before it's replaced or removed.
+func keep(was *[]prior, path string) {
+	if was == nil {
+		return
+	}
+	p := prior{path: path}
+	if fi, err := os.Stat(path); err == nil {
+		if b, err := os.ReadFile(path); err == nil {
+			p.data, p.mode, p.existed = b, fi.Mode().Perm(), true
+		}
+	}
+	*was = append(*was, p)
+}
+
+// restore puts back what syncServices changed, newest first.
+func restore(was []prior) error {
+	var errs []error
+	for _, p := range slices.Backward(was) {
+		var err error
+		if p.existed {
+			_, err = writeFile(p.path, p.data, p.mode)
+		} else if err = os.Remove(p.path); errors.Is(err, os.ErrNotExist) {
+			err = nil
+		}
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// syncServices lays down the release's units, update script and image
+// build context. With was, it records what it changes first, so a failed
+// upgrade can put it back.
+func (h *Host) syncServices(was *[]prior) (int, error) {
 	changed := 0
 	put := func(src, dst string, mode os.FileMode) error {
 		b, err := skybreaker.Files.ReadFile(src)
 		if err != nil {
 			return err
+		}
+		if old, err := os.ReadFile(dst); err != nil || !bytes.Equal(old, b) {
+			keep(was, dst)
+		} else if fi, err := os.Stat(dst); err == nil && fi.Mode().Perm() != mode {
+			keep(was, dst)
 		}
 		c, err := writeFile(dst, b, mode)
 		if c {
@@ -208,6 +257,7 @@ func (h *Host) syncServices() (int, error) {
 			return err
 		}
 		changed++
+		keep(was, p)
 		return os.Remove(p)
 	})
 	return changed, err
@@ -318,7 +368,8 @@ func (h *Host) Upgrade(ctx context.Context, confirm func(from, to string) bool) 
 	}
 
 	h.Out.Step("Updating services")
-	n, err := h.syncServices()
+	var was []prior
+	n, err := h.syncServices(&was)
 	if err == nil {
 		_, err = h.run(ctx, "systemctl", "daemon-reload")
 	}
@@ -340,6 +391,15 @@ func (h *Host) Upgrade(ctx context.Context, confirm func(from, to string) bool) 
 		h.Out.Fail(rel.Tag + " didn't stay up; rolling back to " + orNone(cur))
 		if rerr := os.Rename(prev, h.Binary()); rerr != nil {
 			return fmt.Errorf("%w\nand rolling back failed: %v", err, rerr)
+		}
+		// The units and image files too: the old binary may not run under
+		// the new ones.
+		rerr := restore(was)
+		if rerr == nil {
+			_, rerr = h.run(ctx, "systemctl", "daemon-reload")
+		}
+		if rerr != nil {
+			return fmt.Errorf("%w\nand putting the services back failed: %v", err, rerr)
 		}
 		if rerr := h.restart(ctx); rerr != nil {
 			return fmt.Errorf("%w\nand %s didn't come back either: %v", err, orNone(cur), rerr)

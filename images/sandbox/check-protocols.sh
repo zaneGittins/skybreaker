@@ -5,6 +5,7 @@
 # is promoted:
 #   docker run --rm --network none --entrypoint skybreaker-check-protocols IMAGE
 set -e
+go version # a toolchain for another architecture fails here, not in a sandbox
 claude --version
 codex --version
 help=$(claude --help)

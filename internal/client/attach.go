@@ -74,7 +74,12 @@ func (c *Client) Attach(ctx context.Context, id string, t AttachIO) error {
 	}
 
 	done := make(chan error, 1)
+	exited := make(chan struct{})
+	// The caller resets the terminal's modes once this returns, so nothing
+	// the sandbox sent may still be on its way to the terminal by then.
+	defer func() { stop(); <-exited }()
 	go func() {
+		defer close(exited)
 		var f Filter
 		for {
 			binary, b, err := ws.Read(ctx)

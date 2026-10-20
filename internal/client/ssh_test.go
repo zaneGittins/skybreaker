@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -210,5 +211,32 @@ func TestCodeCommand(t *testing.T) {
 	}
 	if err := command(context.Background(), "ssh-proxy", []string{"evil.example.com"}, "v0.1.0", io.Discard); err == nil {
 		t.Error("ssh-proxy to a host that isn't a project's")
+	}
+}
+
+// The block goes first, so it must end by handing the rest back to every
+// host: lines the user had at the top of the file (an IdentityFile, an
+// Include) would otherwise apply to *.skybreaker alone.
+func TestSSHBlockLeavesTopLevelSettingsAlone(t *testing.T) {
+	ssh, err := exec.LookPath("ssh")
+	if err != nil {
+		t.Skip("no ssh to read the config")
+	}
+	dir := t.TempDir()
+	cfg, _ := UpsertSSHConfig([]byte("IdentityFile "+dir+"/id_work\n\nHost work\n  HostName work.example.com\n"), SSHBlock("/usr/local/bin/skybreaker", dir+"/sky"))
+	path := dir + "/config"
+	os.WriteFile(path, cfg, 0o600)
+	resolve := func(host string) string {
+		out, err := exec.Command(ssh, "-G", "-F", path, host).Output()
+		if err != nil {
+			t.Fatalf("ssh -G %s: %v\n%s", host, err, cfg)
+		}
+		return string(out)
+	}
+	if got := resolve("example.com"); !strings.Contains(got, "identityfile "+dir+"/id_work") {
+		t.Errorf("the user's own key went from other hosts:\n%s", got)
+	}
+	if got := resolve("orbit.skybreaker"); strings.Contains(got, "id_work") || !strings.Contains(got, "identityfile "+dir+"/sky") {
+		t.Errorf("a sandbox is offered the user's other keys:\n%s", got)
 	}
 }

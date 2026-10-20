@@ -1,6 +1,7 @@
 # /etc/systemd/system/skybreaker-nftables.service
 # Sandboxes may reach the broker and hook ports on the host and nothing else,
-# and those ports answer sandboxes only. Restart it after adding a project.
+# and those ports answer sandboxes only. It covers the whole sandbox range,
+# so adding a project needs no restart; a new release's rules come with one.
 [Unit]
 Description=Pin Skybreaker sandboxes to the broker
 After=docker.service

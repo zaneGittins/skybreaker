@@ -53,15 +53,6 @@ func (p *Progress) Step(label string) {
 	go p.spin(s)
 }
 
-// Stream begins a step whose command writes its own output, so no spinner
-// fights it.
-func (p *Progress) Stream(label string) {
-	p.abandon()
-	p.n++
-	p.cur = &stepState{n: p.n, label: label, start: time.Now()}
-	fmt.Fprintf(p.W, "[%s] %s%s\n", DimStyle.Render("~"), p.tag(p.n), label)
-}
-
 func (p *Progress) Done(msg string) { p.end(OKStyle.Render("+"), msg, true) }
 func (p *Progress) Warn(msg string) { p.end(WarnStyle.Render("!"), msg, false) }
 func (p *Progress) Fail(msg string) { p.end(ErrorStyle.Render("x"), msg, false) }

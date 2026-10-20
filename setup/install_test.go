@@ -161,6 +161,19 @@ func TestInstallKeepsExistingConfig(t *testing.T) {
 	}
 }
 
+// A repair replaces the binary under a running service: it restarts it,
+// or the old process goes on answering the check.
+func TestRepairRestarts(t *testing.T) {
+	h, f, out := testHost(t, map[string]string{"v1.1.0": "v1.1.0"})
+	writeConfig(t, testAnswers(t), h.Layout)
+	if err := h.Install(context.Background(), nil, readyChecks()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !f.ran("systemctl restart skybreaker-nftables.service skybreaker.service") {
+		t.Fatal("the running service wasn't restarted")
+	}
+}
+
 func installed(t *testing.T, binaries map[string]string, current string) (*Host, *fakeRunner, *strings.Builder) {
 	t.Helper()
 	h, f, out := testHost(t, binaries)
@@ -248,6 +261,27 @@ func TestUpgradeRollsBackACrash(t *testing.T) {
 	}
 }
 
+// What a failed upgrade changed besides the binary (units, the image's
+// build context) goes back too: the old binary may not run under the new.
+func TestUpgradeRollbackRestoresServices(t *testing.T) {
+	h, _, out := installed(t, map[string]string{"v1.1.0": "v1.1.0 crash"}, "v1.0.0")
+	unit := filepath.Join(h.Units, "skybreaker.service")
+	os.MkdirAll(h.Units, 0o755)
+	os.WriteFile(unit, []byte("old unit\n"), 0o644)
+	extra := filepath.Join(h.Image, "old-only.sh")
+	os.MkdirAll(h.Image, 0o755)
+	os.WriteFile(extra, []byte("echo old\n"), 0o755)
+	if err := h.Upgrade(context.Background(), func(string, string) bool { return true }); err == nil {
+		t.Fatalf("the crash went unnoticed\n%s", out)
+	}
+	if b, _ := os.ReadFile(unit); string(b) != "old unit\n" {
+		t.Errorf("unit after rollback: %q", b)
+	}
+	if b, _ := os.ReadFile(extra); string(b) != "echo old\n" {
+		t.Errorf("image file removed by the failed upgrade: %q", b)
+	}
+}
+
 func TestRollback(t *testing.T) {
 	h, f, out := installed(t, map[string]string{"v1.1.0": "v1.1.0"}, "v1.1.0")
 	if err := h.Rollback(context.Background()); err == nil {
@@ -269,7 +303,7 @@ func TestRollback(t *testing.T) {
 
 func TestSyncServicesMatchesRepository(t *testing.T) {
 	h, _, _ := testHost(t, nil)
-	n, err := h.syncServices()
+	n, err := h.syncServices(nil)
 	if err != nil || n == 0 {
 		t.Fatalf("%d, %v", n, err)
 	}
@@ -278,7 +312,7 @@ func TestSyncServicesMatchesRepository(t *testing.T) {
 		t.Error("Dockerfile differs")
 	}
 	os.WriteFile(filepath.Join(h.Image, "stale.sh"), []byte("x"), 0o644)
-	if n, err := h.syncServices(); err != nil || n != 1 {
+	if n, err := h.syncServices(nil); err != nil || n != 1 {
 		t.Errorf("second sync changed %d, %v", n, err)
 	}
 	if _, err := os.Stat(filepath.Join(h.Image, "stale.sh")); err == nil {
