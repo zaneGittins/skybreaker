@@ -119,6 +119,7 @@ The base is `/etc/skybreaker/skybreaker.yaml` (users, projects, policy) and `sec
 Most of it can also be changed in the app, by the users in `admins` (everyone in `users` unless you list them):
 
 - **Settings** creates the GitHub App, adds secrets (each bound to the hosts you list, and never shown again), makes bundles, and adds bundles and hosts to any project. Every change to what a project reaches is shown as the broker compiles it before you save.
+  [Example: DigitalOcean](example-digitalocean.md) walks through a secret, a bundle and a grant, with screenshots.
 - **New project** on the home page creates a project from the bundles there are.
 - **Instructions** in Settings are what every agent in every project is told, in Markdown: Claude Code reads them as its managed `CLAUDE.md`, Codex as developer instructions and pi as part of its system prompt. A project's own `CLAUDE.md` or `AGENTS.md` still applies. They're saved in `settings/instructions.md`, mounted read-only into each sandbox, and reach sessions started after a save, with no restart.
 
