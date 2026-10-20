@@ -1,3 +1,12 @@
 {
-  "signedContributors": []
+  "signedContributors": [
+    {
+      "name": "zaneGittins",
+      "id": 22203776,
+      "comment_id": 6296132211,
+      "created_at": "2026-10-20T16:44:40Z",
+      "repoId": 1425998924,
+      "pullRequestNo": 1
+    }
+  ]
 }
