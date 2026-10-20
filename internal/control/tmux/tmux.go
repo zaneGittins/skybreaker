@@ -52,6 +52,14 @@ func withCommand(args []string, dir string, env map[string]string, cmd []string)
 	return args
 }
 
+// detachWhenDead is the pane-died hook: once none of a session's panes is
+// alive, its viewers are detached, so a terminal client goes back to where
+// it came from instead of sitting on a dead pane. The screen stays, for
+// "Last screen". Formats are shell-quoted with q:; ## leaves #{pane_dead}
+// for list-panes, quoted so the shell doesn't take it for a comment.
+const detachWhenDead = `run-shell "tmux -S #{q:socket_path} list-panes -s -t =#{q:session_name} -F '##{pane_dead}' | grep -qx 0 || ` +
+	`tmux -S #{q:socket_path} detach-client -s =#{q:session_name}"`
+
 // EnsureServerOptions are applied once per server. window-size latest stops a
 // phone and a desktop attached to one session fighting over its size, and
 // remain-on-exit keeps a pane's last screen after its command exits, so the
@@ -67,6 +75,7 @@ func EnsureServerOptions() [][]string {
 		// No status bar: the UI shows the session, and the agent's prompt
 		// gets the bottom row.
 		{"tmux", "set-option", "-g", "status", "off"},
+		{"tmux", "set-hook", "-g", "pane-died", detachWhenDead},
 	}
 }
 

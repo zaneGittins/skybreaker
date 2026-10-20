@@ -1,8 +1,14 @@
 package tmux
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 )
 
 func eq(t *testing.T, name string, got, want []string) {
@@ -66,6 +72,7 @@ func TestEnsureServerOptions(t *testing.T) {
 		{"tmux", "set-option", "-g", "mouse", "off"},
 		{"tmux", "set-option", "-g", "remain-on-exit", "on"},
 		{"tmux", "set-option", "-g", "status", "off"},
+		{"tmux", "set-hook", "-g", "pane-died", detachWhenDead},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %q", got)
@@ -113,4 +120,56 @@ func TestParsePanes(t *testing.T) {
 			t.Errorf("ParsePanes(%q) succeeded", bad)
 		}
 	}
+}
+
+// When a session's last pane dies, its viewers are detached, so a terminal
+// client goes back where it came from instead of sitting on a blank screen.
+// The screen itself stays. Runs the options in a real tmux.
+func TestDeadSessionsLetViewersGo(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("no tmux")
+	}
+	dir, err := os.MkdirTemp("", "tm") // short: socket paths are limited
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	sock := filepath.Join(dir, "s")
+	run := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("tmux", append([]string{"-S", sock, "-f", "/dev/null"}, args[1:]...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%q: %v %s", args, err, out)
+		}
+		return string(out)
+	}
+	defer exec.Command("tmux", "-S", sock, "kill-server").Run()
+	run("tmux", "new-session", "-d", "-s", "keep", "sleep 60")
+	for _, o := range EnsureServerOptions() {
+		run(o...)
+	}
+	run("tmux", "new-session", "-d", "-s", "a b;c", "sleep 2")
+	run("tmux", "new-session", "-d", "-s", "split", "sleep 2")
+	run("tmux", "split-window", "-t", "split:", "sleep 60")
+	for _, s := range []string{"a b;c", "split", "keep"} {
+		// A control-mode viewer; its stdin stays open until the test ends.
+		c := exec.Command("tmux", "-S", sock, "-C", "attach", "-t", "="+s)
+		in, _ := c.StdinPipe()
+		defer in.Close()
+		if err := c.Start(); err != nil {
+			t.Fatal(err)
+		}
+		go c.Wait()
+	}
+	want := "[keep] [split]"
+	var got string
+	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(100 * time.Millisecond) {
+		out, _ := exec.Command("tmux", "-S", sock, "list-clients", "-F", "[#{session_name}]").Output()
+		f := strings.Fields(string(out))
+		slices.Sort(f)
+		if got = strings.Join(f, " "); got == want && strings.Contains(run("tmux", "ls"), "a b;c") {
+			return
+		}
+	}
+	t.Errorf("viewers = %s, want %s (and the dead session's screen kept)", got, want)
 }
