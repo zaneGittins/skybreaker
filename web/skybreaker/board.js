@@ -141,6 +141,9 @@ async function openItem(ref) {
     title.value = it.title;
     title.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); title.blur() } });
     title.addEventListener('change', () => title.value.trim() && title.value !== it.title && patch({ title: title.value.replace(/\s+/g, ' ') }));
+    // Safari has no field-sizing: grow the title to its text by hand.
+    const fit = CSS.supports('field-sizing', 'content') ? null : () => { title.style.height = 'auto'; title.style.height = title.scrollHeight + title.offsetHeight - title.clientHeight + 'px' };
+    if (fit) { title.addEventListener('input', fit); requestAnimationFrame(fit) }
 
     const seg = (values, current, label, onpick) => el('div.seg', { role: 'group', 'aria-label': label },
       values.map(([v, text, cls]) => el('button' + (cls || '') + (v === current ? '.on' : ''), { type: 'button', onclick: () => v !== current && onpick(v) }, text)));

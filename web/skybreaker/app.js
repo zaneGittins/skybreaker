@@ -10,6 +10,7 @@ const state = { meta: null, route: null, seq: 0, timers: [], term: null, chat: n
 
 function navigate(path) {
   if (location.pathname + location.search !== path) history.pushState(null, '', path);
+  state.moved = true;
   go();
 }
 
@@ -19,7 +20,17 @@ document.addEventListener('click', e => {
   e.preventDefault();
   navigate(a.getAttribute('href'));
 });
-window.addEventListener('popstate', go);
+window.addEventListener('popstate', () => { state.moved = true; go() });
+
+// enter fades a new page in. Opacity alone: it composites cheaply, and a
+// transform would carry the page's fixed buttons with it. Live refreshes
+// redraw in place without it.
+function enter() {
+  if (!state.moved) return;
+  state.moved = false;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches || !$('#app').animate) return;
+  $('#app').animate([{ opacity: 0.35 }, { opacity: 1 }], { duration: 160, easing: 'ease-out' });
+}
 
 function clearTimers() {
   state.timers.forEach(clearInterval);
@@ -55,7 +66,7 @@ async function go() {
       case 'settings': await renderSettings(seq); break;
       default: renderNotFound();
     }
-    if (seq === state.seq) markSidebar();
+    if (seq === state.seq) { markSidebar(); enter() }
   } catch (e) {
     if (seq === state.seq) {
       toast(e.message, 'error');

@@ -19,7 +19,7 @@ self.addEventListener('push', e => {
   try { d = e.data.json() } catch { }
   e.waitUntil(self.registration.showNotification(d.title || 'Skybreaker', {
     body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag,
-    icon: '/icon-192.png', badge: '/icon-192.png', data: { url: own(d.url) },
+    icon: '/icon-192.png?v=halo', badge: '/icon-192.png?v=halo', data: { url: own(d.url) },
   }));
 });
 

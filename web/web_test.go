@@ -59,7 +59,8 @@ func TestPagesReferenceEmbeddedFiles(t *testing.T) {
 			if !strings.Contains(m[1], ".") {
 				continue // a page of the app, such as /activity
 			}
-			if _, err := fs.Stat(fsys, m[1]); err != nil {
+			// A ?v= version busts a cache (browsers keep favicons apart).
+			if _, err := fs.Stat(fsys, strings.SplitN(m[1], "?", 2)[0]); err != nil {
 				t.Errorf("%s/index.html references /%s, which is not embedded", name, m[1])
 			}
 		}
