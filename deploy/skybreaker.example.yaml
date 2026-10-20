@@ -179,7 +179,8 @@ pi:
 # harnesses:
 #   claude:
 #     tui: [claude]
-#     headless: [claude, -p, "{prompt}", --output-format, stream-json, --verbose, --max-budget-usd, "{budget}"]
+#     headless: [claude, -p, "{prompt}", --output-format, stream-json, --verbose, --max-budget-usd, "{budget}",
+#                --allowedTools, "{allowed_tools}", --mcp-config, "{mcp_config}"]
 #     approval: claude-hooks
 #     result: claude-stream-json
 
@@ -189,6 +190,6 @@ jobs:
     harness: claude
     schedule: "0 2 * * *"
     kind: board                         # take the next Todo item off the board, branch, open a PR
-    budget_usd: 5
+    budget_usd: 5                       # Claude only, like allowed_tools: other harnesses run without them (the Runs tab says so)
     allowed_tools: [Bash, Read, Edit, Write, Glob, Grep, "mcp__skybreaker__*"]
     timeout: 1h

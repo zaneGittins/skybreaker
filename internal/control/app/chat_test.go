@@ -162,6 +162,31 @@ func TestChatCodexGetsSkybreakerMCP(t *testing.T) {
 	}
 }
 
+func TestCodexTerminalsGetSkybreakersMCPServer(t *testing.T) {
+	f, _ := chatFixture(t)
+	ctx := context.Background()
+	flag := `mcp_servers.skybreaker.url="` + f.app.MCPURL("orbit", "-") + `"`
+	term, err := f.app.NewSession(ctx, "orbit", "codex", "", NewOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	starts := f.docker.find(func(c []string) bool { return hasSeq(c, "tmux", "new-session") && slices.Contains(c, term.ID) })
+	if len(starts) != 1 || !hasSeq(starts[0], "codex", "-c", flag, "--no-alt-screen") {
+		t.Errorf("codex terminal = %q", starts)
+	}
+	// A Codex chat continued in its terminal.
+	s, _ := f.app.NewChat(ctx, "orbit", "codex", NewOptions{})
+	f.app.store.UpdateSession(s.ID, func(x *store.Session) { x.Resume = "t1" })
+	ct, err := f.app.ChatTerminal(ctx, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	starts = f.docker.find(func(c []string) bool { return hasSeq(c, "tmux", "new-session") && slices.Contains(c, ct.ID) })
+	if len(starts) != 1 || !hasSeq(starts[0], "codex", "resume", "-c", flag, "t1", "--no-alt-screen") {
+		t.Errorf("codex chat's terminal = %q", starts)
+	}
+}
+
 func TestChatTerminalHandoff(t *testing.T) {
 	f, sp := chatFixture(t)
 	ctx := context.Background()

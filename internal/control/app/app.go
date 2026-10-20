@@ -182,6 +182,12 @@ func (a *App) MCPURL(project, session string) string {
 	return a.cfg.MCPURL(project, a.HookToken(project), session)
 }
 
+// ProjectMCP is how terminals and scheduled runs reach Skybreaker's MCP
+// server: as a project's sandbox, naming no chat.
+func (a *App) ProjectMCP(project string) harness.MCP {
+	return harness.MCP{Config: MCPPath, URL: a.MCPURL(project, "-")}
+}
+
 func (a *App) CheckHookToken(project, token string) bool {
 	if _, ok := a.cfg.Projects[project]; !ok || token == "" {
 		return false
@@ -517,7 +523,7 @@ func (a *App) NewSession(ctx context.Context, project, harnessName, title string
 	// never takes it for one that ended; its worktree is held until then,
 	// so tidying never takes that for an orphan.
 	err = a.ensureWorktree(ctx, &s, func() error {
-		if _, err := a.sandbox.Exec(ctx, project, tmux.NewSession(s.ID, workdir(s), a.sessionEnv(s, m), m.TUIArgs(MCPPath))...); err != nil {
+		if _, err := a.sandbox.Exec(ctx, project, tmux.NewSession(s.ID, workdir(s), a.sessionEnv(s, m), m.TUIArgs(a.ProjectMCP(project)))...); err != nil {
 			return fmt.Errorf("start %s session: %w", harnessName, err)
 		}
 		return a.store.CreateSession(s)

@@ -415,7 +415,7 @@ func (a *App) ChatTerminal(ctx context.Context, id string) (store.Session, error
 	}
 	t := store.Session{ID: newSessionID(), Project: s.Project, Harness: s.Harness, Title: s.Title, Created: time.Now().UTC(), Status: store.StatusRunning, Parent: s.ID,
 		Worktree: s.Worktree, Branch: s.Branch, BranchFrom: s.BranchFrom}
-	if _, err := a.sandbox.Exec(ctx, s.Project, tmux.NewSession(t.ID, workdir(s), a.sessionEnv(t, m), m.ResumeArgs(s.Resume, MCPPath))...); err != nil {
+	if _, err := a.sandbox.Exec(ctx, s.Project, tmux.NewSession(t.ID, workdir(s), a.sessionEnv(t, m), m.ResumeArgs(s.Resume, a.ProjectMCP(s.Project)))...); err != nil {
 		return store.Session{}, fmt.Errorf("start %s terminal: %w", s.Harness, err)
 	}
 	if err := a.store.CreateSession(t); err != nil {

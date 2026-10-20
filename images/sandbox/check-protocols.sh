@@ -19,6 +19,15 @@ for mode in acceptEdits bypassPermissions plan; do
   printf "%s" "$help" | grep -q -- "$mode" || { echo "claude no longer has permission mode $mode" >&2; exit 1; }
 done
 codex resume --help | grep -q -- --no-alt-screen || { echo "codex resume lost --no-alt-screen" >&2; exit 1; }
+# Terminals, resumes and runs get Skybreaker's MCP server as a -c override,
+# and runs approve its tools, since codex exec can't ask.
+for cmd in "" exec resume; do
+  codex $cmd --help | grep -q -- "--config <key=value>" || { echo "codex ${cmd:-(top level)} lost -c" >&2; exit 1; }
+done
+codex -c 'mcp_servers.skybreaker={url="http://localhost", default_tools_approval_mode="approve"}' mcp get skybreaker --json >/dev/null \
+  || { echo "codex no longer takes Skybreaker's MCP server as an override" >&2; exit 1; }
+codex -c 'mcp_servers.skybreaker={url="http://localhost", default_tools_approval_mode="none-such"}' mcp get skybreaker 2>&1 | grep -q '`approve`' \
+  || { echo "codex no longer has default_tools_approval_mode approve" >&2; exit 1; }
 d=$(mktemp -d)
 codex app-server generate-json-schema --out "$d" >/dev/null
 need() {

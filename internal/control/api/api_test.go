@@ -139,6 +139,7 @@ type fixture struct {
 	runs      *fakeRuns
 	store     *store.Store
 	attached  chan []string
+	cfg       *config.Config
 }
 
 func newFixture(t *testing.T, peer tsauth.Peer, opts ...func(*Deps)) *fixture {
@@ -158,9 +159,9 @@ func newFixture(t *testing.T, peer tsauth.Peer, opts ...func(*Deps)) *fixture {
 	}
 	st, _ := store.Open("")
 	logPath := filepath.Join(dir, "r1.log")
-	os.WriteFile(logPath, []byte("line one\nline two\n"), 0o644)
+	os.WriteFile(logPath, []byte("line one\nline two\nERROR error sending request for url (http://broker:8402/mcp/orbit/tok-orbit-0123456789/-)\n"), 0o644)
 	st.CreateRun(store.Run{ID: "r1", Job: "nightly", Project: "orbit", Status: store.RunOK, LogPath: logPath, Started: time.Now()})
-	f := &fixture{
+	f := &fixture{cfg: cfg,
 		backend:   &fakeBackend{running: map[string]bool{}, events: make(chan app.Event, 4), chat: newFakeChat()},
 		approvals: &fakeApprovals{decided: map[string]hooks.Decision{}},
 		network:   newFakeNetwork(),
@@ -251,6 +252,12 @@ func TestProjects(t *testing.T) {
 	code, body = f.do(t, "GET", "/api/projects/orbit", "", nil)
 	if code != 200 || !strings.Contains(body, `"jobs"`) || !strings.Contains(body, `"nightly"`) || !strings.Contains(body, `"r1"`) {
 		t.Fatalf("project detail: %d %s", code, body)
+	}
+	// What's wrong with a job reaches the Runs tab.
+	j, _ := f.cfg.Job("nightly")
+	j.Ignored, j.Problem = []string{"budget_usd"}, "no MCP server"
+	if _, body := f.do(t, "GET", "/api/projects/orbit", "", nil); !strings.Contains(body, `"ignored":["budget_usd"]`) || !strings.Contains(body, `"problem":"no MCP server"`) {
+		t.Errorf("job view: %s", body)
 	}
 	if code, _ := f.do(t, "GET", "/api/projects/ghost", "", nil); code != 404 {
 		t.Errorf("unknown project: %d", code)
@@ -350,6 +357,8 @@ func TestRuns(t *testing.T) {
 	}
 	if code, b := f.do(t, "GET", "/api/runs/r1/log", "", nil); code != 200 || !strings.Contains(b, "line two") {
 		t.Errorf("log: %d %s", code, b)
+	} else if strings.Contains(b, "tok-orbit-0123456789") || !strings.Contains(b, "/mcp/orbit/[hook token]/-") {
+		t.Errorf("hook token not redacted: %s", b)
 	}
 }
 
