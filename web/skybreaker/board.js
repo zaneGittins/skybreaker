@@ -308,8 +308,9 @@ function dayChart(days, o) {
   };
   const W = 20, H = 56, top = 6;
   const total = d => o.stack.reduce((n, [k]) => n + d[k], 0);
-  const maxBar = Math.max(1, ...days.map(total));
-  const maxLine = o.line ? Math.max(1, ...days.map(d => d[o.line])) : 1;
+  // A floor keeps small numbers small: one open item isn't a full-height line.
+  const maxBar = Math.max(4, ...days.map(total));
+  const maxLine = o.line ? Math.max(4, ...days.map(d => d[o.line])) : 1;
   const y = (v, max) => top + (H - top) * (1 - v / max);
   const label = d => d.day.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   const bars = (d, i) => {
