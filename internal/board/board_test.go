@@ -569,41 +569,6 @@ func TestNotes(t *testing.T) {
 	}
 }
 
-func TestRecentActivity(t *testing.T) {
-	s := open(t)
-	mustProject(t, s, "Bifract")
-	mustProject(t, s, "Atlas")
-	mustItem(t, s, "bifract", ItemInput{Title: "a", Status: "todo"})
-	mustItem(t, s, "atlas", ItemInput{Title: "b"})
-	s.ClaimItem("BIF-1", Claim{Agent: "claude"})
-	s.AddNote("BIF-1", "claude", "found it")
-
-	feed, err := s.RecentActivity("", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(feed) != 4 {
-		t.Fatalf("feed has %d entries: %+v", len(feed), feed)
-	}
-	newest := feed[0]
-	if newest.Ref != "BIF-1" || newest.Kind != "comment" || newest.Author != "claude" || newest.Body != "found it" || newest.Project != "bifract" || newest.ItemTitle != "a" {
-		t.Fatalf("newest entry %+v", newest)
-	}
-	if feed[1].Body != "moved Todo → In Progress" {
-		t.Fatalf("second entry %+v", feed[1])
-	}
-	only, _ := s.RecentActivity("ATL", 10)
-	if len(only) != 1 || only[0].Ref != "ATL-1" {
-		t.Fatalf("project filter: %+v", only)
-	}
-	if two, _ := s.RecentActivity("", 2); len(two) != 2 {
-		t.Fatalf("limit: %d", len(two))
-	}
-	if _, err := s.RecentActivity("nope", 5); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("missing project: %v", err)
-	}
-}
-
 // --- parsing --------------------------------------------------------------------
 
 func TestParseQuick(t *testing.T) {

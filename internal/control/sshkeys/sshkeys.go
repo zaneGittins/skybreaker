@@ -168,7 +168,8 @@ func (s *Store) save() error {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(b); err == nil {
+	_, err = tmp.Write(b)
+	if err == nil {
 		err = tmp.Sync()
 	}
 	if cerr := tmp.Close(); err == nil {

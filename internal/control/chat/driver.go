@@ -85,9 +85,6 @@ func New(name string) Driver {
 	return nil
 }
 
-// Drivers lists the driver names New knows.
-func Drivers() []string { return []string{"claude", "codex"} }
-
 func validMode(d Driver, mode string) error {
 	for _, m := range d.Modes() {
 		if m == mode {

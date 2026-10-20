@@ -79,7 +79,6 @@ type harness struct {
 	script func(f *fakeClaude, m map[string]any)
 	starts int
 	fail   error
-	opts   []Options
 	change []string
 }
 

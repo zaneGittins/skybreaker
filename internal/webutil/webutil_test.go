@@ -17,7 +17,7 @@ import (
 )
 
 func TestHardenHeadersAndCSRF(t *testing.T) {
-	h := Harden(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }))
+	h := HardenWith(AppCSP, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }))
 	ts := httptest.NewServer(h)
 	defer ts.Close()
 
@@ -271,7 +271,7 @@ func TestServerTakesABrowsersWorthOfCookies(t *testing.T) {
 
 func TestHardenSetsOpenerPolicy(t *testing.T) {
 	w := httptest.NewRecorder()
-	Harden(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	HardenWith(AppCSP, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 	if w.Header().Get("Cross-Origin-Opener-Policy") != "same-origin" {
 		t.Fatal("no opener policy: a page the app opened could steer it")
 	}

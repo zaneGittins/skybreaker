@@ -201,7 +201,7 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("GET /api/runs", s.runs)
 	m.HandleFunc("GET /api/runs/{id}/log", s.runLog)
 	m.Handle("GET /", webutil.Static(d.Static))
-	return tsauth.RequireUsers(d.Identifier, d.Config.Users)(webutil.HardenWith(webutil.TerminalCSP, m)), nil
+	return tsauth.RequireUsers(d.Identifier, d.Config.Users)(webutil.HardenWith(webutil.AppCSP, m)), nil
 }
 
 func fail(w http.ResponseWriter, err error) {

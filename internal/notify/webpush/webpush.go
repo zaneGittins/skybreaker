@@ -287,35 +287,3 @@ func encrypt(plain, uaPublic, authSecret []byte, asPriv *ecdh.PrivateKey, salt [
 	head = append(head, asPublic...)
 	return append(head, sealed...), nil
 }
-
-// decrypt is the browser's side of encrypt, for tests.
-func decrypt(body []byte, uaPriv *ecdh.PrivateKey, authSecret []byte) ([]byte, error) {
-	if len(body) < 21 {
-		return nil, errors.New("short")
-	}
-	salt, idlen := body[:16], int(body[20])
-	if len(body) < 21+idlen {
-		return nil, errors.New("short")
-	}
-	asPublic := body[21 : 21+idlen]
-	as, err := ecdh.P256().NewPublicKey(asPublic)
-	if err != nil {
-		return nil, err
-	}
-	secret, err := uaPriv.ECDH(as)
-	if err != nil {
-		return nil, err
-	}
-	prkKey, _ := hkdf.Extract(sha256.New, secret, authSecret)
-	ikm, _ := hkdf.Expand(sha256.New, prkKey, "WebPush: info\x00"+string(uaPriv.PublicKey().Bytes())+string(asPublic), 32)
-	prk, _ := hkdf.Extract(sha256.New, ikm, salt)
-	cek, _ := hkdf.Expand(sha256.New, prk, "Content-Encoding: aes128gcm\x00", 16)
-	nonce, _ := hkdf.Expand(sha256.New, prk, "Content-Encoding: nonce\x00", 12)
-	block, _ := aes.NewCipher(cek)
-	gcm, _ := cipher.NewGCM(block)
-	plain, err := gcm.Open(nil, nonce, body[21+idlen:], nil)
-	if err != nil {
-		return nil, err
-	}
-	return bytes.TrimRight(plain[:len(plain)-1], "\x00"), nil
-}

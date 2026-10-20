@@ -45,7 +45,8 @@ func writeAtomic(path string, b []byte) error {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(b); err == nil {
+	_, err = tmp.Write(b)
+	if err == nil {
 		err = tmp.Chmod(0o644)
 	}
 	if cerr := tmp.Close(); err == nil {

@@ -181,10 +181,6 @@ type Spec struct{ Slug, Key string }
 
 var validKey = regexp.MustCompile(`^[A-Z][A-Z0-9]{0,7}$`)
 
-// ValidKey reports whether k can prefix refs: one letter, then up to seven
-// letters or digits.
-func ValidKey(k string) bool { return validKey.MatchString(k) }
-
 // Sync makes sure every project has a board. Boards of projects no longer
 // configured are kept, out of sight, so their refs stay reserved.
 func (s *Store) Sync(specs []Spec) error {
@@ -896,52 +892,6 @@ func (s *Store) DeleteItem(ref string) error {
 	s.mu.Unlock()
 	s.changed(project, "")
 	return nil
-}
-
-// Activity is one entry in the feed of recent changes.
-type Activity struct {
-	Ref       string    `json:"ref"`
-	Project   string    `json:"project"`
-	ItemTitle string    `json:"item_title"`
-	Kind      string    `json:"kind"` // "comment" or "event"
-	Author    string    `json:"author"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-// RecentActivity returns the newest notes and events, across every board or
-// within one, newest first.
-func (s *Store) RecentActivity(project string, limit int) ([]Activity, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 30
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	slug := ""
-	if project != "" {
-		p, err := s.project(project)
-		if err != nil {
-			return nil, err
-		}
-		slug = p.Slug
-	}
-	var out []Activity
-	for _, it := range s.st.Items {
-		if slug != "" && it.Project != slug {
-			continue
-		}
-		for _, n := range it.Notes {
-			out = append(out, Activity{Ref: it.Ref, Project: it.Project, ItemTitle: it.Title, Kind: n.Kind, Author: n.Author, Body: n.Body, CreatedAt: n.CreatedAt})
-		}
-	}
-	slices.SortStableFunc(out, func(a, b Activity) int { return b.CreatedAt.Compare(a.CreatedAt) })
-	if len(out) > limit {
-		out = out[:limit]
-	}
-	if out == nil {
-		out = []Activity{}
-	}
-	return out, nil
 }
 
 // --- names ------------------------------------------------------------------

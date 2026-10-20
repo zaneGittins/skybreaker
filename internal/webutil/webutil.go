@@ -21,14 +21,11 @@ import (
 	"time"
 )
 
-// CSP forbids inline script and any third-party origin. Fonts and xterm.js
-// are embedded, so nothing needs loading from elsewhere.
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
-
-// TerminalCSP is the app's: it also allows inline styles, which xterm.js's
-// DOM renderer injects for its theme, and a form posted to GitHub, which is
-// how a GitHub App is created from a manifest. Scripts stay 'self' only.
-const TerminalCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self' https://github.com; frame-ancestors 'none'"
+// AppCSP is the app's: no inline script and no third-party origin (fonts
+// and xterm.js are embedded). It allows inline styles, which xterm.js's DOM
+// renderer injects for its theme, and a form posted to GitHub, which is how
+// a GitHub App is created from a manifest.
+const AppCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self' https://github.com; frame-ancestors 'none'"
 
 // NewServer is an http.Server for a daemon listener, whose requests inherit
 // ctx. Sandboxes reach the proxy and hook listeners, so idle and oversized
@@ -46,12 +43,10 @@ func NewServer(ctx context.Context, h http.Handler) *http.Server {
 	}
 }
 
-// Harden adds security headers and refuses writes that aren't JSON or that
-// come from another site. A JSON content type can't be sent by a plain HTML
-// form, and cross-origin protection stops fetches from other origins.
-func Harden(next http.Handler) http.Handler { return HardenWith(CSP, next) }
-
-// HardenWith is Harden with a different Content-Security-Policy.
+// HardenWith adds security headers, csp among them, and refuses writes that
+// aren't JSON or that come from another site. A JSON content type can't be
+// sent by a plain HTML form, and cross-origin protection stops fetches from
+// other origins.
 func HardenWith(csp string, next http.Handler) http.Handler {
 	csrf := http.NewCrossOriginProtection()
 	inner := csrf.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

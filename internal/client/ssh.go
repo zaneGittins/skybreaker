@@ -254,7 +254,8 @@ func writeSSHConfig(path, block string) error {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(b); err == nil {
+	_, err = tmp.Write(b)
+	if err == nil {
 		err = tmp.Chmod(mode)
 	}
 	if cerr := tmp.Close(); err == nil {
