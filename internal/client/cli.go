@@ -228,7 +228,7 @@ func attachOne(ctx context.Context, c *Client, e Entry) error {
 	if err != nil {
 		return err
 	}
-	err = t.attach(ctx, c, id)
+	err = t.attach(ctx, c, id, label(e))
 	t.close()
 	if err == nil {
 		fmt.Println("Detached from " + label(e) + ".")

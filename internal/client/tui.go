@@ -71,12 +71,25 @@ func (t *terminal) size() (int, int) { return termSize(int(os.Stdout.Fd())) }
 const resetModes = "\x1b[0m\x1b(B\x1b[r\x1b[?1l\x1b>\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l" +
 	"\x1b[?1004l\x1b[?2004l\x1b[<99u\x1b[>4;0m\x1b[?1049l\x1b[?25h"
 
+// windowTitle names the session in your window or tab title while you're
+// in it: the screen is all the agent's, so the title is what says it's
+// Skybreaker's. The title before it is pushed, for popTitle to put back.
+// The label has been through Visible, so it can't end the title early.
+func windowTitle(label string) string {
+	if label == "" {
+		return "\x1b[22;0t\x1b]0;skybreaker\x07"
+	}
+	return "\x1b[22;0t\x1b]0;skybreaker · " + label + "\x07"
+}
+
+const popTitle = "\x1b[23;0t"
+
 // attach relays a session in the main screen, then puts your terminal back
 // as it was, whatever the session switched on.
-func (t *terminal) attach(ctx context.Context, c *Client, id string) error {
-	fmt.Fprint(t.out, "\x1b[?25h\x1b[2J\x1b[H")
+func (t *terminal) attach(ctx context.Context, c *Client, id, label string) error {
+	fmt.Fprint(t.out, windowTitle(label)+"\x1b[?25h\x1b[2J\x1b[H")
 	err := c.Attach(ctx, id, AttachIO{In: t.keys, Out: t.out, Size: t.size, Resize: t.resize})
-	fmt.Fprint(t.out, resetModes)
+	fmt.Fprint(t.out, resetModes+popTitle)
 	return err
 }
 
@@ -119,6 +132,8 @@ func label(e Entry) string {
 func pick(ctx context.Context, c *Client, t *terminal, user string) error {
 	enter := func() { fmt.Fprint(t.out, "\x1b[?1049h\x1b[?25l") }
 	leave := func() { fmt.Fprint(t.out, "\x1b[?25h\x1b[?1049l") }
+	fmt.Fprint(t.out, windowTitle(""))
+	defer fmt.Fprint(t.out, popTitle)
 	enter()
 	defer leave()
 
@@ -211,7 +226,7 @@ func pick(ctx context.Context, c *Client, t *terminal, user string) error {
 					break
 				}
 				leave()
-				err = t.attach(ctx, c, id)
+				err = t.attach(ctx, c, id, label(e))
 				t.drain(400 * time.Millisecond)
 				enter()
 				if err != nil {

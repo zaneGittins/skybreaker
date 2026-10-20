@@ -95,3 +95,16 @@ func TestKeys(t *testing.T) {
 		}
 	}
 }
+
+// Your window title says which session you're in, and the session's names
+// can't end the title early or add sequences of their own.
+func TestWindowTitle(t *testing.T) {
+	got := windowTitle(label(Entry{Session: &Session{Project: "bifract", Harness: "claude"}}))
+	if got != "\x1b[22;0t\x1b]0;skybreaker · bifract/claude\x07" {
+		t.Errorf("title = %q", got)
+	}
+	got = windowTitle(label(Entry{Project: "a\x07\x1b]0;evil\x1b\\", Harness: "x\x9c"}))
+	if strings.Count(got, "\x07") != 1 || strings.Count(got, "\x1b") != 2 || strings.Contains(got, "\x9c") {
+		t.Errorf("hostile title = %q", got)
+	}
+}
