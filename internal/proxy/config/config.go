@@ -401,8 +401,14 @@ func buildRoute(capName string, e *Entry, vars map[string]string, p *Project) (*
 		return nil, errors.New("host, mode, methods and ports don't apply to routes")
 	}
 	u, err := url.Parse(e.Upstream)
-	if err != nil || u.Scheme != "https" || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.User != nil {
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.User != nil {
 		return nil, errors.New("upstream must be an https origin such as https://host[:port]")
+	}
+	// Plain HTTP only to a server on your own network that the route names
+	// (a local model server rarely has TLS), and never with a secret, which
+	// would cross the wire in the clear.
+	if u.Scheme == "http" && (len(e.AllowPrivate) == 0 || e.Inject != nil) {
+		return nil, errors.New("an http upstream must be a private address listed in allow_private, with no inject; use https otherwise")
 	}
 	if p := u.Port(); p != "" {
 		if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {

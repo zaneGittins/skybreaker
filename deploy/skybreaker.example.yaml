@@ -145,8 +145,26 @@ capabilities:
       rules:
         - { match: "GET /api/**", action: auto }
 
-# Harnesses are built in: claude, codex, pi, qwen, opencode, and shell (a plain
-# terminal every project gets). Override one here if you need to:
+  # A model server on your own network, for pi. Plain HTTP is allowed only
+  # to an address listed in allow_private, and never with a secret.
+  local-models:
+    - route: /llm                       # pi reaches it as http://broker:8080/llm
+      upstream: http://192.168.1.50:11434
+      allow_private: [192.168.1.50]
+      rules:
+        - { match: "* /**", action: auto }
+
+# pi in a sandbox whose project has the route is told about each server
+# (in its models.json, keyed by the sandbox's broker token, so no secret).
+pi:
+  providers:
+    ollama:
+      route: /llm
+      api: openai-completions           # Ollama, vLLM, LM Studio; llama.cpp for a llama.cpp router
+      models: [qwen3-coder:30b]         # a llama.cpp router lists its own
+
+# Harnesses are built in: claude, codex, pi, and shell (a plain terminal
+# every project gets). Override one here if you need to:
 # harnesses:
 #   claude:
 #     tui: [claude]

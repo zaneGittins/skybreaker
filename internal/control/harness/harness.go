@@ -1,6 +1,6 @@
-// Package harness describes the agent CLIs skybreaker can run (Claude Code, Codex,
-// pi, Qwen Code, OpenCode, ...) as manifests, so adding one is configuration
-// rather than code.
+// Package harness describes the agent CLIs skybreaker runs (Claude Code,
+// Codex and pi, plus a plain shell) as manifests, so a flag that changes is
+// configuration rather than code.
 package harness
 
 import (
@@ -23,7 +23,6 @@ type Manifest struct {
 	TUI     []string `json:"tui" yaml:"tui"`
 	// Headless is a template; see HeadlessArgs for its placeholders.
 	Headless []string `json:"headless" yaml:"headless"`
-	ACP      []string `json:"acp,omitempty" yaml:"acp,omitempty"`
 	// Approval names the adapter that relays harness permission prompts.
 	Approval string `json:"approval" yaml:"approval"`
 	// Login lists paths relative to $HOME that hold the harness login.
@@ -44,7 +43,7 @@ type Manifest struct {
 }
 
 var (
-	approvals    = []string{"claude-hooks", "codex-app-server", "acp", "none"}
+	approvals    = []string{"claude-hooks", "codex-app-server", "none"}
 	results      = []string{"claude-stream-json", "codex-json", "text"}
 	chats        = []string{"", "claude", "codex"}
 	validName    = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
@@ -96,26 +95,19 @@ func Builtins() map[string]Manifest {
 		},
 		"pi": {
 			Name:        "pi",
-			Description: "pi coding agent",
+			Description: "pi coding agent, with your own keys or local models",
 			Install:     "npm install -g @earendil-works/pi-coding-agent",
-			TUI:         []string{"pi"},
-			Headless:    []string{"pi", "-p", "{prompt}"},
-			Approval:    "none", // pi has no permission system
-			Login:       []string{".pi"},
-			Egress:      []string{"api.anthropic.com"},
-			Result:      "text",
-		},
-		"qwen": {
-			Name:        "qwen",
-			Description: "Qwen Code",
-			Install:     "npm install -g @qwen-code/qwen-code",
-			TUI:         []string{"qwen"},
-			Headless:    []string{"qwen", "-p", "{prompt}"},
-			ACP:         []string{"qwen", "--experimental-acp"},
-			Approval:    "acp",
-			Login:       []string{".qwen"},
-			Egress:      []string{"dashscope.aliyuncs.com", "chat.qwen.ai"},
-			Result:      "text",
+			// skybreaker-pi merges Skybreaker's MCP server and the model
+			// servers in config (pi.providers) into pi's own config first.
+			TUI:      []string{"skybreaker-pi", "--skybreaker-mcp", "{mcp_config}"},
+			Headless: []string{"skybreaker-pi", "--skybreaker-mcp", "{mcp_config}", "--print", "{prompt}", "--model", "{model}"},
+			// pi's own update check and telemetry: nothing a sandbox may
+			// reach, so off rather than refused at the broker each start.
+			Env:      map[string]string{"PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0"},
+			Approval: "none", // pi has no permission system
+			Login:    []string{".pi"},
+			Egress:   []string{"its provider's API, or a route to your model server"},
+			Result:   "text",
 		},
 		// A plain terminal in the sandbox. Every project has it.
 		Shell: {
@@ -123,18 +115,6 @@ func Builtins() map[string]Manifest {
 			Description: "A login shell in the sandbox",
 			TUI:         []string{"bash", "-l"},
 			Approval:    "none",
-			Result:      "text",
-		},
-		"opencode": {
-			Name:        "opencode",
-			Description: "OpenCode",
-			Install:     "npm install -g opencode-ai",
-			TUI:         []string{"opencode"},
-			Headless:    []string{"opencode", "run", "{prompt}"},
-			ACP:         []string{"opencode", "acp"},
-			Approval:    "acp",
-			Login:       []string{".local/share/opencode", ".config/opencode"},
-			Egress:      []string{"opencode.ai"},
 			Result:      "text",
 		},
 	}
@@ -168,9 +148,6 @@ func (m Manifest) Validate() error {
 	}
 	if !slices.Contains(approvals, m.Approval) {
 		return fmt.Errorf("harness %s: approval %q is not one of %s", m.Name, m.Approval, strings.Join(approvals, ", "))
-	}
-	if m.Approval == "acp" && len(m.ACP) == 0 {
-		return fmt.Errorf("harness %s: approval acp needs an acp command", m.Name)
 	}
 	if !slices.Contains(results, m.Result) {
 		return fmt.Errorf("harness %s: result %q is not one of %s", m.Name, m.Result, strings.Join(results, ", "))

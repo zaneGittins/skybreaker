@@ -8,6 +8,8 @@ set -e
 go version # a toolchain for another architecture fails here, not in a sandbox
 claude --version
 codex --version
+pi --version
+pi --help | grep -q -- "--print" || { echo "pi no longer has --print" >&2; exit 1; }
 help=$(claude --help)
 for flag in --print --input-format --output-format --include-partial-messages --permission-prompt-tool --model \
             --permission-mode --allow-dangerously-skip-permissions --session-id --resume --fork-session --mcp-config --verbose; do

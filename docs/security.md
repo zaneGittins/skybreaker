@@ -36,7 +36,7 @@ Sandboxes reach the outside only through `HTTPS_PROXY=http://<project>:<token>@b
 | Check | Rule |
 |---|---|
 | Caller | The request must come from the project's sandbox network with a live token minted for that project. Revocation takes effect immediately, including on open connections. |
-| Destination | The host must be on the project's list. Each host is a **tunnel** (opaque), **mitm** (TLS terminated so rules can see method and path) or a **route** (a reverse-proxy path, for clients that pin their own CA). |
+| Destination | The host must be on the project's list. Each host is a **tunnel** (opaque, but only TLS whose server name is that host: a tunnel can't front for another site at the same address), **mitm** (TLS terminated so rules can see method and path) or a **route** (a reverse-proxy path, for clients that pin their own CA, or a model server on your network). A route may speak plain HTTP only to a private address listed in its `allow_private`, and never with a secret. |
 | Request | Each method and path is `auto`, `ask` or `deny`; unmatched requests are denied. Requests carrying their own credentials are refused. `refs:` restricts git pushes to branch globs. `graphql:` reads GraphQL operations, so a mutation off the rule's list (such as `mergePullRequest`) needs approval. `k8s:` rules decide on Kubernetes verbs and resources; proxy subresources and impersonation headers are refused. |
 | Credentials | A secret is added only if it lists the upstream host. An unbound secret would let an agent read it back through an echo server. |
 | Connection | Resolved addresses are checked at connect time against loopback, link-local, metadata, private ranges, the tailnet and your LAN. |

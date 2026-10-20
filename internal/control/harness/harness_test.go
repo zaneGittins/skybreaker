@@ -9,7 +9,11 @@ import (
 
 func TestBuiltins(t *testing.T) {
 	b := Builtins()
-	for _, name := range []string{"claude", "codex", "pi", "qwen", "opencode"} {
+	// Claude Code, Codex and pi are supported; the shell is every project's.
+	if got := len(b); got != 4 {
+		t.Errorf("%d builtins", got)
+	}
+	for _, name := range []string{"claude", "codex", "pi"} {
 		m, ok := b[name]
 		if !ok {
 			t.Errorf("missing builtin %q", name)
@@ -58,9 +62,7 @@ func TestValidate(t *testing.T) {
 		},
 		"headless without prompt": func(m *Manifest) { m.Headless = []string{"x", "-p"} },
 		"prompt in tui":           func(m *Manifest) { m.TUI = []string{"x", "{prompt}"} },
-		"acp approval without acp": func(m *Manifest) {
-			m.Approval = "acp"
-		},
+		"acp approval (retired)":  func(m *Manifest) { m.Approval = "acp" },
 	}
 	for name, mutate := range tests {
 		m := ok
@@ -204,7 +206,7 @@ func TestHeadlessArgsDoesNotAliasTemplate(t *testing.T) {
 	a, _ := m.HeadlessArgs(RunOptions{Prompt: "one"})
 	a[0] = "mutated"
 	b, _ := m.HeadlessArgs(RunOptions{Prompt: "two"})
-	if b[0] != "pi" || m.Headless[0] != "pi" {
+	if b[0] != "skybreaker-pi" || m.Headless[0] != "skybreaker-pi" {
 		t.Errorf("template mutated: %q %q", b, m.Headless)
 	}
 }
@@ -214,7 +216,7 @@ func TestRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := r.Names(); !slices.Equal(got, []string{"claude", "codex", "opencode", "pi", "qwen", "shell"}) {
+	if got := r.Names(); !slices.Equal(got, []string{"claude", "codex", "pi", "shell"}) {
 		t.Errorf("Names = %v", got)
 	}
 	if _, ok := r.Get("nope"); ok {

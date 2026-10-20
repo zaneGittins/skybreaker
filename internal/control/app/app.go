@@ -251,10 +251,18 @@ func (a *App) StartSandbox(ctx context.Context, project string) error {
 		a.broker.Revoke(ctx, m.ID)
 		return err
 	}
+	// pi finds a llama.cpp router through its own variables; the
+	// project's env, written by you, wins.
+	_, env := a.cfg.PiConfig(project, m.Token)
+	env = maps.Clone(env)
+	if env == nil {
+		env = map[string]string{}
+	}
+	maps.Copy(env, p.Env)
 	spec := sandbox.Spec{
 		Project: project, Image: a.cfg.Sandbox.Image,
 		Subnet: a.cfg.Subnet(project), ProxyPort: a.cfg.Broker.Port, Token: m.Token, DataDir: dir,
-		Env: p.Env, Memory: a.cfg.Sandbox.Memory, CPUs: a.cfg.Sandbox.CPUs,
+		Env: env, Memory: a.cfg.Sandbox.Memory, CPUs: a.cfg.Sandbox.CPUs,
 	}
 	if err := a.sandbox.Start(ctx, spec); err != nil {
 		a.broker.Revoke(ctx, m.ID)
@@ -358,6 +366,13 @@ func (a *App) writeEtc(ctx context.Context, project string, p *config.Project) e
 		"mcp.json":        []byte(chat.MCPConfig(a.MCPURL(project, "-"))),
 		"authorized_keys": a.authorizedKeys(),
 	}
+	// pi's model servers, which skybreaker-pi merges into pi's own
+	// config in the sandbox; a stale one goes when the project has none.
+	if b, _ := a.cfg.PiConfig(project, ""); b != nil {
+		files[piModels] = b
+	} else if err := os.Remove(filepath.Join(etc, piModels)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	for name, b := range files {
 		if err := os.WriteFile(filepath.Join(etc, name), b, 0o644); err != nil {
 			return err
@@ -365,6 +380,9 @@ func (a *App) writeEtc(ctx context.Context, project string, p *config.Project) e
 	}
 	return nil
 }
+
+// piModels is pi's model servers, in the sandbox's /etc/skybreaker.
+const piModels = "pi-models.json"
 
 const (
 	// tokenRenewAt is how close to expiry a running sandbox is restarted

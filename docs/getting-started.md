@@ -39,7 +39,7 @@ Open **Settings** and choose **Create GitHub App** (for your account or an organ
 
 ## First steps
 
-Open `https://skybreaker.<your-tailnet>.ts.net`, tap **+** and pick Claude or Codex.
+Open `https://skybreaker.<your-tailnet>.ts.net`, tap **+** and pick Claude or Codex. Skybreaker supports three agents: Claude Code and Codex, as chats or in their terminal UIs, and pi in its terminal UI (see [pi and local models](#pi-and-local-models)).
 
 - **Sign in** once per project. For Claude, open the chat's terminal and run `/login`; Codex shows a sign-in code in the chat. Logins persist across restarts.
 - **Notifications:** on a phone, add Skybreaker to the home screen, open it from there and tap the bell.
@@ -72,6 +72,33 @@ skybreaker code <project>   # or Open in VS Code in the project's menu
 ```
 
 The project is in `/workspace`. A VS Code window is one more shell in the sandbox: it reaches only what the project's policy allows, through the broker. The sandbox can't download VS Code's server itself, so Remote - SSH downloads it on your computer and copies it over; set `"remote.downloadExtensionsLocally": true` in VS Code to install extensions the same way. Remove a computer's key in the same menu; its open windows disconnect.
+
+## pi and local models
+
+[pi](https://pi.dev) is the agent for your own API keys or models you run yourself. It runs in a project's terminal (or `skybreaker new <project> pi`) and as a scheduled job, and it gets Skybreaker's board and preview tools like the others. Sign in with `/login` in pi for a hosted provider, with that provider's API host in the project's policy.
+
+For a model server on your own network (Ollama, a llama.cpp router, vLLM, LM Studio), add a broker route to it and tell pi about it in the config file:
+
+```yaml
+capabilities:
+  local-models:
+    - route: /llm
+      upstream: http://192.168.1.50:11434   # plain HTTP is allowed only to an address in allow_private
+      allow_private: [192.168.1.50]
+      rules:
+        - { match: "* /**", action: auto }
+
+pi:
+  providers:
+    ollama:
+      route: /llm
+      api: openai-completions   # Ollama, vLLM, LM Studio, SGLang
+      models: [qwen3-coder:30b]
+```
+
+Give a project the bundle and `pi` among its harnesses. Each time pi starts in that project's sandbox, it finds the server in its own `models.json`, with the sandbox's broker token (`$SKYBREAKER_TOKEN`, which pi reads from the environment) as its key, so the file holds no secret; pick the model with `/model`. Your own providers in pi's config stay as they are. For a llama.cpp router, `api: llama.cpp` uses pi's built-in support instead: the router lists its own models, and `/llama` loads them. Skybreaker's own address on the host is `127.0.0.1`, which a route may name in `allow_private` for a server on the same machine.
+
+The route is the only way the sandbox reaches the server, and only the paths its rules allow. The broker's token stops at the broker; the server sees the request without it.
 
 ## Previews
 

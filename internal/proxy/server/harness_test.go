@@ -67,6 +67,8 @@ const testConfig = `{
        "rules": [{"match": "GET /**", "action": "auto"}]}
     ],
     "k8s": [
+      {"route": "/local", "upstream": "http://local.test", "allow_private": ["127.0.0.1"],
+       "rules": [{"match": "POST /v1/**", "action": "auto"}, {"match": "GET /models", "action": "auto"}]},
       {"route": "/k8s/prod", "upstream": "https://kube.test", "ca_file": "CLUSTER_CA", "inject": {"bearer": "kube"},
        "k8s": {"auto": ["get", "list", "watch"], "ask": ["create", "patch", "delete"], "deny": ["secrets", "pods/exec", "ns:kube-system"]}}
     ]
@@ -224,7 +226,7 @@ func newWorld(t *testing.T) *world {
 	}
 
 	res := mapResolver{"internal.test": "10.0.0.5"}
-	for _, h := range []string{"tunnel.test", "plain.test", "open.test", "github.test", "api.github.test", "llm.test", "unbound.test", "kube.test"} {
+	for _, h := range []string{"tunnel.test", "plain.test", "open.test", "github.test", "api.github.test", "llm.test", "unbound.test", "kube.test", "local.test"} {
 		res[h] = "127.0.0.1"
 	}
 	guard, err := netguard.New(nil, []string{"127.0.0.1/32"})

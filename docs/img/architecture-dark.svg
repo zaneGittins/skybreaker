@@ -44,9 +44,9 @@ text{font-family:"Figtree",-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;f
 <text class="sub" x="350" y="286">holds every credential,</text>
 <text class="sub" x="350" y="304">decides what may leave</text>
 <rect class="card" x="724" y="118" width="240" height="92" rx="12"/>
-<text class="title" x="742" y="148">Claude Code or Codex</text>
-<text class="sub" x="742" y="170">the official CLIs, on</text>
-<text class="sub" x="742" y="188">your own subscriptions</text>
+<text class="title" x="742" y="148">Claude Code, Codex, pi</text>
+<text class="sub" x="742" y="170">your subscriptions,</text>
+<text class="sub" x="742" y="188">API keys or local models</text>
 <rect class="card" x="724" y="234" width="240" height="92" rx="12"/>
 <text class="title" x="742" y="264">Your repo and tools</text>
 <text class="sub" x="742" y="286">builds, tests, Docker;</text>

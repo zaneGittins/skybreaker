@@ -92,7 +92,7 @@ def architecture(c):
         card(left, r2, lw, "The internet", ["GitHub, model APIs,", "package registries"]),
         card(sky_x + 20, r1, cw, "App", ["chats, boards, inbox,", "approvals, activity"]),
         card(sky_x + 20, r2, cw, "Broker", ["holds every credential,", "decides what may leave"]),
-        card(sb_x + 20, r1, cw, "Claude Code or Codex", ["the official CLIs, on", "your own subscriptions"]),
+        card(sb_x + 20, r1, cw, "Claude Code, Codex, pi", ["your subscriptions,", "API keys or local models"]),
         card(sb_x + 20, r2, cw, "Your repo and tools", ["builds, tests, Docker;", "no DNS, no other route"]),
         hline(left + lw, sky_x + 20, r1, "Tailscale", lx=(left + lw + host_x) / 2),
         hline(sky_x + 20 + cw, sb_x + 20, r1, "chats, MCP", both=True),

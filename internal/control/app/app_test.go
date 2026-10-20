@@ -209,9 +209,7 @@ type fixture struct {
 }
 
 func newFixture(t *testing.T) *fixture {
-	t.Helper()
-	dir := t.TempDir()
-	cfgJSON := fmt.Sprintf(`{
+	return newFixtureWith(t, `{
 	  "data_dir": %q,
 	  "users": ["zane@example.com"],
 	  "sandbox": {"image": "skybreaker-sandbox:test"},
@@ -219,7 +217,14 @@ func newFixture(t *testing.T) *fixture {
 	    "orbit": {"repo": "zaneGittins/orbit", "harnesses": ["claude", "codex"], "env": {"ANTHROPIC_API_KEY": "skybreaker-injected"}},
 	    "bifract": {"repo": "zaneGittins/bifract"}
 	  }
-	}`, dir)
+	}`)
+}
+
+// newFixtureWith runs a config with %q for the data directory.
+func newFixtureWith(t *testing.T, tmpl string) *fixture {
+	t.Helper()
+	dir := t.TempDir()
+	cfgJSON := fmt.Sprintf(tmpl, dir)
 	p := filepath.Join(dir, "skybreaker.json")
 	os.WriteFile(p, []byte(cfgJSON), 0o600)
 	cfg, err := config.Load(p)
@@ -282,6 +287,35 @@ func TestStartSandbox(t *testing.T) {
 	}
 	if len(f.broker.minted) != 1 {
 		t.Errorf("minted %d tokens for a running sandbox", len(f.broker.minted))
+	}
+}
+
+// A project that runs pi gets its model servers: models.json in the
+// read-only /etc/skybreaker, for skybreaker-pi to merge, and a llama.cpp
+// router's address and key in the environment.
+func TestStartSandboxSetsUpPi(t *testing.T) {
+	f := newFixtureWith(t, `{
+	  "data_dir": %q, "users": ["zane@example.com"], "sandbox": {"image": "img"},
+	  "projects": {"orbit": {"repo": "a/orbit", "harnesses": ["pi"], "capabilities": ["local"]}},
+	  "capabilities": {"local": [
+	    {"route": "/ollama", "upstream": "http://192.168.77.50:11434", "allow_private": ["192.168.77.50"], "rules": [{"match": "* /**", "action": "auto"}]},
+	    {"route": "/llama", "upstream": "http://127.0.0.1:8081", "allow_private": ["127.0.0.1"], "rules": [{"match": "* /**", "action": "auto"}]}
+	  ]},
+	  "pi": {"providers": {
+	    "ollama": {"route": "/ollama", "api": "openai-completions", "models": ["qwen3-coder:30b"]},
+	    "llama": {"route": "/llama", "api": "llama.cpp"}
+	  }}
+	}`)
+	if err := f.app.StartSandbox(context.Background(), "orbit"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(f.dir, "projects", "orbit", "etc", "pi-models.json"))
+	if err != nil || !strings.Contains(string(b), `"baseUrl": "http://broker:8080/ollama/v1"`) {
+		t.Fatalf("pi-models.json: %s %v", b, err)
+	}
+	runs := f.docker.find(func(c []string) bool { return len(c) > 1 && c[1] == "run" })
+	if len(runs) != 1 || !slices.Contains(runs[0], "LLAMA_BASE_URL=http://broker:8080/llama") || !slices.Contains(runs[0], "LLAMA_API_KEY=secret-tok1") {
+		t.Fatalf("docker run = %v", runs)
 	}
 }
 

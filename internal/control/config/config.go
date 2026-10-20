@@ -47,6 +47,8 @@ type Config struct {
 	Capabilities map[string][]*policy.Entry  `json:"capabilities" yaml:"capabilities"`
 	Projects     map[string]*Project         `json:"projects" yaml:"projects"`
 	Jobs         []*Job                      `json:"jobs" yaml:"jobs"`
+	// Pi sets pi up in sandboxes, with model servers behind broker routes.
+	Pi Pi `json:"pi" yaml:"pi"`
 
 	// Harnesses is built from the builtins plus Overrides.
 	Harnesses *harness.Registry `json:"-" yaml:"-"`
@@ -358,6 +360,9 @@ func (c *Config) validate() error {
 		}
 	}
 	if c.Policy, err = policy.New(projects, c.Capabilities); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.validatePi(); err != nil {
 		errs = append(errs, err)
 	}
 

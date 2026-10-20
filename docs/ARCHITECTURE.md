@@ -64,7 +64,7 @@ The host never reads sandbox-writable paths directly: workspaces, homes and inne
 
 ## Chats
 
-A chat runs the harness's structured mode (`claude -p --output-format stream-json`, `codex app-server`) through `docker exec -i`. A `chat.Driver` translates each protocol into `chat.Event`s; the `Manager` stores them in a per-chat log and streams them to the UI over server-sent events. "Open in terminal" resumes the same conversation in tmux. Drivers never name models and ignore what they don't recognise; a weekly image rebuild promotes new CLI versions only if they still speak the protocols the drivers use.
+A chat runs the harness's structured mode (`claude -p --output-format stream-json`, `codex app-server`) through `docker exec -i`. A `chat.Driver` translates each protocol into `chat.Event`s; the `Manager` stores them in a per-chat log and streams them to the UI over server-sent events. "Open in terminal" resumes the same conversation in tmux. Drivers never name models and ignore what they don't recognise; a weekly image rebuild promotes new CLI versions only if they still speak the protocols the drivers use. pi has no chat driver: it runs in terminals and jobs through `skybreaker-pi` (`images/sandbox`), which merges Skybreaker's MCP server and the model servers in `pi.providers` (`config.PiConfig`, written to the sandbox's read-only `/etc/skybreaker/pi-models.json`) into pi's own config inside the sandbox; the host never writes into a sandbox's home.
 
 ## Previews
 

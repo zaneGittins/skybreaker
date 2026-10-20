@@ -674,7 +674,7 @@ async function newProjectSheet() {
 
 const HARNESS_INFO = {
   claude: 'Claude Code', codex: 'OpenAI Codex', shell: 'A terminal in the sandbox',
-  pi: 'pi coding agent', qwen: 'Qwen Code', opencode: 'OpenCode',
+  pi: 'pi coding agent, with your own or local models',
 };
 
 // harnessPicks are the agents a project can start, chats first.

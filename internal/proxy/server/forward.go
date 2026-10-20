@@ -690,12 +690,15 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	if len(rt.AllowPrivate) > 0 {
 		g = s.guard.With(rt.AllowPrivate...)
 	}
-	port := 443
+	scheme, port := rt.Upstream.Scheme, 443
+	if scheme == "http" {
+		port = 80
+	}
 	if p := rt.Upstream.Port(); p != "" {
 		port, _ = strconv.Atoi(p)
 	}
 	s.forward(w, r, target{
-		peer: peer, token: token, pp: pp, mode: config.ModeRoute, scheme: "https", host: rt.Upstream.Hostname(), port: port,
+		peer: peer, token: token, pp: pp, mode: config.ModeRoute, scheme: scheme, host: rt.Upstream.Hostname(), port: port,
 		escapedPath: rt.Strip(r.URL.EscapedPath()), routePrefix: rt.Prefix, rules: rt.Rules, k8s: rt.K8s,
 		inject: rt.Inject, guard: g, roots: rt.RootCAs, transport: "route:" + pp.Name + ":" + rt.Prefix,
 	})

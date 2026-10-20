@@ -43,7 +43,7 @@ ENV PATH=/usr/local/go/bin:/root/go/bin:$PATH
 # a CLI can resolve a dependency version (an AWS SDK package, say) while its
 # publisher is still uploading it, and npm reports that as ETARGET.
 RUN for try in 1 2 3; do \
-      npm install -g @anthropic-ai/claude-code @openai/codex @qwen-code/qwen-code opencode-ai @earendil-works/pi-coding-agent && break; \
+      npm install -g @anthropic-ai/claude-code @openai/codex @earendil-works/pi-coding-agent && break; \
       [ "$try" = 3 ] && exit 1; \
       echo "npm install failed; retrying in 60s"; sleep 60; \
     done \
@@ -61,8 +61,11 @@ COPY check-protocols.sh /usr/local/bin/skybreaker-check-protocols
 COPY sshd_config /etc/ssh/sshd_config
 COPY authorized-keys.sh /usr/local/sbin/skybreaker-authorized-keys
 COPY sshd-env.sh /usr/local/sbin/skybreaker-sshd-env
+# pi, with Skybreaker's MCP server and model servers merged into its config.
+COPY skybreaker-pi.sh /usr/local/bin/skybreaker-pi
+COPY pi-config.mjs /usr/local/lib/skybreaker/pi-config.mjs
 RUN chmod 755 /usr/local/bin/skybreaker-entrypoint /usr/local/bin/skybreaker-check-protocols /usr/local/sbin/runc \
-      /usr/local/sbin/skybreaker-authorized-keys /usr/local/sbin/skybreaker-sshd-env
+      /usr/local/sbin/skybreaker-authorized-keys /usr/local/sbin/skybreaker-sshd-env /usr/local/bin/skybreaker-pi
 
 # Credentials never live here: git and gh get them added by the broker.
 ENV GIT_TERMINAL_PROMPT=0 \

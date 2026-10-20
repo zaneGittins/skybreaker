@@ -705,3 +705,21 @@ func TestPlainHTTPHostHeaderIsTheURLs(t *testing.T) {
 		t.Fatalf("plain.test saw %d requests", n)
 	}
 }
+
+// A route to a model server on your own network speaks its plain HTTP; the
+// sandbox's token, which authenticated the route, goes no further.
+func TestPlainHTTPRoute(t *testing.T) {
+	w := newWorld(t)
+	hdr := map[string]string{"Authorization": "Bearer " + w.token, "Content-Type": "application/json"}
+	code, body, _ := do(t, http.DefaultClient, "POST", w.proxy.URL+"/local/v1/chat/completions", `{"model":"m"}`, hdr)
+	if code != 200 || body != "hello from local.test" {
+		t.Fatalf("route: %d %q", code, body)
+	}
+	h := w.hitsFor("local.test")
+	if len(h) != 1 || h[0].Path != "/v1/chat/completions" || h[0].Header.Get("Authorization") != "" {
+		t.Fatalf("upstream saw %+v", h)
+	}
+	if code, _, _ := do(t, http.DefaultClient, "DELETE", w.proxy.URL+"/local/v1/x", "", hdr); code != http.StatusForbidden {
+		t.Fatalf("a method no rule allows: %d", code)
+	}
+}

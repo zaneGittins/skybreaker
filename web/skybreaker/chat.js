@@ -5,7 +5,7 @@
 // the markdown parser). Agent text goes into the page only as text nodes:
 // markdown is parsed into data and built with el(), never as HTML.
 
-const HARNESS_LABEL = { claude: 'Claude', codex: 'Codex', shell: 'Shell', pi: 'pi', qwen: 'Qwen', opencode: 'OpenCode' };
+const HARNESS_LABEL = { claude: 'Claude', codex: 'Codex', shell: 'Shell', pi: 'pi' };
 const harnessLabel = h => HARNESS_LABEL[h] || h;
 const chatName = s => s.title || `New ${harnessLabel(s.harness)} chat`;
 

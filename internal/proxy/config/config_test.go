@@ -171,7 +171,7 @@ func TestInvalid(t *testing.T) {
 		"route reserved":        {`"route": "/orbit"`, `"route": "/ca.crt"`},
 		"route traversal":       {`"route": "/orbit"`, `"route": "/orbit/../ca.crt"`},
 		"route trailing slash":  {`"route": "/orbit"`, `"route": "/orbit/"`},
-		"route http upstream":   {`"https://orbit.example.ts.net"`, `"http://orbit.example.ts.net"`},
+		"route http upstream":   {`"https://orbit.example.ts.net"`, `"http://orbit.example.ts.net", "allow_private": []`},
 		"route upstream path":   {`"https://orbit.example.ts.net"`, `"https://orbit.example.ts.net/x?y"`},
 		"route port zero":       {`"https://orbit.example.ts.net"`, `"https://orbit.example.ts.net:0"`},
 		"route port too big":    {`"https://orbit.example.ts.net"`, `"https://orbit.example.ts.net:99999"`},
@@ -226,5 +226,25 @@ func TestUnusedCapabilitiesValidated(t *testing.T) {
               {"route": "/spare", "upstream": "https://spare.example.com", "rules": [{"match": "GET /**", "action": "auto"}]}],`, 1)
 	if _, err := load(t, ok); err != nil {
 		t.Fatalf("valid unused capability refused: %v", err)
+	}
+}
+
+// A route may speak plain HTTP to a server on your own network (a local
+// model server rarely has TLS): only with allow_private naming it, and
+// never carrying a secret, which would cross the wire in the clear.
+func TestPlainHTTPRoutes(t *testing.T) {
+	route := func(extra string) string {
+		return `{"projects": {"orbit": {"repo": "a/b", "capabilities": ["llm"]}}, "capabilities": {"llm": [{"route": "/llm", "upstream": "http://192.168.77.50:8080"` + extra + `, "rules": [{"match": "POST /v1/**", "action": "auto"}]}]}}`
+	}
+	if _, err := load(t, route(`, "allow_private": ["192.168.77.50"]`)); err != nil {
+		t.Fatalf("a private http upstream: %v", err)
+	}
+	for name, extra := range map[string]string{
+		"not private": ``,
+		"with secret": `, "allow_private": ["192.168.77.50"], "inject": {"bearer": "x"}`,
+	} {
+		if _, err := load(t, route(extra)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }

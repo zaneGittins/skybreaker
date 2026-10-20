@@ -22,7 +22,7 @@ import (
 const DefaultImage = "ghcr.io/zanegittins/skybreaker-sandbox:latest"
 
 // Harnesses are the built-in harnesses a project may enable.
-var Harnesses = []string{"claude", "codex", "pi", "qwen", "opencode"}
+var Harnesses = []string{"claude", "codex", "pi"}
 
 // Answers is everything an install asks for.
 type Answers struct {
@@ -330,6 +330,23 @@ capabilities:
     - { host: auth.openai.com, mode: tunnel }
     - { host: chatgpt.com, mode: tunnel }
     - { host: api.openai.com, mode: tunnel }
+
+  # A model server on your own network for pi (Ollama, llama.cpp, vLLM):
+  # give a project this bundle and list the server under pi below.
+  # local-models:
+  #   - route: /llm
+  #     upstream: http://192.168.1.50:11434   # plain HTTP only to an address in allow_private
+  #     allow_private: [192.168.1.50]
+  #     rules:
+  #       - { match: "* /**", action: auto }
+
+# pi in each sandbox is told about these, through the routes above.
+# pi:
+#   providers:
+#     local:
+#       route: /llm
+#       api: openai-completions   # Ollama, vLLM, LM Studio; or llama.cpp for a llama.cpp router
+#       models: [qwen3-coder:30b]
 `))
 
 var secretsTmpl = template.Must(template.New("secrets").Funcs(funcs).Parse(`# Skybreaker's secrets, written by skybreaker-setup. Readable by the
