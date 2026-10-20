@@ -635,13 +635,15 @@ func TestRestartedSandboxGetsTmuxForANewTerminal(t *testing.T) {
 			return g.exec(args)
 		}
 	})
-	before := len(f.docker.calls)
+	// The sandbox's background clone records calls meanwhile: read them
+	// under the fake's lock.
+	var before int
+	f.docker.set(func() { before = len(f.docker.calls) })
 	if _, err := f.app.NewSession(ctx, "orbit", "codex", "", NewOptions{OwnBranch: true}); err != nil {
 		t.Fatal(err)
 	}
-	f.docker.mu.Lock()
-	calls := f.docker.calls[before:]
-	f.docker.mu.Unlock()
+	var calls [][]string
+	f.docker.set(func() { calls = slices.Clone(f.docker.calls[before:]) })
 	lastRun, sleeper := -1, -1
 	for i, c := range calls {
 		if len(c) > 1 && c[1] == "run" {
