@@ -83,6 +83,8 @@ Each sandbox runs sshd. `skybreaker vscode setup` makes the computer a key, adds
 
 Every agent's instructions are `settings/instructions.md`, set in Settings by admins (`PUT /api/instructions`, audited). `app.SetInstructions` writes them into each project's `etc/` as `instructions.md` and as `codex-managed-config.toml` (`developer_instructions`), each mounted read-only on its own: at `/etc/claude-code/CLAUDE.md` for Claude Code and `/etc/codex/managed_config.toml` for Codex. They're rewritten in place, since a rename would leave the mount on the old file. `skybreaker-pi` passes the file to pi with `--append-system-prompt`.
 
+Canned prompts are `settings/prompts.json`, set in Settings by admins (`PUT /api/prompts`, audited) and read by anyone (`GET /api/prompts`). They never reach a sandbox: the chat page expands `/prompt <name>` into the prompt's text and sends it as an ordinary message, so no harness needs to know about them.
+
 The chat drivers report tokens (`Out.Usage`: Claude's per-model result usage as it grows, Codex's `thread/tokenUsage/updated`) and plan limits (`Out.Limits`: Claude's `rate_limit_event`, Codex's `account/rateLimits/read` and updates). `usage.Store` keeps them by UTC hour for a month in `usage.json`, with scheduled runs' totals from their logs, and `/api/usage` serves the home page's rail.
 
 ## Boards and MCP

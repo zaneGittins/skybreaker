@@ -248,7 +248,7 @@ func Run(ctx context.Context, o Options) error {
 		})
 	}
 
-	changes := &settings{configPath: o.ConfigPath, secrets: cfg.SecretsFile, instructions: cfg.Instructions(), app: a, broker: brk, boards: boards, restart: requestRestart}
+	changes := &settings{configPath: o.ConfigPath, secrets: cfg.SecretsFile, instructions: cfg.Instructions(), prompts: cfg.Prompts(), app: a, broker: brk, boards: boards, restart: requestRestart}
 	apiHandler, err := api.New(api.Deps{
 		Config: cfg, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews, SSHKeys: sshKeys,
 		Projects: changes, Settings: changes, Usage: tokensUsed,

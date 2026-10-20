@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, contextUse, fmtTokens } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, contextUse, fmtTokens } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -269,17 +269,19 @@ test('parseCommand: only Skybreaker\'s own commands, everything else goes to the
   assert.deepEqual(parseCommand('/color'), { cmd: 'color', arg: '' });
   assert.deepEqual(parseCommand('/goal Ship the fix\nwith tests'), { cmd: 'goal', arg: 'Ship the fix\nwith tests' });
   assert.deepEqual(parseCommand('/goal'), { cmd: 'goal', arg: '' });
+  assert.deepEqual(parseCommand('/prompt review focus on auth'), { cmd: 'prompt', arg: 'review focus on auth' });
+  assert.deepEqual(parseCommand('/prompt'), { cmd: 'prompt', arg: '' });
   for (const c of ['clear', 'fork', 'compact']) {
     assert.deepEqual(parseCommand('/' + c), { cmd: c, arg: '' });
     assert.deepEqual(parseCommand(' /' + c + ' '), { cmd: c, arg: '' });
   }
-  for (const s of ['/model opus', '/renamed x', '/Rename x', 'please /rename x', '/clearly', '/forks', '/', 'hello', '']) {
+  for (const s of ['/model opus', '/renamed x', '/Rename x', 'please /rename x', '/clearly', '/forks', '/prompts:review', '/prompts', '/', 'hello', '']) {
     assert.equal(parseCommand(s), null, s);
   }
 });
 
 test('commandHints: what to suggest as you type', () => {
-  assert.deepEqual(commandHints('/').map(h => h.cmd), ['rename', 'color', 'goal', 'clear', 'fork', 'compact']);
+  assert.deepEqual(commandHints('/').map(h => h.cmd), ['rename', 'color', 'goal', 'clear', 'fork', 'compact', 'prompt']);
   assert.deepEqual(commandHints('/co').map(h => h.cmd), ['color', 'compact']);
   assert.deepEqual(commandHints('/f').map(h => h.cmd), ['fork']);
   assert.deepEqual(commandHints('/color ').map(h => h.color), CHAT_COLORS);
@@ -287,6 +289,31 @@ test('commandHints: what to suggest as you type', () => {
   assert.deepEqual(commandHints('/rename x'), []);
   assert.deepEqual(commandHints('/model'), []);
   assert.deepEqual(commandHints('hello'), []);
+});
+
+const PROMPTS = [
+  { name: 'review', text: 'Review the diff on this branch for bugs, and list them most severe first.\nThen stop.' },
+  { name: 'release', text: 'Cut a release.' },
+  { name: 'tests', text: 'Run the tests.' },
+];
+
+test('commandHints: /prompt offers the saved prompts, like /color offers colours', () => {
+  assert.deepEqual(commandHints('/pr', PROMPTS).map(h => h.cmd), ['prompt']);
+  assert.deepEqual(commandHints('/prompt ', PROMPTS).map(h => h.prompt), ['review', 'release', 'tests']);
+  assert.deepEqual(commandHints('/prompt re', PROMPTS).map(h => h.prompt), ['review', 'release']);
+  assert.deepEqual(commandHints('/prompt rev', PROMPTS)[0], { cmd: 'prompt', prompt: 'review', desc: 'Review the diff on this branch for bugs, and li…' });
+  assert.deepEqual(commandHints('/prompt x', PROMPTS), []);
+  assert.deepEqual(commandHints('/prompt ', []), []);
+  // Once you add to it, the hints go.
+  assert.deepEqual(commandHints('/prompt review and ', PROMPTS), []);
+});
+
+test('promptText: the saved prompt, with anything after its name added', () => {
+  assert.equal(promptText('tests', PROMPTS), 'Run the tests.');
+  assert.equal(promptText('  tests  ', PROMPTS), 'Run the tests.');
+  assert.equal(promptText('tests only the api\npackage ', PROMPTS), 'Run the tests.\n\nonly the api\npackage');
+  for (const bad of ['', 'test', 'Tests', 'nope tests']) assert.equal(promptText(bad, PROMPTS), null, bad);
+  assert.equal(promptText('tests', []), null);
 });
 
 test('foldChat: context usage keeps the last window it was told', () => {

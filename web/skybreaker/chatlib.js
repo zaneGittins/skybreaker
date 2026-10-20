@@ -162,22 +162,38 @@ const COMMANDS = [
   { cmd: 'clear', usage: '/clear', desc: 'End this chat and start a fresh one' },
   { cmd: 'fork', usage: '/fork', desc: 'Copy this conversation into a new chat' },
   { cmd: 'compact', usage: '/compact', desc: 'Summarise the conversation to free up context' },
+  { cmd: 'prompt', usage: '/prompt <name>', desc: 'Send one of the prompts saved in Settings' },
 ];
 
 // parseCommand reads Skybreaker's own chat commands. Anything else starting
 // with a slash (the harness's own commands) is left for the agent.
 function parseCommand(text) {
-  const m = /^\/(rename|color|goal|clear|fork|compact)(?:\s+([\s\S]*))?$/.exec(String(text ?? '').trim());
+  const m = /^\/(rename|color|goal|clear|fork|compact|prompt)(?:\s+([\s\S]*))?$/.exec(String(text ?? '').trim());
   return m ? { cmd: m[1], arg: (m[2] || '').trim() } : null;
 }
 
-// commandHints is what to suggest while you type a command.
-function commandHints(text) {
+// commandHints is what to suggest while you type a command, with the
+// prompts saved in Settings for /prompt.
+function commandHints(text, prompts = []) {
   const s = String(text ?? '');
   const color = /^\/color\s+(\S*)$/.exec(s);
   if (color) return CHAT_COLORS.filter(c => c.startsWith(color[1])).map(c => ({ cmd: 'color', color: c }));
+  const prompt = /^\/prompt\s+(\S*)$/.exec(s);
+  if (prompt) {
+    return prompts.filter(p => p.name.startsWith(prompt[1]))
+      .map(p => ({ cmd: 'prompt', prompt: p.name, desc: clipLabel(firstLine(p.text)) }));
+  }
   const m = /^\/([a-z]*)$/.exec(s);
   return m ? COMMANDS.filter(c => c.cmd.startsWith(m[1])) : [];
+}
+
+// promptText is what /prompt <name> [more] sends: the saved prompt, with
+// anything typed after its name added below it. An unknown name is null.
+function promptText(arg, prompts = []) {
+  const m = /^(\S+)(?:\s+([\s\S]*))?$/.exec(String(arg ?? '').trim());
+  const p = m && prompts.find(p => p.name === m[1]);
+  if (!p) return null;
+  return m[2] ? p.text + '\n\n' + m[2].trim() : p.text;
 }
 
 // previewURL accepts a preview's address only as a bare http(s) origin:
@@ -553,4 +569,4 @@ function activityLabel(c) {
   return 'Working';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel, contextUse, fmtTokens };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel, contextUse, fmtTokens };

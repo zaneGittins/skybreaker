@@ -30,6 +30,7 @@ type fakeSettings struct {
 	key     string
 
 	instructions string
+	prompts      []config.Prompt
 }
 
 func (s *fakeSettings) Apply(_ context.Context, by, what string, change func(*config.AppFiles) error, dry bool) (Applied, error) {
@@ -480,6 +481,70 @@ func TestInstructionsAPI(t *testing.T) {
 		t.Errorf("kim: %q %v", text, editable)
 	}
 	if code, _ := f.do(t, "PUT", "/api/instructions", `{"text":"x"}`, nil); code != 403 {
+		t.Errorf("kim saved: %d", code)
+	}
+}
+
+func (s *fakeSettings) Prompts() ([]config.Prompt, error) { return s.prompts, nil }
+func (s *fakeSettings) SetPrompts(by string, ps []config.Prompt) error {
+	if err := config.CheckPrompts(ps); err != nil {
+		return err
+	}
+	s.prompts = ps
+	s.log = append(s.log, by+": changed the prompts")
+	return nil
+}
+
+// Canned prompts: anyone may read them, admins change them.
+func TestPromptsAPI(t *testing.T) {
+	s := &fakeSettings{prompts: []config.Prompt{{Name: "review", Text: "Review the diff."}}}
+	f := newFixture(t, you, withSettings(t, s, ""))
+	get := func(f *fixture) ([]config.Prompt, bool) {
+		t.Helper()
+		code, body := f.do(t, "GET", "/api/prompts", "", nil)
+		var out struct {
+			Prompts  []config.Prompt `json:"prompts"`
+			Editable bool            `json:"editable"`
+		}
+		if err := json.Unmarshal([]byte(body), &out); err != nil || code != 200 {
+			t.Fatalf("%d %s", code, body)
+		}
+		return out.Prompts, out.Editable
+	}
+	if ps, editable := get(f); len(ps) != 1 || ps[0].Name != "review" || !editable {
+		t.Fatalf("%v %v", ps, editable)
+	}
+	if code, out := f.do(t, "PUT", "/api/prompts", `{"prompts":[{"name":"tests","text":"  Run the tests.\r\nFix what fails.\n"},{"name":"review","text":"Review it."}]}`, nil); code != 200 {
+		t.Fatalf("save: %d %s", code, out)
+	}
+	want := []config.Prompt{{Name: "tests", Text: "Run the tests.\nFix what fails."}, {Name: "review", Text: "Review it."}}
+	if len(s.prompts) != 2 || s.prompts[0] != want[0] || s.prompts[1] != want[1] || len(s.log) != 1 || s.log[0] != "zane@example.com: changed the prompts" {
+		t.Fatalf("saved %q, log %q", s.prompts, s.log)
+	}
+	for name, body := range map[string]string{
+		"upper":   `{"prompts":[{"name":"Review","text":"x"}]}`,
+		"spaced":  `{"prompts":[{"name":"re view","text":"x"}]}`,
+		"twice":   `{"prompts":[{"name":"a","text":"x"},{"name":"a","text":"y"}]}`,
+		"empty":   `{"prompts":[{"name":"a","text":"  \n "}]}`,
+		"nul":     `{"prompts":[{"name":"a","text":"a\u0000b"}]}`,
+		"unknown": `{"prompts":[{"name":"a","text":"x","extra":1}]}`,
+		"long":    `{"prompts":[{"name":"a","text":"` + strings.Repeat("x", config.MaxPromptsText+1) + `"}]}`,
+	} {
+		if code, _ := f.do(t, "PUT", "/api/prompts", body, nil); code != 400 {
+			t.Errorf("%s: %d", name, code)
+		}
+	}
+	if len(s.log) != 1 {
+		t.Errorf("a refused save was recorded: %q", s.log)
+	}
+
+	kim := you
+	kim.Login = "kim@example.com"
+	f = newFixture(t, kim, withSettings(t, s, `"admins": ["zane@example.com"],`))
+	if ps, editable := get(f); len(ps) != 2 || editable {
+		t.Errorf("kim: %v %v", ps, editable)
+	}
+	if code, _ := f.do(t, "PUT", "/api/prompts", `{"prompts":[]}`, nil); code != 403 {
 		t.Errorf("kim saved: %d", code)
 	}
 }

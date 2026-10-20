@@ -197,6 +197,8 @@ async function renderChat(seq, d) {
   const chat = newChat();
   const nodes = new Map(); // item id → its element
   const modes = state.meta?.chat?.[session.harness] || ['ask'];
+  // The prompts saved in Settings, for /prompt.
+  let prompts = [];
 
   const title = el('span.title');
   const sub = el('span.sub');
@@ -399,7 +401,8 @@ async function renderChat(seq, d) {
   };
   input.addEventListener('input', () => { grow(); syncComposer(); saveDraft(); showHints() });
 
-  // --- Skybreaker's own commands: /rename, /color, /goal, /clear, /fork, /compact ---
+  // --- Skybreaker's own commands: /rename, /color, /goal, /clear, /fork, /compact, /prompt ---
+  api('GET', '/api/prompts').then(r => { prompts = r.prompts || []; showHints() }).catch(() => { });
   const edit = async body => {
     session = await api('PATCH', '/api/sessions/' + encodeURIComponent(id), body);
     head();
@@ -415,6 +418,12 @@ async function renderChat(seq, d) {
       } else if (c.cmd === 'goal') {
         await edit({ goal: c.arg });
         if (c.arg) await send('Goal for this chat: ' + c.arg);
+      } else if (c.cmd === 'prompt') {
+        if (!prompts.length) { toast('No prompts yet. Add them in Settings.'); return false }
+        const text = promptText(c.arg, prompts);
+        if (text === null) { toast('Prompts: ' + prompts.map(p => p.name).join(', ')); return false }
+        await api('POST', `/api/sessions/${id}/messages`, { text });
+        stick = true;
       } else if (c.cmd === 'compact') {
         await api('POST', `/api/sessions/${id}/compact`, {});
         stick = true;
@@ -446,16 +455,34 @@ async function renderChat(seq, d) {
     syncComposer();
   };
   const showHints = () => {
-    const hs = commandHints(input.value);
+    const hs = commandHints(input.value, prompts);
     hints.hidden = !hs.length;
     hints.replaceChildren(...hs.map(h => h.color
       ? el('button.cmd-hint.swatch-hint.sc-' + h.color, { type: 'button', onmousedown: e => e.preventDefault(),
         onclick: async () => { if (await runCommand({ cmd: 'color', arg: h.color })) clearInput() } }, el('span.swatch'), h.color)
-      : el('button.cmd-hint', { type: 'button', onmousedown: e => e.preventDefault(),
-        onclick: () => { input.value = '/' + h.cmd + ' '; input.focus(); showHints(); syncComposer() } },
-        el('b', null, h.usage), el('span', null, h.desc))));
+      : h.prompt
+        ? el('button.cmd-hint', { type: 'button', onmousedown: e => e.preventDefault(),
+          onclick: async () => { if (await runCommand({ cmd: 'prompt', arg: h.prompt })) clearInput() } },
+          el('b', null, h.prompt), el('span', null, h.desc))
+        : el('button.cmd-hint', { type: 'button', onmousedown: e => e.preventDefault(),
+          onclick: () => complete(h) },
+          el('b', null, h.usage), el('span', null, h.desc))));
+  };
+  // complete fills in a hint, leaving you to add to it before sending.
+  const complete = h => {
+    input.value = h.color ? '/color ' + h.color : h.prompt ? '/prompt ' + h.prompt + ' ' : '/' + h.cmd + ' ';
+    input.focus();
+    grow();
+    showHints();
+    syncComposer();
+    saveDraft();
   };
   input.addEventListener('keydown', e => {
+    if (e.key === 'Tab' && !e.shiftKey && !hints.hidden) {
+      const h = commandHints(input.value, prompts)[0];
+      if (h) { e.preventDefault(); complete(h) }
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !coarse()) { e.preventDefault(); submit() }
   });
   const draftKey = 'draft.' + id;
