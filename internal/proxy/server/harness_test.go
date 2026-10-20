@@ -131,6 +131,9 @@ type world struct {
 	mu   sync.Mutex
 	hits []upstreamHit
 	from string // the sandbox network clients connect from
+
+	// handlers serve a host in place of the echoing upstream.
+	handlers map[string]http.Handler
 }
 
 func (w *world) setFrom(project string) {
@@ -162,9 +165,13 @@ func (m mapResolver) LookupNetIP(_ context.Context, _, host string) ([]netip.Add
 
 // newWorld's clients all connect from loopback; setFrom picks which
 // project's sandbox network that counts as ("" for none).
-func newWorld(t *testing.T) *world {
+func newWorld(t *testing.T) *world { return newWorldWith(t, testConfig, nil) }
+
+// newWorldWith uses another policy, and handlers in place of the upstream
+// for some hosts.
+func newWorldWith(t *testing.T, policy string, handlers map[string]http.Handler) *world {
 	t.Helper()
-	w := &world{t: t, auditBuf: &syncBuffer{}, from: "orbit"}
+	w := &world{t: t, auditBuf: &syncBuffer{}, from: "orbit", handlers: handlers}
 
 	var err error
 	if w.publicCA, err = ca.New(); err != nil {
@@ -178,6 +185,10 @@ func newWorld(t *testing.T) *world {
 	}
 
 	w.upstream = httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if h, ok := w.handlers[strings.Split(r.Host, ":")[0]]; ok {
+			h.ServeHTTP(rw, r)
+			return
+		}
 		body, _ := io.ReadAll(r.Body)
 		path := r.URL.EscapedPath()
 		if r.URL.RawQuery != "" {
@@ -219,7 +230,7 @@ func newWorld(t *testing.T) *world {
 	caPath := filepath.Join(tmp, "cluster-ca.crt")
 	os.WriteFile(caPath, w.clusterCA.CertPEM(), 0o644)
 	cfgPath := filepath.Join(tmp, "proxy.json")
-	os.WriteFile(cfgPath, []byte(strings.Replace(testConfig, "CLUSTER_CA", caPath, 1)), 0o600)
+	os.WriteFile(cfgPath, []byte(strings.Replace(policy, "CLUSTER_CA", caPath, 1)), 0o600)
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		t.Fatal(err)
@@ -257,6 +268,7 @@ func newWorld(t *testing.T) *world {
 		// Every upstream host is served by the local test servers.
 		portMap:   map[int]int{443: int(up.Port()), 80: int(plainPort.Port())},
 		reapEvery: 20 * time.Millisecond,
+		githubAPI: map[string]bool{"api.github.test": true},
 	})
 	if err != nil {
 		t.Fatal(err)

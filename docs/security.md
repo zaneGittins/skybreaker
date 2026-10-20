@@ -38,7 +38,7 @@ Sandboxes reach the outside only through `HTTPS_PROXY=http://<project>:<token>@b
 |---|---|
 | Caller | The request must come from the project's sandbox network with a live token minted for that project. Revocation takes effect immediately, including on open connections. |
 | Destination | The host must be on the project's list. Each host is a **tunnel** (opaque, but only TLS whose server name is that host: a tunnel can't front for another site at the same address), **mitm** (TLS terminated so rules can see method and path) or a **route** (a reverse-proxy path, for clients that pin their own CA, or a model server on your network). A route may speak plain HTTP only to a private address listed in its `allow_private`, and never with a secret. |
-| Request | Each method and path is `auto`, `ask` or `deny`; unmatched requests are denied. Requests carrying their own credentials are refused. `refs:` restricts git pushes to branch globs. `graphql:` reads GraphQL operations, so a mutation off the rule's list (such as `mergePullRequest`) needs approval. `k8s:` rules decide on Kubernetes verbs and resources; proxy subresources and impersonation headers are refused. |
+| Request | Each method and path is `auto`, `ask` or `deny`; unmatched requests are denied. Requests carrying their own credentials are refused. `refs:` restricts git pushes to branch globs. `graphql:` reads GraphQL operations, so a mutation off the rule's list (such as `mergePullRequest`) needs approval. `k8s:` rules decide on Kubernetes verbs and resources; proxy subresources and impersonation headers are refused. `content_rules` check pushed commit messages and pull request titles and bodies (below). |
 | Credentials | A secret is added only if it lists the upstream host. An unbound secret would let an agent read it back through an echo server. |
 | Connection | Resolved addresses are checked at connect time against loopback, link-local, metadata, private ranges, the tailnet and your LAN. |
 | Audit | Every decision is logged and shown on the Activity page. |
@@ -73,6 +73,22 @@ Agents reach their project's board through Skybreaker's MCP server, identified b
 - **A GitHub ruleset** blocks direct pushes, force pushes and deletion, with the App off its bypass list. This is the backstop.
 - **The broker** refuses pushes outside the allowed branch globs, deletes and tags. It can't see history, so force pushes rely on the ruleset.
 - **The GitHub App** is never granted `workflows`, `administration` or `secrets`; the one Settings creates asks for exactly `contents`, `pull_requests` and `issues` (write) and `metadata` (read), with no webhook.
+
+## Commit and pull request rules
+
+`content_rules` (config file or Settings) apply to every project and every agent: length limits and forbidden patterns for commit messages and pull request titles and bodies. The broker reads the content itself and fails closed:
+
+- **Commits.** It reads every commit in a push's pack as the push streams through, and holds back the pack's checksum until every commit passes and the body ends there, so a refused push never arrives whole. While commit rules are set it adds `no-thin` to the ref advertisement, so git sends a self-contained pack; a pack it can't read whole, such as a thin pack, is refused.
+- **Pull requests.** On `api.github.com` it reads `title` and `body` from REST `POST /repos/*/*/pulls` and `PATCH` (or `POST`) `/repos/*/*/pulls/N`, and from the `input` of GraphQL `createPullRequest` and `updatePullRequest`, variables resolved. Duplicate keys, variables the body gives no value for, and mutations built from top-level fragments are refused.
+- **Feedback.** A refused push gets a git server's refusal, so git prints each problem as `remote: skybreaker: commit abc123: ...` and the ref as `[remote rejected]`; ref policy refusals read the same way. A refused pull request gets GitHub's error JSON, which `gh` prints as `gh: skybreaker: ...`. All problems come in one refusal, up to 30 for commits.
+
+Not covered:
+
+- Hosts in `tunnel` mode, which aren't inspected.
+- Commits made through other APIs: the contents and Git Data APIs, `createCommitOnBranch`, merge commit messages. The `github` capability doesn't auto-approve them.
+- Issues and comments, including a pull request's title and body edited through `PATCH /repos/*/*/issues/N`, or taken from an issue when a pull request is created from one. Don't auto-approve those.
+
+A push can carry commits already upstream, if the agent hadn't fetched them; they are checked like new ones.
 
 ## Limits
 

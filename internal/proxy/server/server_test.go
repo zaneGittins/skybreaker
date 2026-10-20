@@ -248,11 +248,24 @@ func TestRefPolicy(t *testing.T) {
 	c := w.orbit()
 	u := "https://github.test/zaneGittins/orbit.git/git-receive-pack"
 	hdr := map[string]string{"Content-Type": "application/x-git-receive-pack-request"}
-	if code, _, _ := do(t, c, "POST", u, receivePack("refs/heads/main"), hdr); code != http.StatusForbidden {
-		t.Fatalf("push to main: %d", code)
+	// A refused push is answered as a git server refuses one, so git shows
+	// the reason; nothing reaches upstream.
+	code, b, hd := do(t, c, "POST", u, receivePack("refs/heads/main"), hdr)
+	if code != 200 || hd.Get("Content-Type") != "application/x-git-receive-pack-result" ||
+		!strings.Contains(b, "\x02skybreaker: ref policy: refs/heads/main is outside refs/heads/agent/*") ||
+		!strings.Contains(b, "ng refs/heads/main ref policy: refs/heads/main is outside") {
+		t.Fatalf("push to main: %d %q", code, b)
 	}
-	if code, _, _ := do(t, c, "POST", u, receivePack("refs/tags/v1"), hdr); code != http.StatusForbidden {
-		t.Fatalf("push tag: %d", code)
+	if code, b, _ := do(t, c, "POST", u, receivePack("refs/tags/v1"), hdr); code != 200 || !strings.Contains(b, "ng refs/tags/v1 ") {
+		t.Fatalf("push tag: %d %q", code, b)
+	}
+	// A client that asked for no status report gets an HTTP error.
+	bare := pkt(strings.Repeat("0", 40)+" "+strings.Repeat("a", 40)+" refs/heads/main\n") + "0000PACKDATA"
+	if code, _, _ := do(t, c, "POST", u, bare, hdr); code != http.StatusForbidden {
+		t.Fatalf("push without report-status: %d", code)
+	}
+	if n := len(w.hitsFor("github.test")); n != 0 {
+		t.Fatalf("%d refused pushes reached upstream", n)
 	}
 	body := receivePack("refs/heads/agent/ORB-1")
 	if code, b, _ := do(t, c, "POST", u, body, hdr); code != 200 {

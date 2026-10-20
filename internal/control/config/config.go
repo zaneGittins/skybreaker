@@ -24,6 +24,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/names"
 	"github.com/zaneGittins/skybreaker/internal/notify"
 	policy "github.com/zaneGittins/skybreaker/internal/proxy/config"
+	"github.com/zaneGittins/skybreaker/internal/proxy/content"
 )
 
 type Config struct {
@@ -49,6 +50,10 @@ type Config struct {
 	Jobs         []*Job                      `json:"jobs" yaml:"jobs"`
 	// Pi sets pi up in sandboxes, with model servers behind broker routes.
 	Pi Pi `json:"pi" yaml:"pi"`
+	// ContentRules are checks on every project's pushed commit messages and
+	// pull request titles and bodies, enforced by the broker. The app's
+	// rules (Access) can only add to them.
+	ContentRules *content.Rules `json:"content_rules,omitempty" yaml:"content_rules,omitempty"`
 
 	// Harnesses is built from the builtins plus Overrides.
 	Harnesses *harness.Registry `json:"-" yaml:"-"`
@@ -62,6 +67,7 @@ type Config struct {
 	added      map[string]bool  // projects created in the app (projects.json)
 	fileAccess map[string]Grant // each project's access as the config file gives it
 	appBundles map[string]bool  // bundles made in the app (access.json)
+	appContent *content.Rules   // content rules made in the app (access.json)
 }
 
 type Tailscale struct {
@@ -359,7 +365,7 @@ func (c *Config) validate() error {
 			projects[name] = &policy.Project{Repo: p.Repo, Allow: p.Allow, Capabilities: p.Capabilities}
 		}
 	}
-	if c.Policy, err = policy.New(projects, c.Capabilities); err != nil {
+	if c.Policy, err = policy.New(projects, c.Capabilities, c.contentRules()); err != nil {
 		errs = append(errs, err)
 	}
 	if err := c.validatePi(); err != nil {

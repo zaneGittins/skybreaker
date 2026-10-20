@@ -217,3 +217,24 @@ func TestPolicy(t *testing.T) {
 		t.Fatalf("bifract's policy: %+v", b)
 	}
 }
+
+func TestContentRules(t *testing.T) {
+	c, err := load(t, strings.Replace(good, `"jobs"`, `"content_rules": {
+	  "commit": {"max_subject": 72, "forbid": ["(?im)^co-authored-by:.*claude"]},
+	  "pull_request": {"forbid": ["(?i)generated with \\[claude code\\]"]}
+	}, "jobs"`, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	set := c.Policy.Content()
+	if got := set.CheckCommit("Fix\n\nCo-Authored-By: Claude <noreply@anthropic.com>"); len(got) != 1 {
+		t.Fatalf("commit: %q", got)
+	}
+	body := "Generated with [Claude Code](https://claude.com/claude-code)"
+	if got := set.CheckPullRequest(nil, &body); len(got) != 1 {
+		t.Fatalf("pull request: %q", got)
+	}
+	if _, err := load(t, strings.Replace(good, `"jobs"`, `"content_rules": {"commit": {"forbid": ["("]}}, "jobs"`, 1)); err == nil || !strings.Contains(err.Error(), "content_rules.commit") {
+		t.Fatalf("bad pattern: %v", err)
+	}
+}

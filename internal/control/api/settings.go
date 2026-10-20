@@ -18,6 +18,7 @@ import (
 
 	"github.com/zaneGittins/skybreaker/internal/control/config"
 	policy "github.com/zaneGittins/skybreaker/internal/proxy/config"
+	"github.com/zaneGittins/skybreaker/internal/proxy/content"
 	"github.com/zaneGittins/skybreaker/internal/proxy/githubapp"
 	"github.com/zaneGittins/skybreaker/internal/proxy/secrets"
 	"github.com/zaneGittins/skybreaker/internal/tsauth"
@@ -98,6 +99,7 @@ func (s *server) settingsRoutes(m *http.ServeMux) {
 	m.HandleFunc("PUT /api/instructions", s.saveInstructions)
 	m.HandleFunc("GET /api/prompts", s.prompts)
 	m.HandleFunc("PUT /api/prompts", s.savePrompts)
+	m.HandleFunc("PUT /api/content-rules", s.saveContentRules)
 }
 
 // admin admits a listed admin where the config file lets the app change
@@ -169,6 +171,13 @@ type bundleView struct {
 	UsedBy  []string        `json:"used_by"`
 }
 
+// contentView is the content rules from each source; the broker applies
+// both, the stricter limit and every pattern.
+type contentView struct {
+	File *content.Rules `json:"file"`
+	App  *content.Rules `json:"app"`
+}
+
 type accessView struct {
 	Name    string         `json:"name"`
 	Added   bool           `json:"added"` // made in the app
@@ -202,8 +211,10 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		Secrets  []secretView `json:"secrets"`
 		Bundles  []bundleView `json:"bundles"`
 		Projects []accessView `json:"projects"`
+		Content  contentView  `json:"content_rules"`
 	}{Admin: admin, Editable: admin && s.Config.SettingsInApp() && c.SettingsInApp(), Pending: s.Settings.Pending(),
-		Secrets: []secretView{}, Bundles: []bundleView{}, Projects: []accessView{}}
+		Secrets: []secretView{}, Bundles: []bundleView{}, Projects: []accessView{},
+		Content: contentView{File: c.ContentRules, App: files.Access.ContentRules}}
 	out.GitHub = s.creatable(s.githubView(r.Context(), fileSecrets, files))
 
 	used, users := s.Settings.SecretsUsed(), secretUsers(c)
@@ -581,6 +592,35 @@ func (s *server) saveBundle(w http.ResponseWriter, r *http.Request) {
 		f.Access.Capabilities[name] = in.Entries
 		return nil
 	}, in.DryRun)
+}
+
+// saveContentRules replaces the app's content rules; empty clears them.
+// They are checked as the broker compiles them before anything is saved.
+func (s *server) saveContentRules(w http.ResponseWriter, r *http.Request) {
+	by, ok := s.editor(w, r)
+	if !ok {
+		return
+	}
+	var in content.Rules
+	if !decodeStrict(w, r, &in) {
+		return
+	}
+	rules := &in
+	if set, err := content.Compile(rules); err != nil {
+		webutil.Error(w, http.StatusBadRequest, err.Error())
+		return
+	} else if set == nil {
+		rules = nil
+	}
+	what := "cleared the commit and pull request rules"
+	if rules != nil {
+		b, _ := json.Marshal(rules)
+		what = "set the commit and pull request rules: " + string(b)
+	}
+	s.apply(w, r, by, what, func(f *config.AppFiles) error {
+		f.Access.ContentRules = rules
+		return nil
+	}, false)
 }
 
 func (s *server) deleteBundle(w http.ResponseWriter, r *http.Request) {

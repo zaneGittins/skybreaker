@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	policy "github.com/zaneGittins/skybreaker/internal/proxy/config"
+	"github.com/zaneGittins/skybreaker/internal/proxy/content"
 	"github.com/zaneGittins/skybreaker/internal/proxy/secrets"
 )
 
@@ -54,6 +55,9 @@ func pathsIn(dataDir string) Paths {
 type Access struct {
 	Capabilities map[string][]*policy.Entry `json:"capabilities,omitempty"`
 	Projects     map[string]*Grant          `json:"projects,omitempty"`
+	// ContentRules are the app's commit and pull request rules, merged
+	// with the file's: the stricter limit and every pattern apply.
+	ContentRules *content.Rules `json:"content_rules,omitempty"`
 }
 
 // Grant is a project's access from one source.
@@ -138,6 +142,10 @@ func checkAppEntry(e *policy.Entry) error {
 // file uses is an error; a grant for a project that no longer exists is
 // dropped, since grants only ever add.
 func (c *Config) mergeAccess(a Access, path string) error {
+	if _, err := content.Compile(a.ContentRules); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	c.appContent = a.ContentRules
 	for _, name := range slices.Sorted(maps.Keys(a.Capabilities)) {
 		if _, dup := c.Capabilities[name]; dup {
 			return fmt.Errorf("%s: bundle %q is already in the config file", path, name)
@@ -174,6 +182,15 @@ func (c *Config) mergeAccess(a Access, path string) error {
 		p.Allow = append(slices.Clone(p.Allow), g.Allow...)
 	}
 	return nil
+}
+
+// contentRules are the file's and the app's content rules together; nil
+// when neither has any.
+func (c *Config) contentRules() *content.Rules {
+	if c.ContentRules == nil && c.appContent == nil {
+		return nil
+	}
+	return content.Merge(c.ContentRules, c.appContent)
 }
 
 // FromFile is a project's access as the config file gives it, before the

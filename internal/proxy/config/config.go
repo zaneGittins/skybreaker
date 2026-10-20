@@ -21,6 +21,7 @@ import (
 
 	"github.com/zaneGittins/skybreaker/internal/configfile"
 	"github.com/zaneGittins/skybreaker/internal/names"
+	"github.com/zaneGittins/skybreaker/internal/proxy/content"
 	"github.com/zaneGittins/skybreaker/internal/proxy/k8s"
 	"github.com/zaneGittins/skybreaker/internal/proxy/policy"
 	"github.com/zaneGittins/skybreaker/internal/proxy/secrets"
@@ -36,8 +37,12 @@ const (
 type Config struct {
 	Projects     map[string]*Project `json:"projects" yaml:"projects"`
 	Capabilities map[string][]*Entry `json:"capabilities" yaml:"capabilities"`
+	// ContentRules apply to every project: to each commit pushed and each
+	// pull request opened or edited through an inspected host.
+	ContentRules *content.Rules `json:"content_rules,omitempty" yaml:"content_rules,omitempty"`
 
 	resolved map[string]*ProjectPolicy
+	content  *content.Set
 }
 
 type Project struct {
@@ -158,9 +163,12 @@ func (c *Config) Project(name string) (*ProjectPolicy, bool) {
 
 func (c *Config) ProjectNames() []string { return slices.Sorted(maps.Keys(c.resolved)) }
 
-// New compiles projects and the capabilities they name.
-func New(projects map[string]*Project, capabilities map[string][]*Entry) (*Config, error) {
-	c := &Config{Projects: projects, Capabilities: capabilities}
+// Content is the compiled content rules; nil when there are none.
+func (c *Config) Content() *content.Set { return c.content }
+
+// New compiles projects, the capabilities they name, and the content rules.
+func New(projects map[string]*Project, capabilities map[string][]*Entry, rules *content.Rules) (*Config, error) {
+	c := &Config{Projects: projects, Capabilities: capabilities, ContentRules: rules}
 	if err := c.resolve(); err != nil {
 		return nil, err
 	}
@@ -205,6 +213,11 @@ func normHost(h string) string { return strings.TrimSuffix(strings.ToLower(h), "
 func (c *Config) resolve() error {
 	var errs []error
 	bad := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
+
+	var err error
+	if c.content, err = content.Compile(c.ContentRules); err != nil {
+		errs = append(errs, err)
+	}
 
 	// Check every capability on its own, against a stand-in project, so a
 	// mistake in one no project uses yet still fails here.

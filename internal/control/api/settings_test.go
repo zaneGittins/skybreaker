@@ -283,6 +283,7 @@ func TestSettingsNeedAnAdmin(t *testing.T) {
 		{"PUT", "/api/bundles/a", `{"entries":[]}`},
 		{"DELETE", "/api/bundles/a", ""},
 		{"PUT", "/api/projects/orbit/access", `{}`},
+		{"PUT", "/api/content-rules", `{}`},
 		{"POST", "/api/github-app/manifest", `{}`},
 		{"POST", "/api/projects", `{"name":"comet","repo":"a/b","harnesses":["claude"]}`},
 	} {
@@ -546,5 +547,56 @@ func TestPromptsAPI(t *testing.T) {
 	}
 	if code, _ := f.do(t, "PUT", "/api/prompts", `{"prompts":[]}`, nil); code != 403 {
 		t.Errorf("kim saved: %d", code)
+	}
+}
+
+func TestContentRulesAPI(t *testing.T) {
+	s := &fakeSettings{}
+	f := newFixture(t, you, withSettings(t, s, `"content_rules": {"commit": {"max_subject": 72}},`))
+	rules := `{"commit":{"max_subject":50,"forbid":["(?im)^co-authored-by:.*claude"]},"pull_request":{"max_title":60}}`
+	if code, out := f.do(t, "PUT", "/api/content-rules", rules, nil); code != 200 || !strings.Contains(out, `"restart":"now"`) {
+		t.Fatalf("save: %d %s", code, out)
+	}
+	if len(s.log) != 1 || !strings.Contains(s.log[0], "set the commit and pull request rules") {
+		t.Fatalf("audit %q", s.log)
+	}
+	var v struct {
+		Content struct {
+			File, App *struct {
+				Commit *struct {
+					MaxSubject int      `json:"max_subject"`
+					Forbid     []string `json:"forbid"`
+				} `json:"commit"`
+			}
+		} `json:"content_rules"`
+	}
+	_, out := f.do(t, "GET", "/api/settings", "", nil)
+	if json.Unmarshal([]byte(out), &v); v.Content.File == nil || v.Content.File.Commit.MaxSubject != 72 || v.Content.App == nil || v.Content.App.Commit.MaxSubject != 50 {
+		t.Fatalf("view: %s", out)
+	}
+	// The broker gets both, the stricter limit winning.
+	c, _, err := s.Saved()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Policy.Content().CheckCommit(strings.Repeat("x", 60)); len(got) != 1 || !strings.Contains(got[0], "limit is 50") {
+		t.Fatalf("merged rules: %q", got)
+	}
+	for name, body := range map[string]string{
+		"bad pattern":   `{"commit":{"forbid":["("]}}`,
+		"unknown field": `{"commit":{"max_lines":3}}`,
+		"negative":      `{"pull_request":{"max_body":-1}}`,
+	} {
+		if code, _ := f.do(t, "PUT", "/api/content-rules", body, nil); code != http.StatusBadRequest {
+			t.Errorf("%s: %d", name, code)
+		}
+	}
+	// Empty clears the app's rules; the file's stay.
+	if code, out := f.do(t, "PUT", "/api/content-rules", `{"commit":{}}`, nil); code != 200 {
+		t.Fatalf("clear: %d %s", code, out)
+	}
+	c, files, _ := s.Saved()
+	if files.Access.ContentRules != nil || !c.Policy.Content().Commits() {
+		t.Fatalf("after clearing: app %+v", files.Access.ContentRules)
 	}
 }
