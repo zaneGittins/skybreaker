@@ -330,8 +330,11 @@ details.earlier .row-list { margin-top: 4px; }
   .chat-page { --chat-top: 0px; }
   :root { --term-top: 0px; }
 
-  .page { margin: 0; padding: 44px 56px 72px; }
-  .page-head h1, .p-name h1 { font-size: 40px; }
+  /* One grid for every page: the same left edge, top and width. */
+  .page, .wrap { max-width: 1180px; margin: 0; padding: 44px 56px 72px; }
+  .wrap.settings { max-width: 976px; }
+  .page.tab-board > :not(.board-view) { max-width: calc(1180px - 112px); }
+  .page-head h1, .p-name h1, .inbox-head h1 { font-size: 40px; line-height: 1.05; letter-spacing: -0.02em; }
 
   .home { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 48px; align-items: start; }
   .home-rail { display: flex; flex-direction: column; gap: 16px; padding-top: 96px; position: sticky; top: 0; }

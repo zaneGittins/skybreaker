@@ -414,6 +414,12 @@ function foldChat(c, e) {
     case 'ask': {
       const r = add({ type: 'ask', id: e.id, ask: e.ask, state: 'open' });
       c.asks.set(e.id, r.added);
+      // The tool an approval is for waits on it, rather than running.
+      const tool = e.ask?.tool_id && c.byId.get(e.ask.tool_id);
+      if (tool?.type === 'tool') {
+        tool.waiting = e.id;
+        r.changed = tool.parent ? c.byId.get(tool.parent) || tool : tool;
+      }
       return r;
     }
     case 'answered': {
@@ -421,6 +427,11 @@ function foldChat(c, e) {
       const it = c.byId.get(e.id);
       if (!it) return { changed: null };
       it.state = e.text || 'answered';
+      const tool = it.ask?.tool_id && c.byId.get(it.ask.tool_id);
+      if (tool?.waiting === e.id) {
+        delete tool.waiting;
+        return { changed: it, also: tool.parent ? c.byId.get(tool.parent) || tool : tool };
+      }
       return { changed: it };
     }
     case 'turn': {
@@ -523,6 +534,51 @@ function currentModel(models = [], chosen = '', reported = '') {
   return models.find(m => m.default) || null;
 }
 
+// modelName writes a model ID the way people say it: claude-opus-5-5 is
+// Opus 5.5 and gpt-6-sol GPT-6 Sol. A name already written for people
+// stays as it is.
+function modelName(id = '') {
+  const s = String(id).replace(/\[.*\]$/, '').trim();
+  if (!s || /[A-Z ]/.test(s)) return s;
+  const claude = /^claude-(?:(\d+(?:-\d)?)-)?([a-z]+)(?:-(\d+(?:-\d)?))?(?:-\d{8})?$/.exec(s);
+  if (claude && (claude[1] || claude[3])) {
+    const ver = (claude[3] || claude[1]).replace('-', '.');
+    return claude[2][0].toUpperCase() + claude[2].slice(1) + ' ' + ver;
+  }
+  const gpt = /^gpt-([\d.]+)(?:-(.+))?$/.exec(s);
+  if (gpt) return 'GPT-' + gpt[1] + (gpt[2] ? ' ' + gpt[2].split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' ') : '');
+  return s;
+}
+
+// modelLabel is how a chat names its model. A harness's default comes as
+// "Default (recommended)": the model it stands for is in its description
+// or what it resolves to.
+function modelLabel(m) {
+  if (!m) return '';
+  const name = String(m.name || m.id || '').replace(/\s*\((recommended|default)\)\s*$/i, '').trim();
+  if (m.default || /^default$/i.test(name)) {
+    const lead = String(m.description || '').split(' · ')[0].trim();
+    if (lead && lead.length <= 24 && !/[.:]$/.test(lead)) return lead;
+    if (m.resolved) return modelName(m.resolved);
+  }
+  return modelName(name);
+}
+
+// splitTarget cuts a request's target where a long one may be shortened,
+// so its end, the part that says what it does, always shows.
+function splitTarget(t = '') {
+  const s = String(t);
+  const cut = s.lastIndexOf('/', s.length - 2);
+  if (s.length <= 40 || cut < 0) return [s, ''];
+  let at = cut;
+  for (let i = 0; i < 2; i++) {
+    const prev = s.lastIndexOf('/', at - 1);
+    if (prev < 0 || s.length - prev > 28) break;
+    at = prev;
+  }
+  return [s.slice(0, at), s.slice(at)];
+}
+
 // contextUse says how full a chat's context window is, or null until the
 // harness has given the window.
 function contextUse(info) {
@@ -596,4 +652,4 @@ function agentActivity(it) {
   return it.children?.length ? 'Thinking' : 'Starting';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens };

@@ -636,10 +636,15 @@ func (a *App) review(ctx context.Context, project, defaultBranch, dir string) (R
 		}
 		if mb, err := git("merge-base", ref, "HEAD"); err == nil && strings.TrimSpace(mb) != "" {
 			base = strings.TrimSpace(mb)
-			if ref != "@{upstream}" {
-				r.Base = ref
-			} else {
+			r.Base = ref
+			switch ref {
+			case "@{upstream}":
 				r.Base = "upstream"
+			case "origin/HEAD":
+				// origin/HEAD stands for the remote's default branch: say which.
+				if b, err := git("rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil && strings.TrimSpace(b) != "" && strings.TrimSpace(b) != "origin/HEAD" {
+					r.Base = strings.TrimSpace(b)
+				}
 			}
 			break
 		}

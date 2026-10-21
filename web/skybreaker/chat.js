@@ -9,6 +9,32 @@ const HARNESS_LABEL = { claude: 'Claude', codex: 'Codex', shell: 'Shell', pi: 'p
 const harnessLabel = h => HARNESS_LABEL[h] || h;
 const chatName = s => s.title || `New ${harnessLabel(s.harness)} chat`;
 
+// Each agent's mark, drawn in its own colour wherever it's named: a spark
+// for Claude, a hex for Codex, π for pi, a prompt for the shell.
+const AGENT_MARK = {
+  claude: ['M12 3.5v17', 'M3.5 12h17', 'M6 6l12 12', 'M18 6L6 18'],
+  codex: ['M12 2.8l8 4.6v9.2l-8 4.6-8-4.6V7.4z', 'M9 9.5l2.5 2.5L9 14.5', 'M13 14.5h2.5'],
+  pi: ['M5 7.5h14', 'M9.5 7.5V18', 'M14.5 7.5v8c0 1.5.8 2.5 2.5 2.5'],
+  shell: ['M5 8l4 4-4 4', 'M12 17h7'],
+};
+// agentMark is an agent's avatar: its mark, or its initials if it has none.
+function agentMark(h, cls = '') {
+  return el('span.avatar' + cls + '.h-' + h, { title: harnessLabel(h) }, AGENT_MARK[h] ? svg(AGENT_MARK[h], 'mark') : String(h).slice(0, 2));
+}
+
+// TOOL_WORD names what a tool does, the same for every agent.
+const TOOL_WORD = { command: 'Command', edit: 'Edit', read: 'Read', search: 'Search', web: 'Web', agent: 'Agent', mcp: 'MCP', todo: 'Plan' };
+// toolWord is that word for a tool known only by its harness's name.
+function toolWord(name = '') {
+  const n = String(name);
+  if (/^(bash|shell|exec|exec_command|local_shell|run)$/i.test(n)) return 'Command';
+  if (/^(edit|multiedit|write|apply_patch|notebookedit)$/i.test(n)) return 'Edit';
+  if (/^(webfetch|websearch|web_search)$/i.test(n)) return 'Web';
+  if (/^(read|glob|grep|ls)$/i.test(n)) return 'Read';
+  if (/^mcp__/.test(n)) return 'MCP';
+  return n;
+}
+
 const MODE_INFO = {
   ask: { label: 'Ask first', short: 'Ask', desc: 'Asks before editing files or running commands.' },
   edits: { label: 'Auto-edit', short: 'Edits', desc: 'Edits files freely; asks before other commands.' },
@@ -207,6 +233,7 @@ async function renderChat(seq, d) {
 
   const title = el('span.title');
   const sub = el('span.sub');
+  const mark = el('span.chat-mark');
   const log = el('div.chat-log');
   // The agents chip shows while subagents run, which can outlast the turn;
   // it takes you to the newest.
@@ -227,13 +254,15 @@ async function renderChat(seq, d) {
   const footer = el('div.chat-foot', null, dock, hints, composer, ended);
   const goalBar = el('div.chat-goal', { hidden: true });
   const ring = contextRing();
-  const ringBtn = el('button.icon-btn.bare.ctx-btn', { onclick: e => sessionMenu(e.currentTarget), 'aria-label': 'Context and session' }, ring.node);
+  // The ring is how full the context window is, and says so in figures.
+  const ringPct = el('span.ctx-pct');
+  const ringBtn = el('button.icon-btn.bare.ctx-btn', { onclick: e => sessionMenu(e.currentTarget), 'aria-label': 'Context and session' }, ring.node, ringPct);
 
   const back = () => history.length > 1 ? history.back() : navigate('/');
   const page = el('div.chat-page', null,
     el('div.chat-bar', null,
       el('button.icon-btn.bare', { onclick: back, 'aria-label': 'Back' }, svg(ICON.back)),
-      el('div.chat-title', null, title, sub),
+      mark, el('div.chat-title', null, title, sub),
       el('button.icon-btn.bare', { onclick: () => openReview(session.project, id), 'aria-label': 'Review changes', title: 'Review changes' }, svg(ICON.branch)),
       el('button.icon-btn.bare', { onclick: () => openTerminal(), 'aria-label': 'Open in terminal', title: 'Open in terminal' }, svg(ICON.term)),
       ringBtn),
@@ -246,6 +275,8 @@ async function renderChat(seq, d) {
   window.visualViewport?.addEventListener('scroll', onViewport);
 
   const v = { closed: false, es: null, timer: 0 };
+  // startNode greets a chat with nothing in it yet; the first item replaces it.
+  let startNode = null;
   state.chat = v;
   v.close = () => {
     v.closed = true;
@@ -266,14 +297,26 @@ async function renderChat(seq, d) {
     goalBar.hidden = !session.goal;
     goalBar.replaceChildren(svg(ICON.flag), el('span.goal-text', null, session.goal || ''),
       el('button.icon-btn.bare.sm', { type: 'button', 'aria-label': 'Unpin the goal', title: 'Unpin the goal', onclick: () => runCommand({ cmd: 'goal', arg: '' }) }, svg(ICON.x)));
-    const model = chatModel();
-    sub.textContent = [harnessLabel(session.harness), project.name, model && (model.name || model.id)].filter(Boolean).join(' · ');
-    if (session.worktree) sub.append(el('span.sub-branch', { title: session.worktree_gone ? 'Its copy of the repository was tidied away; the branch stays' : session.worktree }, svg(ICON.branch), session.branch || 'its own branch'));
+    // Who, on what, where: agent, model, project, branch. The same on a
+    // phone and a desktop; the model opens the model menu.
+    mark.replaceChildren(agentMark(session.harness, '.sm'));
+    const model = modelLabel(chatModel());
+    const dot = () => el('span.sep', null, '·');
+    const models = session.status === 'running' && chat.info.models?.length;
+    sub.replaceChildren();
+    append(sub, [
+      el('span.sub-agent', null, harnessLabel(session.harness)),
+      model ? [dot(), models ? el('button.sub-model', { type: 'button', title: 'Change the model', onclick: e => modelMenu(e.currentTarget) }, model) : el('span.sub-model', null, model)] : null,
+      dot(), el('span.proj.tint-' + (project.tint ?? 0), null, el('span.pdot'), project.name),
+      dot(), session.worktree
+        ? el('span.sub-branch', { title: session.worktree_gone ? 'Its copy of the repository was tidied away; the branch stays' : 'Its own branch, in its own copy of the repository' }, svg(ICON.branch), el('span.bname', null, session.branch || 'its own branch'))
+        : el('span.sub-branch', { title: 'Works in the project\'s shared workspace' }, svg(ICON.branch), el('span.bname', null, 'workspace'))]);
     const m = MODE_INFO[session.perm_mode] || MODE_INFO.ask;
     modeBtn.replaceChildren(svg(ICON.shield), el('span', null, m.short));
     modeBtn.title = m.label + ': ' + m.desc;
     const use = contextUse(chat.info);
     ring.set(use);
+    ringPct.textContent = use?.pct ? use.pct + '%' : '';
     ringBtn.title = use ? `Context ${use.pct}% used: ${fmtTokens(use.used)} of ${fmtTokens(use.window)} tokens` : 'Context and session';
     const over = session.status !== 'running';
     composer.hidden = over;
@@ -358,6 +401,8 @@ async function renderChat(seq, d) {
       place(r.added, n);
     }
     if (r.changed && nodes.has(r.changed.id)) redraw(r.changed);
+    if (r.also && nodes.has(r.also.id)) redraw(r.also);
+    if (r.added && startNode) { startNode.remove(); startNode = null }
     if (e.kind === 'info') head();
     if (e.kind === 'turn' && e.turn?.state !== 'working') { markSeen(); v.refreshMeta() }
     if (e.kind === 'tool' && e.tool?.kind === 'agent' && e.tool.status !== 'running' && !chat.working) { markSeen(); v.refreshMeta() }
@@ -401,9 +446,13 @@ async function renderChat(seq, d) {
 
   // --- composer ---
   const grow = () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 180) + 'px' };
+  // A question with one part is answered here, in your own words; one with
+  // several has a field per part on its card, so this one steps aside.
+  const oneQuestion = ask => ask?.ask.kind === 'question' && (ask.ask.questions || []).length === 1 && !ask.ask.questions[0].multi;
   const syncComposer = () => {
     const ask = [...chat.asks.values()][0];
-    input.placeholder = ask ? 'Or tell it what to do instead…' : chat.working ? 'Add to what it\'s doing…' : `Message ${harnessLabel(session.harness)}`;
+    composer.hidden = session.status !== 'running' || (ask?.ask.kind === 'question' && !oneQuestion(ask));
+    input.placeholder = oneQuestion(ask) ? 'Or answer in your own words…' : ask ? 'Or tell it what to do instead…' : chat.working ? 'Add to what it\'s doing…' : `Message ${harnessLabel(session.harness)}`;
     const stop = chat.working && !input.value.trim() && !ask;
     sendBtn.classList.toggle('stop', stop);
     sendBtn.setAttribute('aria-label', stop ? 'Stop' : 'Send');
@@ -521,7 +570,9 @@ async function renderChat(seq, d) {
     sendBtn.disabled = true;
     try {
       const ask = [...chat.asks.values()][0];
-      if (ask && ask.ask.kind === 'permission') {
+      if (oneQuestion(ask)) {
+        await api('POST', `/api/sessions/${id}/answer`, { ask: ask.id, allow: true, answers: { [ask.ask.questions[0].id]: [text] } });
+      } else if (ask && ask.ask.kind === 'permission') {
         // Typing while it waits on an approval says no, and why.
         await api('POST', `/api/sessions/${id}/answer`, { ask: ask.id, allow: false, message: text });
       } else {
@@ -624,13 +675,15 @@ async function renderChat(seq, d) {
 
   function toolLine(it) {
     const t = it.tool;
-    const running = t.status === 'running';
-    const verb = {
+    const waiting = t.status === 'running' && !!it.waiting && chat.asks.has(it.waiting);
+    const running = t.status === 'running' && !waiting;
+    const verb = waiting ? { command: 'Run', edit: 'Edit', read: 'Read', search: 'Search', web: 'Fetch' }[t.kind] || t.name : {
       command: running ? 'Running' : 'Ran', edit: running ? 'Editing' : 'Edited', read: running ? 'Reading' : 'Read',
       search: running ? 'Searching' : 'Searched', web: running ? 'Fetching' : 'Fetched', agent: 'Agent', todo: 'Updated the plan', mcp: t.name, other: t.name,
     }[t.kind] || t.name;
     const agent = t.kind === 'agent';
-    const status = running ? el('span.spinner')
+    const status = waiting ? el('span.tstat.wait', null, svg(ICON.shield), 'Needs approval')
+      : running ? el('span.spinner')
       : t.status === 'failed' ? el('span.tstat.bad', { title: 'Failed' }, svg(ICON.x))
         : t.status === 'declined' ? el('span.tstat.muted', null, agent ? 'stopped' : 'declined') : null;
     const n = it.children?.length;
@@ -667,7 +720,7 @@ async function renderChat(seq, d) {
     else if (t.input && t.kind !== 'read' && t.kind !== 'search') body = el('pre.tout', null, toolInput(t.input));
     if (it.children?.length) body = el('div.tchildren', null, it.children.map(c => el('div.tool.child.' + c.tool.status, null, el('div.tline', null, toolLine(c)))),
       t.kind === 'agent' && t.output ? el('div.tagent-out', null, markdown(t.output)) : null);
-    const cls = 'tool.' + t.status + (t.kind === 'agent' ? '.agent' : '');
+    const cls = 'tool.' + (it.waiting && t.status === 'running' && chat.asks.has(it.waiting) ? 'waiting' : t.status) + (t.kind === 'agent' ? '.agent' : '');
     if (!body) return el('div.' + cls, null, el('div.tline', null, toolLine(it)));
     return el('details.' + cls, { open: (t.status === 'failed' && t.kind === 'command') || openAgents.has(it.id) ? true : null, ontoggle: t.kind === 'agent' ? e => { if (e.currentTarget.open) openAgents.add(it.id); else openAgents.delete(it.id) } : null },
       el('summary.tline', null, toolLine(it), svg(ICON.chevron, 'chev')), body);
@@ -722,10 +775,14 @@ async function renderChat(seq, d) {
     return el('div.show-card.pv-card', null, head, caption, el('div.pv-card-body', null, open, el('span.pv-card-addr', null, url ? url.replace(/^https?:\/\//, '') : 'No address')));
   }
 
+  // askLine is what became of an ask. An open one is the dock's to show.
   function askLine(it) {
-    const how = { open: 'Waiting for you', allowed: 'Allowed', denied: 'Denied', answered: 'Answered', withdrawn: 'No longer needed' }[it.state] || it.state;
-    return el('div.ask-line.' + it.state, null, svg(it.state === 'denied' ? ICON.x : it.state === 'open' ? ICON.shield : ICON.check),
-      el('span', null, how + ': '), el('span.mono', null, reveal(it.ask.title)));
+    if (it.state === 'open') return el('div.ask-line.open', { hidden: true });
+    const how = { allowed: 'Allowed', denied: 'Denied', answered: 'Answered', withdrawn: 'No longer needed' }[it.state] || it.state;
+    const q = it.ask.kind === 'question';
+    const what = q ? it.ask.questions?.[0]?.question || it.ask.title : it.ask.title;
+    return el('div.ask-line.' + it.state, null, svg(it.state === 'denied' ? ICON.x : it.state === 'withdrawn' ? ICON.shield : ICON.check),
+      el('span', null, how + ': '), el('span' + (q ? '' : '.mono'), null, reveal(what)));
   }
 
   function errorCard(it) {
@@ -753,7 +810,7 @@ async function renderChat(seq, d) {
     if (ask) dock.replaceChildren(ask.ask.kind === 'question' ? questionCard(ask) : permissionCard(ask, chat.asks.size));
     else if (chat.login) dock.replaceChildren(loginCard(chat.login));
     else if (req) dock.replaceChildren(requestCard(req, project.tint, { dock: true }));
-    else dock.replaceChildren();
+    else leave([...dock.children].filter(n => !n.classList.contains('leaving')), 160);
   }
   v.project = session.project;
   v.refreshRequests = debounce(async () => {
@@ -774,9 +831,12 @@ async function renderChat(seq, d) {
     const a = ask.ask;
     const detail = a.detail || '';
     const isDiff = detail.startsWith('--- ');
+    // The tool's kind, as the chat names it, else its harness's name made plain.
+    const tool = a.tool_id && chat.byId.get(a.tool_id);
+    const word = tool?.type === 'tool' && TOOL_WORD[tool.tool.kind] || toolWord(a.tool);
     return el('div.dock-card.ask', null,
       el('div.dc-head', null, svg(ICON.shield), el('span.dc-kicker', null, n > 1 ? `Approval · 1 of ${n}` : 'Approval'), el('span.grow'),
-        a.tool ? el('span.dc-tool', null, a.tool) : null),
+        word ? el('span.dc-tool', null, word) : null),
       el('div.dc-title', null, reveal(a.title)),
       a.reason ? el('div.dc-reason', null, reveal(a.reason)) : null,
       detail && detail !== a.title.replace(/^Run /, '') ? (isDiff ? el('div.dc-detail', null, diffView(detail, { open: 1, limit: 200 })) : el('pre.dc-detail', null, reveal(detail))) : null,
@@ -791,6 +851,7 @@ async function renderChat(seq, d) {
     const picks = new Map(qs.map(q => [q.id, new Set()]));
     const other = new Map();
     const single = qs.length === 1 && !qs[0].multi;
+    // One question takes your own words in the composer; several, here.
     const submitAll = () => {
       const answers = {};
       for (const q of qs) {
@@ -818,16 +879,19 @@ async function renderChat(seq, d) {
           }, el('b', null, reveal(o.label)), o.description ? el('span', null, reveal(o.description)) : null);
           opts.append(b);
         }
-        const free = el('input.input.q-other', { placeholder: 'Something else…', 'aria-label': 'Your own answer' });
-        other.set(q.id, free);
-        free.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submitAll() } });
+        const free = single ? null : el('input.input.q-other', { placeholder: 'Something else…', 'aria-label': 'Your own answer' });
+        if (free) {
+          other.set(q.id, free);
+          free.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submitAll() } });
+        }
         return el('div.q', null,
           q.header ? el('span.q-head', null, reveal(q.header)) : null,
           el('div.q-text', null, reveal(q.question)), opts, free);
       }),
-      el('div.dc-acts', null,
+      // One question answers with a tap, or in the composer.
+      el('div.dc-acts' + (single ? '.single' : ''), null,
         el('button.btn.ghost', { type: 'button', onclick: () => answer(ask, { allow: false }) }, 'Skip'),
-        el('button.btn.primary', { type: 'button', onclick: submitAll }, svg(ICON.check), 'Answer')));
+        single ? null : el('button.btn.primary', { type: 'button', onclick: submitAll }, svg(ICON.check), 'Answer')));
   }
 
   function loginCard(l) {
@@ -899,9 +963,36 @@ async function renderChat(seq, d) {
     node.classList.add('flash');
   };
 
+  // --- the start: who this is, and the board's next work to begin on ---
+  const drawStart = async () => {
+    if (v.closed || chat.items.length || session.status !== 'running') return;
+    let next = [];
+    try {
+      const b = await api('GET', `/api/projects/${encodeURIComponent(project.name)}/board`);
+      next = b.items.filter(i => i.status === 'todo').sort((x, y) => y.priority - x.priority).slice(0, 3);
+    } catch { }
+    if (v.closed || chat.items.length) return;
+    const begin = it => {
+      input.value = `Work on ${it.ref}: ${it.title}`;
+      grow();
+      syncComposer();
+      saveDraft();
+      input.focus();
+    };
+    startNode = el('div.chat-start', null,
+      agentMark(session.harness, '.lg'),
+      el('h2', null, `${harnessLabel(session.harness)} in ${project.name}`),
+      el('p', null, next.length ? 'Ask it anything, or start on what\'s next on the board.' : 'Ask it anything.'),
+      next.length ? el('div.start-items', null, next.map(it => el('button.start-item', { type: 'button', onclick: () => begin(it) },
+        el('span.ref', null, it.ref), el('span.start-title', null, it.title),
+        it.priority >= 2 ? el('span.prio-chip.p' + it.priority, null, PRIORITIES[it.priority]) : null))) : null);
+    log.before(startNode);
+  };
+
   // --- go ---
   head();
   connect();
+  setTimeout(drawStart, 500);
   markSeen();
   v.timer = setInterval(drawWorking, 1000);
   if (!coarse()) input.focus({ preventScroll: true });
@@ -939,7 +1030,8 @@ function menu(anchor, items) {
 }
 
 function closeMenu() {
-  document.querySelectorAll('.menu, .menu-shade').forEach(n => n.remove());
+  const going = [...document.querySelectorAll('.menu:not(.leaving), .menu-shade:not(.leaving)')];
+  if (going.length) leave(going, 120);
 }
 
 // --- review ---------------------------------------------------------------------

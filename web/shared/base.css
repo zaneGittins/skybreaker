@@ -124,6 +124,9 @@
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }
+/* A page keeps its width whether or not it scrolls, so moving between tabs
+   never shifts it sideways. Chats and terminals fill the screen instead. */
+html:not(:has(> body.term-mode, > body.chat-mode)) { scrollbar-gutter: stable; }
 body {
   margin: 0;
   min-height: 100dvh;
@@ -244,6 +247,7 @@ h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; }
 .toast button { border: 0; background: none; color: inherit; font-weight: 700; padding: 0; text-decoration: underline; text-underline-offset: 3px; }
 @keyframes flash { 0% { border-color: var(--sun); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sun) 40%, transparent); } 100% { } }
 @keyframes fade { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
 @keyframes slide-in { from { transform: translateX(40px); opacity: 0; } }
 @keyframes slide-up { from { transform: translateY(60px); opacity: .4; } }
 @keyframes pop { from { transform: translateX(-50%) scale(.96); opacity: 0; } }

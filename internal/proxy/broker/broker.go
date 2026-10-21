@@ -178,7 +178,7 @@ func (b *Broker) RevokeProject(_ context.Context, project string) error {
 	n, err := b.sessions.RevokeProject(project)
 	b.revoked(project)
 	if n > 0 {
-		b.audit.Log(audit.Entry{Project: project, Decision: "revoke", Reason: fmt.Sprintf("%d sessions", n)})
+		b.audit.Log(audit.Entry{Project: project, Decision: "revoke", Reason: countSessions(n)})
 	}
 	return err
 }
@@ -284,7 +284,7 @@ func (b *Broker) RevokeAll(by string) (int, error) {
 		b.audit.Log(audit.Entry{Sender: by, By: by, Decision: "revoke", Reason: fmt.Sprintf("kill switch: %d sessions revoked in memory but not saved: %v", n, err)})
 		return n, fmt.Errorf("revoked %d now, but not saved: a restart would restore them (%w)", n, err)
 	}
-	b.audit.Log(audit.Entry{Sender: by, By: by, Decision: "revoke", Reason: fmt.Sprintf("kill switch: %d sessions", n)})
+	b.audit.Log(audit.Entry{Sender: by, By: by, Decision: "revoke", Reason: "kill switch: " + countSessions(n)})
 	return n, nil
 }
 
@@ -320,4 +320,12 @@ func notifyApprovals(ctx context.Context, s *approval.Store, n notify.Notifier, 
 			done()
 		}
 	}
+}
+
+// countSessions counts revoked sessions for the audit log: 1 session, 2 sessions.
+func countSessions(n int) string {
+	if n == 1 {
+		return "1 session"
+	}
+	return fmt.Sprintf("%d sessions", n)
 }

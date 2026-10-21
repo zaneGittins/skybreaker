@@ -416,7 +416,7 @@ func (m *Manager) emit(r *run, e Event) {
 	switch e.Kind {
 	case KindAsk:
 		r.asks[e.ID] = e.Ask.Title
-		m.setState(r, store.ChatWaiting, e.Ask.Title, nil)
+		m.setState(r, store.ChatWaiting, waitNote(e.Ask), nil)
 	case KindAnswered:
 		delete(r.asks, e.ID)
 		switch {
@@ -517,6 +517,18 @@ func (m *Manager) settle(r *run, turnEnded bool) {
 }
 
 // setState records a session's state (empty keeps it) and tells OnChange.
+// waitNote is what the inbox says a chat waits on: an approval and for
+// what, or the question it asks.
+func waitNote(a *Ask) string {
+	if a.Kind == AskQuestion {
+		if len(a.Questions) > 0 && a.Questions[0].Question != "" {
+			return clip("Question: "+a.Questions[0].Question, 200)
+		}
+		return "A question for you"
+	}
+	return clip("Needs approval: "+a.Title, 200)
+}
+
 func (m *Manager) setState(r *run, state, note string, more func(*store.Session)) {
 	var before, after store.Session
 	err := m.c.Sessions.UpdateSession(r.id, func(x *store.Session) {

@@ -10,8 +10,7 @@ const state = { meta: null, route: null, seq: 0, timers: [], term: null, chat: n
 
 function navigate(path) {
   if (location.pathname + location.search !== path) history.pushState(null, '', path);
-  state.moved = true;
-  go();
+  moveTo();
 }
 
 document.addEventListener('click', e => {
@@ -20,7 +19,25 @@ document.addEventListener('click', e => {
   e.preventDefault();
   navigate(a.getAttribute('href'));
 });
-window.addEventListener('popstate', () => { state.moved = true; go() });
+window.addEventListener('popstate', () => moveTo());
+
+// depth is how far in a page is: the inbox, then a project or a list, then
+// a chat or a run.
+const depth = r => !r ? 0 : r.name === 'home' ? 0 : r.name === 'session' || r.name === 'run' ? 2 : 1;
+
+// moveTo shows the page at the address now in the bar. On a phone, going
+// deeper slides the new page in from the right and coming back from the
+// left, the old page holding until the new one is drawn; elsewhere, and
+// between pages at one depth, the new page fades in.
+function moveTo() {
+  const from = depth(state.route), to = depth(route(location.pathname));
+  const dir = to > from ? 'forward' : to < from ? 'back' : '';
+  const slide = dir && document.startViewTransition && matchMedia('(max-width: 1023px)').matches && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  state.moved = !slide;
+  if (!slide) return go();
+  document.documentElement.dataset.nav = dir;
+  document.startViewTransition(() => go()).finished.finally(() => { delete document.documentElement.dataset.nav });
+}
 
 // enter fades a new page in. Opacity alone: it composites cheaply, and a
 // transform would carry the page's fixed buttons with it. Live refreshes
@@ -79,7 +96,7 @@ async function go() {
 // then waits rather than wiping what they were doing.
 function busy() {
   const a = document.activeElement;
-  return !!$('#sheet-root').firstChild || !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.value);
+  return sheetOpen() || !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.value);
 }
 
 // refresh re-renders the current view in place after a live event, except
@@ -239,7 +256,7 @@ function sessionRow(s, opts = {}) {
   const tone = opts.pending ? 'wait' : t.tone;
   const tint = CHAT_COLORS.includes(s.color) ? '.sc-' + s.color : '';
   return el('a.srow.srow-open.tone-' + tone + tint, { href: '/s/' + s.id, 'data-link': true },
-    el('span.avatar.sm.h-' + s.harness, { title: s.harness }, s.harness.slice(0, 2)),
+    agentMark(s.harness, '.sm'),
     el('div.who', null,
       el('div.title', null, s.mode === 'chat' ? chatName(s) : sessionName(s)),
       el('div.meta', null,
@@ -271,9 +288,9 @@ function newSessionSheet(projects) {
   draw();
   $('#sheet-root').replaceChildren(
     el('div.backdrop', { onclick: closeSheet }),
-    el('div.picker', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New session' },
+    el('div.picker', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New chat' },
       el('div.picker-grip'),
-      el('div.picker-head', null, el('h2', null, 'New session')),
+      el('div.picker-head', null, el('h2', null, 'New chat')),
       chips, list, ownBranchBox(),
       el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Cancel')));
   $('.pick', list)?.focus({ preventScroll: true });
@@ -291,7 +308,7 @@ function approvalCard(a, tint) {
     } catch (e) { toast(e.message, 'error') }
   };
   return el('div.approval.tint-' + (tint ?? 0), null,
-    el('div.head', null, el('b', null, a.tool || 'Tool'), el('span.muted', null, 'in'), el('b', null, a.project),
+    el('div.head', null, el('b', null, toolWord(a.tool) || 'Tool'), el('span.muted', null, 'in'), el('b', null, a.project),
       a.session ? el('a.mono.muted', { href: '/s/' + a.session, 'data-link': true }, a.session) : null,
       el('span.grow'), el('span.muted', null, ago(a.created))),
     el('pre', null, toolSummary(a.tool, a.input) || toolInput(a.input)),
@@ -391,8 +408,8 @@ async function renderActivity(seq) {
     decided.length && page === 1 ? el('section.inbox-sec', null,
       el('div.sec-head', null, el('h2', null, 'Decided')),
       el('div.row-list', null, decided.map(a => el('div.arow', null,
-        el('span.tag.' + (a.state === 'approved' || a.state === 'used' ? 'ok' : 'bad'), null, a.state),
-        el('span.target.mono', null, a.view?.title || `${a.method} ${a.host}${a.path}`),
+        el('span.tag.' + (a.state === 'approved' || a.state === 'used' ? 'ok' : 'bad'), null, REQUEST_STATE[a.state] || a.state),
+        targetText(a.view?.title || `${a.method} ${a.host}${a.path}`),
         el('span.when', null, [a.decided_by, ago(a.decided || a.created)].filter(Boolean).join(' · ')))))) : null,
     el('section.inbox-sec', { id: 'net-log' },
       el('div.sec-head', null, el('h2', null, 'Network')),
@@ -430,6 +447,15 @@ function activityChart(ch) {
   }));
 }
 
+const REQUEST_STATE = { approved: 'Approved', used: 'Used', denied: 'Denied', expired: 'Expired', pending: 'Waiting' };
+
+// targetText is a request's target on one line: when it's too long, its
+// middle gives way, so the end that says what it does stays in view.
+function targetText(t) {
+  const [head, tail] = splitTarget(t);
+  return el('span.target.mono', { title: t }, el('span.t-head', null, head), tail ? el('span.t-tail', null, tail) : null);
+}
+
 // auditItem is one broker decision; tap it for the details.
 function auditItem(e, tints) {
   const r = auditRow(e);
@@ -437,7 +463,7 @@ function auditItem(e, tints) {
   return el('details.arow.audit-item', null,
     el('summary', null,
       el('span.tag.' + r.tone, null, r.verb),
-      el('span.target.mono', null, r.target),
+      targetText(r.target),
       el('span.when', null, e.project ? el('span.proj.tint-' + (tints[e.project] ?? 0), null, el('span.pdot'), e.project) : null, el('span', null, ago(e.time)))),
     extra.length ? el('div.audit-more', null, extra.map(x => el('div', null, reveal(x)))) : null);
 }
@@ -753,8 +779,8 @@ function harnessPicks(p) {
   const order = [...p.harnesses].sort((a, b) => chat(b) - chat(a));
   return order.map(h =>
     el('button.pick', { type: 'button', onclick: () => start(h) },
-      el('span.avatar.h-' + h, null, h.slice(0, 2)),
-      el('span.pick-text', null, el('b', null, harnessLabel(h)), el('span', null, (HARNESS_INFO[h] || h) + (chat(h) ? '' : ' · terminal'))),
+      agentMark(h),
+      el('span.pick-text', null, el('b', null, harnessLabel(h)), el('span', null, HARNESS_INFO[h] || h)),
       el('span.pick-kind' + (chat(h) ? '.chat' : ''), null, chat(h) ? 'Chat' : 'Terminal'),
       svg(ICON.chevron, 'chev')));
 }
@@ -764,10 +790,10 @@ function pickHarness(p) {
   const list = el('div.picker-list', null, harnessPicks(p));
   $('#sheet-root').replaceChildren(
     el('div.backdrop', { onclick: closeSheet }),
-    el('div.picker', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New session' },
+    el('div.picker', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New chat' },
       el('div.picker-grip'),
       el('div.picker-head', null,
-        el('h2', null, 'New session'),
+        el('h2', null, 'New chat'),
         el('p', null, p.running ? 'in ' + p.name : `in ${p.name} · starts the sandbox first`)),
       list, ownBranchBox(),
       el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Cancel')));
@@ -802,10 +828,10 @@ function endedRow(s) {
   const how = s.status + (s.exit != null ? ` ${s.exit}` : '');
   return el('div.srow', null,
     el('div.srow-open', null,
-      el('span.avatar.sm.h-' + s.harness, { title: s.harness }, s.harness.slice(0, 2)),
+      agentMark(s.harness, '.sm'),
       el('div.who', null,
         el('div.title', null, sessionName(s)),
-        el('div.meta', null, `${how} · ${s.harness} · ${ago(s.ended || s.created)}`))),
+        el('div.meta', null, `${how} · ${harnessLabel(s.harness)} · ${ago(s.ended || s.created)}`))),
     s.screen ? el('a.icon-btn.bare', { href: '/s/' + s.id, 'data-link': true, 'aria-label': 'Last screen', title: 'Last screen' }, svg(ICON.term)) : null,
     s.screen ? el('button.icon-btn.bare', { type: 'button', onclick: close, 'aria-label': 'Drop last screen', title: 'Drop last screen' }, svg(ICON.x)) : null);
 }
@@ -848,11 +874,25 @@ function runsTable(runs) {
 
 // --- sheets -----------------------------------------------------------------
 
+// sheetOpen is whether a sheet or picker is up, not counting one on its
+// way out.
+const sheetOpen = () => [...$('#sheet-root').children].some(n => !n.classList.contains('leaving'));
+
+// closeSheet takes the sheet away the way it came; one opened meanwhile
+// replaces it at once.
 function closeSheet() {
   state.itemSheet = null;
-  if (!$('#sheet-root').firstChild) return;
-  $('#sheet-root').replaceChildren();
+  const going = [...$('#sheet-root').children].filter(n => !n.classList.contains('leaving'));
+  if (!going.length) return;
+  leave(going, 180);
   if (state.stale) refresh();
+}
+
+// leave plays nodes' way out (the .leaving styles), then removes them.
+function leave(nodes, ms) {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { nodes.forEach(n => n.remove()); return }
+  nodes.forEach(n => { n.classList.add('leaving'); n.setAttribute('inert', '') });
+  setTimeout(() => nodes.forEach(n => n.remove()), ms);
 }
 
 document.addEventListener('focusout', () => setTimeout(() => { if (state.stale && !busy()) refresh() }, 0));
@@ -864,7 +904,7 @@ function sheet(title, pre) {
     el('div.sheet', { role: 'dialog', 'aria-label': title }, el('div.sheet-bar', null, el('h2', null, title), el('span.grow'), close), pre));
 }
 
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#sheet-root').firstChild) closeSheet() });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheetOpen()) closeSheet() });
 
 // --- run --------------------------------------------------------------------
 
@@ -1384,7 +1424,7 @@ async function boot() {
   activityBadge();
   $('#new-chat').addEventListener('click', startNewChat);
   addEventListener('keydown', e => {
-    if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) && !document.activeElement?.isContentEditable && !$('#sheet-root').firstChild && state.route?.name !== 'session') {
+    if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) && !document.activeElement?.isContentEditable && !sheetOpen() && state.route?.name !== 'session') {
       e.preventDefault();
       startNewChat();
     }

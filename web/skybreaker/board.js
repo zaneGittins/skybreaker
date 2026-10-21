@@ -56,14 +56,14 @@ function itemCard(it) {
   const meta = [el('span.tchip.t-' + it.type, null, it.type)];
   for (const l of it.labels || []) meta.push(el('span.label', null, '#' + l));
   if (it.note_count) meta.push(el('span.notes', null, svg(ICON.note), String(it.note_count)));
-  return el('button.card' + (it.priority >= 2 ? '.prio-' + it.priority : ''), {
+  return el('button.card', {
     type: 'button', draggable: 'true', 'data-ref': it.ref,
     onclick: () => openItem(it.ref),
     ondragstart: e => { e.dataTransfer.setData('text/plain', it.ref); e.dataTransfer.effectAllowed = 'move'; e.currentTarget.classList.add('dragging') },
     ondragend: e => e.currentTarget.classList.remove('dragging'),
   },
     el('div.card-top', null, el('span.ref', null, it.ref),
-      it.priority >= 2 ? el('span.prio', null, PRIORITIES[it.priority]) : null,
+      it.priority >= 2 ? el('span.prio-chip.p' + it.priority, null, PRIORITIES[it.priority]) : null,
       el('span.grow'), it.assignee ? el('span.who', null, it.assignee) : null),
     el('div.card-title', null, it.title),
     el('div.card-meta', null, meta));

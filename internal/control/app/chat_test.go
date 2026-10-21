@@ -338,6 +338,8 @@ func TestReview(t *testing.T) {
 				return "", errExit
 			case strings.Contains(j, "merge-base origin/HEAD HEAD"):
 				return "abc123\n", nil
+			case strings.Contains(j, "rev-parse --abbrev-ref origin/HEAD"):
+				return "origin/trunk\n", nil
 			case strings.Contains(j, "merge-base"):
 				return "", errExit
 			case strings.Contains(j, "log --format"):
@@ -358,7 +360,7 @@ func TestReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Branch != "feature/x" || r.Base != "origin/HEAD" || r.Clean {
+	if r.Branch != "feature/x" || r.Base != "origin/trunk" || r.Clean {
 		t.Errorf("review = %+v", r)
 	}
 	if len(r.Commits) != 1 || r.Commits[0].Subject != "Add x" {

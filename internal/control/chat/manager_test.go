@@ -233,7 +233,7 @@ func TestManagerAskAndAnswer(t *testing.T) {
 	s := h.session("claude")
 	h.m.Send(context.Background(), s.ID, "build it")
 	waitFor(t, "the ask", func() bool { return h.state(s.ID).State == store.ChatWaiting })
-	if n := h.state(s.ID).Note; n != "Run make" {
+	if n := h.state(s.ID).Note; n != "Needs approval: Run make" {
 		t.Errorf("note = %q", n)
 	}
 	if err := h.m.Answer(context.Background(), s.ID, "nope", Answer{Allow: true}); err == nil {

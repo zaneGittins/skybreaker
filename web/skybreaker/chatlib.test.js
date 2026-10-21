@@ -393,3 +393,48 @@ test('runningAgents: subagents at work, past the turn that started them', () => 
   assert.equal(c.byId.get('a1').since, '2026-10-20T10:01:00Z');
   assert.equal(sessionTone({ mode: 'chat', status: 'running', state: 'working', note: '2 agents working' }).label, '2 agents working');
 });
+
+test('modelName: model IDs the way people say them', () => {
+  const { modelName } = require('./chatlib.js');
+  assert.equal(modelName('claude-opus-5-5'), 'Opus 5.5');
+  assert.equal(modelName('claude-sonnet-4-5-20250929'), 'Sonnet 4.5');
+  assert.equal(modelName('claude-haiku-4'), 'Haiku 4');
+  assert.equal(modelName('claude-opus-5-5[1m]'), 'Opus 5.5');
+  assert.equal(modelName('gpt-6-sol'), 'GPT-6 Sol');
+  assert.equal(modelName('gpt-5.6-luna'), 'GPT-5.6 Luna');
+  assert.equal(modelName('qwen3-coder:30b'), 'qwen3-coder:30b');
+  assert.equal(modelName('Opus 5.5'), 'Opus 5.5');
+});
+
+test('modelLabel: a default says which model it stands for', () => {
+  const { modelLabel } = require('./chatlib.js');
+  assert.equal(modelLabel({ id: 'default', name: 'Default (recommended)', description: 'Opus 5.5 · Best for everyday, complex tasks', resolved: 'claude-opus-5-5', default: true }), 'Opus 5.5');
+  assert.equal(modelLabel({ id: 'default', name: 'Default (recommended)', description: 'Use the default model.', resolved: 'claude-opus-5-5', default: true }), 'Opus 5.5');
+  assert.equal(modelLabel({ id: 'gpt-6-sol', name: 'gpt-6-sol', default: true }), 'GPT-6 Sol');
+  assert.equal(modelLabel({ id: 'sonnet', name: 'Sonnet 5.5' }), 'Sonnet 5.5');
+  assert.equal(modelLabel(null), '');
+});
+
+test('splitTarget: a long target keeps its end', () => {
+  const { splitTarget } = require('./chatlib.js');
+  assert.deepEqual(splitTarget('PUT api.github.com/repos/zaneGittins/skybreaker/pulls/41/merge'), ['PUT api.github.com/repos/zaneGittins/skybreaker', '/pulls/41/merge']);
+  assert.deepEqual(splitTarget('GET example.com/a'), ['GET example.com/a', '']);
+  const [head, tail] = splitTarget('POST api.example.com/v1/projects/very-long-project-name-here/deployments');
+  assert.equal(head + tail, 'POST api.example.com/v1/projects/very-long-project-name-here/deployments');
+  assert.ok(tail.length <= 28 && tail.startsWith('/'));
+});
+
+test('foldChat: a tool waits on its approval, then carries on', () => {
+  const c = newChat();
+  foldChat(c, { seq: 1, kind: 'tool', id: 't1', tool: { kind: 'command', title: 'npm test', status: 'running' } });
+  const r = foldChat(c, { seq: 2, kind: 'ask', id: 'a1', ask: { kind: 'permission', title: 'Run npm test', tool_id: 't1' } });
+  assert.equal(r.added.type, 'ask');
+  assert.equal(r.changed.id, 't1');
+  assert.equal(c.byId.get('t1').waiting, 'a1');
+  const done = foldChat(c, { seq: 3, kind: 'answered', id: 'a1', text: 'allowed' });
+  assert.equal(done.changed.id, 'a1');
+  assert.equal(done.also.id, 't1');
+  assert.equal(c.byId.get('t1').waiting, undefined);
+  // An ask for no known tool changes nothing else.
+  assert.equal(foldChat(c, { seq: 4, kind: 'ask', id: 'a2', ask: { kind: 'question', title: 'A question for you' } }).changed, undefined);
+});
