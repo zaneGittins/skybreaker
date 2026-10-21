@@ -20,6 +20,13 @@ test('route', () => {
   assert.deepEqual(route('/r/r20261017020000abcd'), { name: 'run', id: 'r20261017020000abcd' });
   assert.deepEqual(route('/activity'), { name: 'activity' });
   assert.deepEqual(route('/settings'), { name: 'settings' });
+  assert.deepEqual(route('/settings/prompts'), { name: 'settings', section: 'prompts' });
+  assert.deepEqual(route('/settings/bundles/openai'), { name: 'settings', section: 'bundles', item: 'openai' });
+  assert.deepEqual(route('/settings/bundles/new'), { name: 'settings', section: 'bundles', item: 'new' });
+  assert.deepEqual(route('/settings/access/orbit'), { name: 'settings', section: 'access', item: 'orbit' });
+  assert.deepEqual(route('/settings/nope'), { name: 'notfound' });
+  assert.deepEqual(route('/settings/prompts/x'), { name: 'notfound' });
+  assert.deepEqual(route('/settings/access/Bad%20Name'), { name: 'notfound' });
   assert.deepEqual(route('/activity/x'), { name: 'notfound' });
   assert.deepEqual(route('/p/Bad%20Name'), { name: 'notfound' });
   assert.deepEqual(route('/s/../../etc'), { name: 'notfound' });
@@ -142,17 +149,8 @@ test('dropPosition', () => {
   assert.equal(dropPosition(-1, -1), -1);        // equal neighbours: the server respaces
 });
 
-test('rules as lines', () => {
-  const { rulesToText, rulesFromText, hostsFromText } = require('./lib.js');
-  assert.equal(rulesToText({ methods: ['GET', 'POST'] }), 'GET,POST /** auto');
-  assert.equal(rulesToText({ rules: [{ match: 'GET /repos/{repo}/**', action: 'auto' }, { match: 'DELETE /**', action: 'deny' }] }),
-    'GET /repos/{repo}/** auto\nDELETE /** deny');
-  assert.deepEqual(rulesFromText('GET /repos/** auto\n\n  # a comment\nPUT /x/*/merge   ask\n'),
-    { rules: [{ match: 'GET /repos/** auto'.replace(' auto', ''), action: 'auto' }, { match: 'PUT /x/*/merge', action: 'ask' }] });
-  assert.match(rulesFromText('GET /x allow').error, /line 1/);
-  assert.match(rulesFromText('auto').error, /line 1/);
-  assert.match(rulesFromText('GET auto').error, /line 1/);
-  assert.match(rulesFromText('').error, /at least one/);
+test('hosts from text', () => {
+  const { hostsFromText } = require('./lib.js');
   assert.deepEqual(hostsFromText(' api.openai.com,  eu.api.openai.com\nx.example '), ['api.openai.com', 'eu.api.openai.com', 'x.example']);
   assert.deepEqual(hostsFromText(''), []);
 });

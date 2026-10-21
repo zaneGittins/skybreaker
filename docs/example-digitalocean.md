@@ -12,7 +12,7 @@ In DigitalOcean: **API → Tokens → Generate New Token → Custom Scopes**. Gr
 
 **Settings → Secrets → Add secret.**
 
-![Settings, with Settings and Add secret outlined](img/do-1-secrets.png)
+![Settings, with Settings, Secrets and Add secret numbered](img/do-1-secrets.png)
 
 ![The Add a secret dialog, filled in](img/do-2-add-secret.png)
 
@@ -26,23 +26,18 @@ In DigitalOcean: **API → Tokens → Generate New Token → Custom Scopes**. Gr
 
 **Settings → Bundles → New bundle.**
 
-![The New bundle dialog, with name, host, rules and secret numbered](img/do-4-new-bundle.png)
+![The new bundle, with name, host, rules and credential numbered](img/do-4-new-bundle.png)
 
 1. **Name:** `digitalocean`
-2. **Host:** `api.digitalocean.com`, **Inspected**
-3. **Rules:**
-   ```
-   GET /** auto
-   DELETE /** deny
-   * /** ask
-   ```
-4. **Secret:** `do_token`, as **Authorization: Bearer**
+2. **Host:** `api.digitalocean.com`, **Inspect**
+3. **Requests**, one rule a row (**Add rule** for more): `GET /**` **Allow**, `DELETE /**` **Deny**, and **Any** `/**` **Ask**. The first rule that matches decides.
+4. **Credential:** `do_token`, **as a Bearer token**
 
 **Review → Save.**
 
 ## 4. Grant it to a project
 
-**Settings → Project access → Edit** on the project, tick **digitalocean**, **Review → Save.**
+**Settings → Project access →** the project, tick **digitalocean**, **Review changes → Save.**
 
 ![Project access with digitalocean ticked](img/do-5-project-access.png)
 
