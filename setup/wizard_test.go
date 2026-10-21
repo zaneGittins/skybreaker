@@ -31,21 +31,22 @@ func TestWizardHappyPath(t *testing.T) {
 	if !strings.Contains(w.View(), "Join your tailnet") {
 		t.Fatalf("view:\n%s", w.View())
 	}
-	// The detected login and tailnet are prefilled; only the key is typed.
-	press(w, tea.KeyEnter, tea.KeyEnter, "tskey-auth-abc", tea.KeyEnter)
+	// The detected login and tailnet are prefilled; a machine name and the
+	// key are typed.
+	press(w, tea.KeyEnter, tea.KeyEnter, "skybreaker-2", tea.KeyEnter, "tskey-auth-abc", tea.KeyEnter)
 	if strings.Contains(w.View(), "tskey-auth-abc") {
 		t.Error("auth key echoed")
 	}
 	press(w, "123456", tea.KeyEnter, key, tea.KeyEnter)
 	press(w, "you/orbit", tea.KeyEnter, tea.KeyEnter, tea.KeyEnter, "You", tea.KeyEnter, "you@example.com", tea.KeyEnter)
 	view := w.View()
-	if !strings.Contains(view, "Ready to install") || !strings.Contains(view, "https://skybreaker.tail1234.ts.net") {
+	if !strings.Contains(view, "Ready to install") || !strings.Contains(view, "https://skybreaker-2.tail1234.ts.net") {
 		t.Fatalf("summary:\n%s", view)
 	}
 	press(w, tea.KeyEnter)
 	a := w.Answers()
 	if !w.Confirmed || a.AuthKey != "tskey-auth-abc" || a.AppID != "123456" || a.AppKey != key || a.Repo != "you/orbit" ||
-		a.GitName != "You" || !slices.Equal(a.Harnesses, []string{"claude", "codex"}) {
+		a.GitName != "You" || a.Hostname != "skybreaker-2" || !slices.Equal(a.Harnesses, []string{"claude", "codex"}) {
 		t.Fatalf("answers: %+v", a)
 	}
 	if err := a.Validate(); err != nil {
@@ -55,11 +56,11 @@ func TestWizardHappyPath(t *testing.T) {
 
 func TestWizardStaysOnAPageUntilValid(t *testing.T) {
 	w := NewWizard(Answers{}, readyChecks())
-	press(w, tea.KeyEnter, "you", tea.KeyEnter, "tail1234.ts.net", tea.KeyEnter, "tskey-auth-x", tea.KeyEnter)
+	press(w, tea.KeyEnter, "you", tea.KeyEnter, "tail1234.ts.net", tea.KeyEnter, tea.KeyEnter, "tskey-auth-x", tea.KeyEnter)
 	if v := w.View(); !strings.Contains(v, "Join your tailnet") || !strings.Contains(v, "you@github") {
 		t.Fatalf("moved on with a bad login:\n%s", v)
 	}
-	press(w, tea.KeyShiftTab, tea.KeyShiftTab, clear, "you@github", tea.KeyEnter, tea.KeyEnter, tea.KeyEnter)
+	press(w, tea.KeyShiftTab, tea.KeyShiftTab, tea.KeyShiftTab, clear, "you@github", tea.KeyEnter, tea.KeyEnter, tea.KeyEnter, tea.KeyEnter)
 	if v := w.View(); !strings.Contains(v, "Connect a GitHub App") {
 		t.Fatalf("didn't move on:\n%s", v)
 	}

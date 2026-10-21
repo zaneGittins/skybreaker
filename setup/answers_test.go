@@ -221,6 +221,10 @@ func TestValidate(t *testing.T) {
 		{"email", func(a *Answers) { a.GitEmail = "nope" }},
 		{"name", func(a *Answers) { a.GitName = "a\x1b[31m" }},
 		{"network", func(a *Answers) { a.Block = []string{"192.168.0.0/33"} }},
+		{"machine name", func(a *Answers) { a.Hostname = "Sky Breaker" }},
+		{"machine name", func(a *Answers) { a.Hostname = "-skybreaker" }},
+		{"machine name", func(a *Answers) { a.Hostname = "sky.breaker" }},
+		{"machine name", func(a *Answers) { a.Hostname = strings.Repeat("a", 64) }},
 	} {
 		a := testAnswers(t)
 		c.edit(&a)
@@ -266,5 +270,58 @@ func TestProjectName(t *testing.T) {
 		if got := ProjectName(repo); got != want {
 			t.Errorf("ProjectName(%q) = %q, want %q", repo, got, want)
 		}
+	}
+}
+
+func TestRenderedConfigFitsTheHost(t *testing.T) {
+	// A 2-CPU, 4 GB VM: Docker refuses a container more CPUs than the host
+	// has, so the config's limits must fit it. A second Skybreaker on the
+	// tailnet takes a name of its own, and its address follows.
+	l := testLayout(t)
+	a := testAnswers(t)
+	a.CPUs, a.MemoryGB, a.Hostname = 2, 3, "skybreaker-test"
+	writeConfig(t, a, l)
+	if err := controld.Check(l.Config()); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(l.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sandbox.CPUs != "2" || cfg.Sandbox.Memory != "3g" || cfg.Tailscale.Hostname != "skybreaker-test" || cfg.UIURL != "https://skybreaker-test.tail1234.ts.net" {
+		t.Errorf("cpus %q, memory %q, hostname %q, ui_url %q", cfg.Sandbox.CPUs, cfg.Sandbox.Memory, cfg.Tailscale.Hostname, cfg.UIURL)
+	}
+
+	// Answers from before these existed keep today's defaults.
+	l = testLayout(t)
+	writeConfig(t, testAnswers(t), l)
+	if cfg, err = config.Load(l.Config()); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sandbox.CPUs != "4" || cfg.Sandbox.Memory != "8g" || cfg.Tailscale.Hostname != "skybreaker" {
+		t.Errorf("defaults: cpus %q, memory %q, hostname %q", cfg.Sandbox.CPUs, cfg.Sandbox.Memory, cfg.Tailscale.Hostname)
+	}
+}
+
+func TestFitHost(t *testing.T) {
+	for _, c := range []struct {
+		cpus, memKiB, wantCPUs, wantGB int
+	}{
+		{2, 4012544, 2, 3},   // a 4 GB droplet: some of it is the kernel's
+		{8, 32 << 20, 4, 8},  // a big host keeps the defaults
+		{1, 1 << 20, 1, 1},   // 1 GB
+		{1, 512 << 10, 1, 1}, // never below 1 GB
+		{4, 0, 4, 8},         // memory unknown: the default
+	} {
+		cpus, gb := fitHost(c.cpus, c.memKiB)
+		if cpus != c.wantCPUs || gb != c.wantGB {
+			t.Errorf("fitHost(%d, %d) = %d, %d; want %d, %d", c.cpus, c.memKiB, cpus, gb, c.wantCPUs, c.wantGB)
+		}
+	}
+	if got := memKiB("MemFree: 10 kB\nMemTotal:        4012544 kB\n"); got != 4012544 {
+		t.Errorf("memKiB = %d", got)
+	}
+	if got := memKiB("garbage"); got != 0 {
+		t.Errorf("memKiB(garbage) = %d", got)
 	}
 }

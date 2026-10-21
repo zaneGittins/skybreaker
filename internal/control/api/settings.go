@@ -421,6 +421,8 @@ func (s *server) creatable(v githubView) githubView {
 	if v.CanCreate {
 		if _, err := githubapp.Manifest("x", s.Config.UIURL); err != nil {
 			v.CanCreate, v.Error = false, "set ui_url in the config file to Skybreaker's https address to create the App from here"
+		} else if msg := config.Misnamed(s.Config.UIURL, s.Self); msg != "" {
+			v.CanCreate, v.Error = false, msg
 		}
 	}
 	return v
@@ -771,6 +773,10 @@ func (s *server) githubManifest(w http.ResponseWriter, r *http.Request) {
 	fileSecrets, err := s.Settings.FileSecrets()
 	if err != nil {
 		webutil.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if msg := config.Misnamed(s.Config.UIURL, s.Self); msg != "" {
+		webutil.Error(w, http.StatusConflict, msg)
 		return
 	}
 	if !s.githubView(r.Context(), fileSecrets, files).CanCreate {

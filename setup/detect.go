@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net"
 	"net/netip"
+	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -13,11 +15,35 @@ import (
 // Defaults fills in what the host already knows: the tailnet and your
 // login from a local tailscale, and the LAN from its interfaces.
 func (h *Host) Defaults(ctx context.Context) Answers {
-	a := Answers{Branch: "main", Harnesses: []string{"claude", "codex"}, Image: DefaultImage, Block: LANs()}
+	a := Answers{Branch: "main", Harnesses: []string{"claude", "codex"}, Image: DefaultImage, Block: LANs(), Hostname: "skybreaker"}
+	mem, _ := os.ReadFile(h.MemInfo)
+	a.CPUs, a.MemoryGB = fitHost(runtime.NumCPU(), memKiB(string(mem)))
 	if out, err := h.run(ctx, "tailscale", "status", "--json"); err == nil {
 		a.Tailnet, a.Users = parseTailscaleStatus([]byte(out))
 	}
 	return a
+}
+
+// fitHost is each sandbox's CPU and memory limit on a host with cpus CPUs
+// and memKiB of memory: 4 CPUs and 8 GB, or the whole host if it's
+// smaller. Docker refuses a container more CPUs than the host has.
+func fitHost(cpus, memKiB int) (int, int) {
+	gb := 8
+	if memKiB > 0 {
+		gb = min(8, max(1, memKiB>>20))
+	}
+	return min(4, max(1, cpus)), gb
+}
+
+// memKiB reads MemTotal from /proc/meminfo, or 0.
+func memKiB(meminfo string) int {
+	for _, line := range strings.Split(meminfo, "\n") {
+		if f := strings.Fields(line); len(f) >= 2 && f[0] == "MemTotal:" {
+			n, _ := strconv.Atoi(f[1])
+			return n
+		}
+	}
+	return 0
 }
 
 func parseTailscaleStatus(b []byte) (tailnet string, users []string) {

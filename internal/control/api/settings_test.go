@@ -104,6 +104,7 @@ type settingsView struct {
 		AppID      string             `json:"app_id"`
 		InstallURL string             `json:"install_url"`
 		Lacking    *githubapp.Lacking `json:"lacking"`
+		Error      string             `json:"error"`
 	} `json:"github"`
 	Secrets []struct {
 		Name        string    `json:"name"`
@@ -614,5 +615,26 @@ func TestContentRulesAPI(t *testing.T) {
 	c, files, _ := s.Saved()
 	if files.Access.ContentRules != nil || !c.Policy.Content().Commits() {
 		t.Fatalf("after clearing: app %+v", files.Access.ContentRules)
+	}
+}
+
+func TestGitHubAppNeedsItsOwnName(t *testing.T) {
+	// A second Skybreaker on the tailnet got a name of its own; ui_url
+	// still names the first, so GitHub would send the new App there.
+	s := &fakeSettings{}
+	f := newFixture(t, you, withSettings(t, s, ""), func(d *Deps) { d.Self = "skybreaker-1.example.ts.net" })
+	v := f.settings(t)
+	if v.GitHub.CanCreate || !strings.Contains(v.GitHub.Error, "skybreaker-1.example.ts.net") {
+		t.Fatalf("%+v", v.GitHub)
+	}
+	code, out := f.do(t, "POST", "/api/github-app/manifest", `{"org":""}`, nil)
+	if code != http.StatusConflict || !strings.Contains(string(out), "skybreaker-1.example.ts.net") {
+		t.Fatalf("manifest with the wrong name: %d %s", code, out)
+	}
+
+	// Its own name is fine.
+	f = newFixture(t, you, withSettings(t, &fakeSettings{}, ""), func(d *Deps) { d.Self = "skybreaker.example.ts.net" })
+	if v := f.settings(t); !v.GitHub.CanCreate {
+		t.Fatalf("%+v", v.GitHub)
 	}
 }

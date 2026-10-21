@@ -26,6 +26,7 @@ type Layout struct {
 	Docker string // dockerd's daemon.json
 
 	OSRelease string // os-release, read for the distribution Docker is installed for
+	MemInfo   string // meminfo, read for the sandboxes' memory limit
 }
 
 // DefaultLayout matches the paths in deploy/*.service.
@@ -38,6 +39,7 @@ var DefaultLayout = Layout{
 	Docker: "/etc/docker/daemon.json",
 
 	OSRelease: "/etc/os-release",
+	MemInfo:   "/proc/meminfo",
 }
 
 func (l Layout) Config() string  { return filepath.Join(l.Etc, "skybreaker.yaml") }

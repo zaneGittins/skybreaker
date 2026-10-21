@@ -3,6 +3,7 @@
 package tsnetsrv
 
 import (
+	"context"
 	"errors"
 	"net/netip"
 	"slices"
@@ -57,4 +58,26 @@ func TestLookupPeer(t *testing.T) {
 	if _, err := lookupPeer(st, "ip", "ghost.example.ts.net"); err == nil || errors.Is(err, tsauth.ErrNotTailnet) {
 		t.Fatalf("unknown tailnet name: %v", err)
 	}
+}
+
+// certClient records the certificates asked for.
+type certClient struct {
+	localClient
+	asked []string
+}
+
+func (c *certClient) CertPair(_ context.Context, domain string) ([]byte, []byte, error) {
+	c.asked = append(c.asked, domain)
+	return nil, nil, errors.New("not yet")
+}
+
+func TestWarmFetchesTheCertificate(t *testing.T) {
+	// The first visitor shouldn't wait on the certificate: fetched at start,
+	// a failure is logged and the listener fetches it again on demand.
+	c := &certClient{}
+	warm(context.Background(), c, "skybreaker.tail1234.ts.net")
+	if !slices.Equal(c.asked, []string{"skybreaker.tail1234.ts.net"}) {
+		t.Fatalf("asked %v", c.asked)
+	}
+	var _ tsauth.Named = (*node)(nil)
 }

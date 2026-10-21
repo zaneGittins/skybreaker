@@ -127,7 +127,10 @@ func (h *Host) Install(ctx context.Context, a *Answers, checks []Check) error {
 			return err
 		}
 	}
-	if a != nil && a.AppLater() {
+	if a == nil {
+		return nil
+	}
+	if !h.named(ctx, a) && a.AppLater() {
 		h.Out.Note("Next: create the GitHub App at " + a.UIURL() + "/settings")
 	}
 	return nil
@@ -170,11 +173,41 @@ func (h *Host) joinTailnet(ctx context.Context) error {
 }
 
 // tsnet logs the link every few seconds until the machine is approved, and
-// Skybreaker logs its UI address once it's up (controld.Run).
+// Skybreaker logs its UI address once it's up (controld.Run), and the
+// address the tailnet gave it.
 var (
 	authLinkRe = regexp.MustCompile(`or go to: (https://\S+)`)
 	upLineRe   = regexp.MustCompile(`(?m)^.*skybreaker \S+: UI on `)
+	servedRe   = regexp.MustCompile(`skybreaker: on your tailnet at (https://\S+)`)
 )
+
+// servedURL is where the running Skybreaker says it answers, or "" if it
+// hasn't said.
+func (h *Host) servedURL(ctx context.Context) string {
+	id, err := h.run(ctx, "systemctl", "show", "-p", "InvocationID", "--value", "skybreaker")
+	if err != nil || id == "" {
+		return ""
+	}
+	log, _ := h.run(ctx, "journalctl", "_SYSTEMD_INVOCATION_ID="+id, "--no-pager", "-o", "cat")
+	if m := servedRe.FindAllStringSubmatch(log, -1); m != nil {
+		return m[len(m)-1][1]
+	}
+	return ""
+}
+
+// named warns when Skybreaker answers somewhere else than its config says,
+// and reports whether it did: Tailscale gives a second machine asking for a
+// taken name one of its own. Until the config matches, Settings won't
+// create the GitHub App.
+func (h *Host) named(ctx context.Context, a *Answers) bool {
+	u := h.servedURL(ctx)
+	if u == "" || u == a.UIURL() {
+		return false
+	}
+	h.Out.Warn("Another machine on your tailnet is already called " + a.Machine() + ", so Skybreaker is at " + u)
+	h.Out.Note("Set tailscale.hostname and ui_url in " + h.Config() + " to match it, then sudo systemctl restart skybreaker; or install with --hostname")
+	return true
+}
 
 // tailnetLogin reads the running service's log for the last sign-in link
 // tsnet printed, and whether Skybreaker has since come up.
@@ -530,7 +563,14 @@ func (h *Host) Status(ctx context.Context, w io.Writer) {
 	if link, up := h.tailnetLogin(ctx); !up && link != "" {
 		fmt.Fprintf(w, "\n  %s\n  %s\n", WarnStyle.Render("Waiting to be approved on your tailnet: open this link and sign in"), link)
 	}
-	if u := configuredURL(h.Config()); u != "" {
+	u := configuredURL(h.Config())
+	if served := h.servedURL(ctx); served != "" && served != u {
+		if u != "" {
+			fmt.Fprintf(w, "\n  %s\n", WarnStyle.Render("The config says "+u+", but another machine on your tailnet has that name"))
+		}
+		u = served
+	}
+	if u != "" {
 		fmt.Fprintf(w, "\n  %s\n", AccentStyle.Render(u))
 	}
 }
