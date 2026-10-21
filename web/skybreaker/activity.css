@@ -22,12 +22,17 @@
 .arow { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 14px; }
 .arow:last-child { border-bottom: 0; }
 .arow .target { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A long target gives way in the middle: its end says what it does. */
+.arow .target:has(.t-head) { display: flex; }
+.t-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.t-tail { flex-shrink: 0; }
 .arow .mono { font-family: var(--mono); font-size: 12.5px; }
 .arow .when { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
 details.audit-item { display: block; padding: 0; }
 details.audit-item summary { display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 8px 14px; margin: 0; list-style: none; font-weight: 500; color: var(--text); }
 details.audit-item summary::-webkit-details-marker { display: none; }
-details.audit-item[open] summary .target { white-space: normal; overflow-wrap: anywhere; }
+details.audit-item[open] summary .target { display: block; white-space: normal; overflow-wrap: anywhere; }
+details.audit-item[open] summary .t-head { overflow: visible; }
 .audit-more { display: grid; gap: 4px; padding: 0 14px 12px; color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
 
 .tag { flex-shrink: 0; display: inline-flex; align-items: center; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 800; background: var(--surface-2); color: var(--muted); }

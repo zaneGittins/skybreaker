@@ -116,6 +116,8 @@ func devGit(line string) ([]byte, error) {
 		return []byte("feature/inbox\n"), nil
 	case strings.Contains(line, "merge-base origin/HEAD HEAD"):
 		return []byte("abc1234\n"), nil
+	case strings.Contains(line, "rev-parse --abbrev-ref origin/HEAD"):
+		return []byte("origin/main\n"), nil
 	case strings.Contains(line, "merge-base"), strings.Contains(line, "--symbolic-full-name"):
 		return nil, fmt.Errorf("exit status 128")
 	case strings.Contains(line, "log --format"):

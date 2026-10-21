@@ -77,6 +77,9 @@ details summary { cursor: pointer; font-weight: 700; color: var(--text-2); margi
 .avatar { width: 34px; height: 34px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; font: 800 12px var(--font); background: var(--surface-3); color: var(--text-2); text-transform: uppercase; }
 .avatar.h-claude { background: var(--av-claude-bg); color: var(--av-claude); }
 .avatar.h-codex { background: var(--av-codex-bg); color: var(--av-codex); }
+.avatar.h-pi { background: var(--t-feature-bg); color: var(--t-feature); }
+.avatar svg.mark { width: 54%; height: 54%; stroke-width: 2.3; }
+.avatar.lg { width: 56px; height: 56px; }
 .avatar.sm { width: 28px; height: 28px; font-size: 10.5px; }
 
 /* Sessions: one line each. Ended ones are folded by default. */
@@ -120,6 +123,16 @@ a.srow-open:hover { background: var(--surface-2); }
   animation: slide-in .22s cubic-bezier(.2, .8, .2, 1);
 }
 .sheet-bar { display: flex; align-items: center; gap: 10px; padding: 14px 14px 14px 26px; border-bottom: 1px solid var(--border); }
+/* Sheets, pickers and menus leave the way they came. */
+.leaving { pointer-events: none; }
+.backdrop.leaving, .menu.leaving { animation: fade-out .16s ease-in forwards; }
+.sheet.leaving { animation: slide-out .18s ease-in forwards; }
+.picker.leaving { animation: picker-out .16s ease-in forwards; }
+.dock-card.leaving { animation: sink .16s ease-in forwards; }
+@keyframes slide-out { to { transform: translateX(40px); opacity: 0; } }
+@keyframes picker-out { to { transform: translate(-50%, -48%) scale(.97); opacity: 0; } }
+@keyframes sink { to { transform: translateY(10px); opacity: 0; } }
+@keyframes sheet-down { to { transform: translateY(100%); } }
 .sheet-bar h2 { margin: 0; font-size: 20px; }
 .sheet pre { flex: 1; margin: 0; padding: 20px 26px; overflow: auto; font: 500 12.5px/1.5 var(--mono); white-space: pre; color: var(--text-2); }
 .sheet pre .add { color: var(--live); }
@@ -204,7 +217,7 @@ body.term-mode { overflow: hidden; }
   .crumb .sep { font-size: 16px; }
   .crumb-pill { height: 34px; padding: 0 12px; font-size: 14px; }
 
-  .wrap { padding: 22px 16px 88px; gap: 26px; }
+  .wrap { padding: 18px 16px 88px; gap: 26px; }
   .sec-head { min-height: 36px; }
   .sec-head h2 { font-size: 20px; }
   .phead { align-items: flex-start; gap: 12px; }
@@ -218,6 +231,7 @@ body.term-mode { overflow: hidden; }
     padding: 10px 16px calc(16px + var(--safe-b)); border-radius: 28px 28px 0 0; border-bottom: 0;
     animation: slide-up .26s cubic-bezier(.2, .8, .2, 1);
   }
+  .picker.leaving { animation: sheet-down .2s ease-in forwards; }
   .picker-grip { display: block; justify-self: center; width: 40px; height: 5px; border-radius: 999px; background: var(--border-strong); }
   .picker-head { padding: 0 4px; }
   .pick { min-height: 72px; }
@@ -287,9 +301,33 @@ body.chat-mode { overflow: hidden; }
 }
 .chat-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; line-height: 1.2; padding-left: 2px; }
 .chat-title .title { font-weight: 750; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-title .sub { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sub-branch { margin-left: 8px; font-family: var(--mono); font-size: 12px; }
-.sub-branch svg { width: 12px; height: 12px; margin-right: 3px; vertical-align: -2px; }
+/* Who, on what, where: agent, model, project and branch, on one line that
+   gives way from the right. */
+.chat-mark { display: grid; flex-shrink: 0; margin: 0 4px 0 2px; }
+.chat-title .sub { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; }
+.chat-title .sub > * { flex-shrink: 0; }
+.chat-title .sub .sep { opacity: .7; }
+.sub-model { padding: 0; border: 0; background: none; color: var(--text-2); font: 600 12.5px var(--font); cursor: pointer; }
+button.sub-model:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
+.chat-title .proj { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); font-weight: 600; }
+.chat-title .proj .pdot { width: 7px; height: 7px; }
+.sub-branch { display: inline-flex; align-items: center; gap: 3px; min-width: 0; font-family: var(--mono); font-size: 12px; }
+.chat-title .sub .sub-branch { flex-shrink: 1; }
+.bname { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sub-branch svg { width: 12px; height: 12px; flex-shrink: 0; }
+/* The ring is the context window's use; the figure says how much. */
+.icon-btn.ctx-btn { display: inline-flex; align-items: center; width: auto; min-width: 40px; gap: 5px; padding: 0 8px; }
+.ctx-pct { font: 600 11.5px var(--mono); color: var(--muted); }
+.ctx-pct:empty { display: none; }
+/* An empty chat: who it is, and the board's next work to start on. */
+.chat-start { display: grid; justify-items: center; gap: 8px; padding: 12vh 8px 24px; text-align: center; animation: fade .3s; }
+.chat-start h2 { margin: 8px 0 0; font-size: 24px; }
+.chat-start p { margin: 0; color: var(--text-2); font-size: 15px; }
+.start-items { display: grid; gap: 8px; width: min(100%, 520px); margin-top: 18px; }
+.start-item { display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 10px 14px; border-radius: 16px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation; }
+.start-item:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.start-item .ref { flex-shrink: 0; font: 600 12px var(--mono); color: var(--muted); }
+.start-title { flex: 1; min-width: 0; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The session button: a ring that fills with the context in use. */
 .ctx-btn svg.ctx-ring { width: 22px; height: 22px; transform: rotate(-90deg); }
 .ctx-ring circle { fill: none; stroke-width: 2.6; }
@@ -382,12 +420,14 @@ summary.tline:hover { background: var(--surface-2); }
 .minus { color: var(--danger); }
 .tstat { display: inline-grid; place-items: center; flex-shrink: 0; font-size: 12px; font-weight: 700; }
 .tstat.bad { color: var(--danger); }
+.tstat.wait { display: inline-flex; gap: 5px; color: var(--working); }
+.tstat.wait svg { width: 14px; height: 14px; }
 .tstat svg { width: 15px; height: 15px; }
 .tline .chev { width: 14px; height: 14px; color: var(--muted); flex-shrink: 0; transition: transform .15s; }
 .tool[open] > .tline .chev { transform: rotate(90deg); }
 .tool.declined .tverb, .tool.declined .ttitle { text-decoration: line-through; color: var(--muted); }
 .tool.failed .ticon { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
-.tool.running .ticon { background: var(--working-bg); color: var(--working); }
+.tool.running .ticon, .tool.waiting .ticon { background: var(--working-bg); color: var(--working); }
 .tout { margin: 0; padding: 10px 14px 12px; max-height: 320px; overflow: auto; font: 500 12.5px/1.5 var(--mono); color: var(--text-2); background: var(--bg); white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--border); }
 .tchildren { border-top: 1px solid var(--border); background: var(--bg); padding: 2px 0 2px 18px; }
 .tool.child { border: 0; }
@@ -465,6 +505,8 @@ pre.dc-detail { padding: 10px 12px; font: 500 12.5px/1.5 var(--mono); white-spac
 .dc-detail .diffs { padding: 6px; }
 .dc-acts { display: flex; gap: 8px; }
 .dc-acts .btn { flex: 1; height: 48px; font-size: 15.5px; }
+.dc-acts.single { justify-content: center; }
+.dc-acts.single .btn { flex: 0 1 auto; height: 40px; padding: 0 22px; }
 .dc-always { justify-self: center; border: 0; background: none; color: var(--text-2); font-size: 13px; font-weight: 650; padding: 2px 8px; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
 .dc-wait { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
 .device-code {
@@ -585,7 +627,7 @@ pre.dc-detail { padding: 10px 12px; font: 500 12.5px/1.5 var(--mono); white-spac
 .commit { display: flex; align-items: baseline; gap: 10px; padding: 9px 12px; font-size: 14px; border-bottom: 1px solid var(--border); }
 .commit:last-child { border-bottom: 0; }
 .commit > span:nth-child(2) { flex: 1; min-width: 0; }
-.review-foot { display: flex; gap: 10px; padding: 12px 16px calc(12px + var(--safe-b)); border-top: 1px solid var(--border); background: var(--bg-2); }
+.review-foot { display: flex; gap: 10px; padding: 12px 22px calc(12px + var(--safe-b)); border-top: 1px solid var(--border); background: var(--bg-2); }
 .review-foot[hidden] { display: none; }
 .review-foot .btn { flex: 1; height: 50px; font-size: 16px; }
 .empty-note p { margin: 6px 0 0; }
@@ -616,5 +658,33 @@ pre.dc-detail { padding: 10px 12px; font: 500 12.5px/1.5 var(--mono); white-spac
   .msg.agent, .msg.user .bubble { font-size: 16px; }
   .chat-foot { padding: 0 8px calc(8px + var(--safe-b)); }
   .review { padding: 14px 14px 24px; }
+  .review-foot { padding-left: 14px; padding-right: 14px; }
   .dl { grid-template-columns: 2.8em 2.8em 1fr; }
 }
+
+/* On a phone the mark names the agent, so the line is model and project. */
+@media (max-width: 760px) {
+  .chat-title .sub-agent, .chat-title .sub-agent + .sep { display: none; }
+  /* The branch button beside it opens the branch's changes. */
+  .chat-title .proj + .sep, .chat-title .sub .sub-branch { display: none; }
+}
+
+/* Less motion: sheets, pickers, menus and cards appear and leave without
+   sliding or fading. */
+@media (prefers-reduced-motion: reduce) {
+  .backdrop, .sheet, .picker, .menu, .dock-card, .chat-start, .toast { animation: none !important; }
+}
+
+/* Moving between pages on a phone: deeper slides in from the right, back
+   from the left (see moveTo). */
+@media (max-width: 1023px) and (prefers-reduced-motion: no-preference) {
+  :root[data-nav]::view-transition-old(root), :root[data-nav]::view-transition-new(root) { animation-duration: .24s; animation-timing-function: cubic-bezier(.2, .8, .2, 1); animation-fill-mode: both; }
+  :root[data-nav="forward"]::view-transition-old(root) { animation-name: page-out-left; }
+  :root[data-nav="forward"]::view-transition-new(root) { animation-name: page-in-right; }
+  :root[data-nav="back"]::view-transition-old(root) { animation-name: page-out-right; }
+  :root[data-nav="back"]::view-transition-new(root) { animation-name: page-in-left; }
+}
+@keyframes page-in-right { from { transform: translateX(28%); opacity: 0; } }
+@keyframes page-out-left { to { transform: translateX(-12%); opacity: 0; } }
+@keyframes page-in-left { from { transform: translateX(-12%); opacity: 0; } }
+@keyframes page-out-right { to { transform: translateX(28%); opacity: 0; } }
