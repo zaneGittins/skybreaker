@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/banner-dark.png">
-    <img src="docs/img/banner-light.png" alt="Skybreaker" width="420">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zaneGittins/skybreaker/main/docs/img/banner-dark.png">
+    <img src="https://raw.githubusercontent.com/zaneGittins/skybreaker/main/docs/img/banner-light.png" alt="Skybreaker" width="420">
   </picture>
 </p>
 
@@ -47,8 +47,8 @@ Skybreaker runs coding agents per project inside gVisor sandboxes on a Linux hos
 
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/img/architecture-dark.svg">
-    <img src="docs/img/architecture-light.svg" alt="Your phone reaches the app over Tailscale. The app drives agents in a gVisor sandbox per project. Every request from a sandbox leaves through the broker, which adds credentials." width="100%">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zaneGittins/skybreaker/main/docs/img/architecture-dark.svg">
+    <img src="https://raw.githubusercontent.com/zaneGittins/skybreaker/main/docs/img/architecture-light.svg" alt="Your phone reaches the app over Tailscale. The app drives agents in a gVisor sandbox per project. Every request from a sandbox leaves through the broker, which adds credentials." width="100%">
   </picture>
 </p>
 
