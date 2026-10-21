@@ -45,8 +45,21 @@ func newGitSandbox(t *testing.T, f *fixture) *gitSandbox {
 	return g
 }
 
-// path maps a sandbox path to this machine's stand-in.
+// uncloned makes the workspace a directory the repo was never cloned into.
+func (g *gitSandbox) uncloned() {
+	g.t.Helper()
+	if err := os.RemoveAll(g.ws); err != nil {
+		g.t.Fatal(err)
+	}
+	os.MkdirAll(g.ws, 0o755)
+}
+
+// path maps a sandbox path to this machine's stand-in, and the project's
+// repo on GitHub to the bare one.
 func (g *gitSandbox) path(p string) string {
+	if p == "https://github.com/zaneGittins/orbit.git" {
+		return g.origin
+	}
 	for from, to := range map[string]string{workspaceDir: g.ws, sandbox.WorktreesDir: g.worktrees} {
 		if p == from || strings.HasPrefix(p, from+"/") {
 			return to + strings.TrimPrefix(p, from)
@@ -59,7 +72,7 @@ func (g *gitSandbox) exec(args []string) (string, error) {
 	switch {
 	case args[0] == "git", args[0] == "ls",
 		args[0] == "test" && len(args) == 3 && args[2] != readyMarker,
-		args[0] == "sh" && len(args) > 2 && (args[2] == snapshotScript || args[2] == presentScript):
+		args[0] == "sh" && len(args) > 2 && (args[2] == snapshotScript || args[2] == presentScript || args[2] == cloneScript):
 	default:
 		return "", nil
 	}
@@ -131,6 +144,119 @@ func startedChat(t *testing.T, f *fixture, opts NewOptions) store.Session {
 	})
 	s, _ = f.app.store.Session(s.ID)
 	return s
+}
+
+// failedTurn is the error a chat's last failed turn ended with, if any.
+func failedTurn(f *fixture, id string) string {
+	ev, _ := f.app.ChatEvents(id, 0)
+	for _, e := range slices.Backward(ev) {
+		if e.Kind == chat.KindTurn && e.Turn != nil && e.Turn.State == chat.TurnFailed {
+			return e.Turn.Error
+		}
+	}
+	return ""
+}
+
+func TestCloneKeepsWhatsInTheWorkspace(t *testing.T) {
+	// Files already in the workspace, made before the clone or by an
+	// agent, don't keep the project from having a clone to branch from.
+	f, _ := chatFixture(t)
+	g := newGitSandbox(t, f)
+	g.uncloned()
+	os.MkdirAll(filepath.Join(g.ws, "old"), 0o755)
+	os.WriteFile(filepath.Join(g.ws, "old", "notes"), []byte("mine\n"), 0o644)
+
+	a := startedChat(t, f, NewOptions{OwnBranch: true})
+	if got := g.read(a.ID, "README.md"); got != "orbit\n" {
+		t.Errorf("worktree README = %q", got)
+	}
+	if b, err := os.ReadFile(filepath.Join(g.ws, "old", "notes")); err != nil || string(b) != "mine\n" {
+		t.Errorf("workspace file = %q, %v", b, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(g.ws, "README.md")); string(b) != "orbit\n" {
+		t.Errorf("workspace README = %q", b)
+	}
+	if got := g.run(g.ws, "status", "--porcelain"); got != "?? old/" {
+		t.Errorf("workspace status = %q", got)
+	}
+}
+
+func TestCloneNeverOverwritesTheWorkspace(t *testing.T) {
+	// A file the clone would replace stops it, untouched. The chat says
+	// why at once instead of waiting out cloneWait, and the next message
+	// tries again.
+	f, sp := chatFixture(t)
+	g := newGitSandbox(t, f)
+	g.uncloned()
+	readme := filepath.Join(g.ws, "README.md")
+	os.WriteFile(readme, []byte("mine\n"), 0o644)
+	ctx := context.Background()
+	s, err := f.app.NewChat(ctx, "orbit", "claude", NewOptions{OwnBranch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.app.ChatSend(ctx, s.ID, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	var msg string
+	waitUntil(t, "the turn to fail", func() bool { msg = failedTurn(f, s.ID); return msg != "" })
+	if !strings.Contains(msg, "README.md") || !strings.Contains(msg, "zaneGittins/orbit") {
+		t.Errorf("error = %q", msg)
+	}
+	if b, _ := os.ReadFile(readme); string(b) != "mine\n" {
+		t.Errorf("README = %q", b)
+	}
+	if entries, _ := os.ReadDir(g.ws); len(entries) != 1 {
+		t.Errorf("workspace left with %v", entries)
+	}
+	if sp.last() != nil {
+		t.Error("the harness started without a worktree")
+	}
+
+	os.Remove(readme)
+	if err := f.app.ChatSend(ctx, s.ID, "again"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the turn", func() bool {
+		x, _ := f.app.store.Session(s.ID)
+		return x.Resume == "conv-1" && x.State == store.ChatIdle
+	})
+	if got := g.read(s.ID, "README.md"); got != "orbit\n" {
+		t.Errorf("worktree README = %q", got)
+	}
+}
+
+func TestOwnBranchWithoutARepoFailsAtOnce(t *testing.T) {
+	f := newFixtureWith(t, `{
+	  "data_dir": %q,
+	  "users": ["zane@example.com"],
+	  "sandbox": {"image": "skybreaker-sandbox:test"},
+	  "projects": {"orbit": {"harnesses": ["claude"]}}
+	}`)
+	f.app.spawn = (&fakeSpawn{}).spawn
+	f.app.readyPoll = time.Millisecond
+	t.Cleanup(f.app.CloseChats)
+	f.docker.set(func() {
+		f.docker.execOut = func(args []string) (string, error) {
+			if len(args) > 2 && args[2] == presentScript {
+				return "no", nil
+			}
+			return "", nil
+		}
+	})
+	ctx := context.Background()
+	s, err := f.app.NewChat(ctx, "orbit", "claude", NewOptions{OwnBranch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.app.ChatSend(ctx, s.ID, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	var msg string
+	waitUntil(t, "the turn to fail", func() bool { msg = failedTurn(f, s.ID); return msg != "" })
+	if !strings.Contains(msg, "no repository") {
+		t.Errorf("error = %q", msg)
+	}
 }
 
 func TestChatOnItsOwnBranch(t *testing.T) {
