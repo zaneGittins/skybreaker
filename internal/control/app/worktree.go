@@ -132,19 +132,28 @@ func (a *App) holdsWorktrees(ctx context.Context, project string) bool {
 }
 
 // waitClone waits for the workspace's clone, which a sandbox's first start
-// makes in the background.
+// makes in the background, or clones it now if none is under way: the
+// last one failed, or the workspace was emptied since. A failed clone
+// says why at once.
 func (a *App) waitClone(ctx context.Context, project string) error {
+	if ok, err := a.present(ctx, project, workspaceDir+"/.git"); err != nil || ok {
+		return err
+	}
+	p, err := a.project(project)
+	if err != nil {
+		return err
+	}
+	if p.Repo == "" {
+		return errors.New("this project has no repository, so there's no branch to work on")
+	}
 	ctx, cancel := context.WithTimeout(ctx, cloneWait)
 	defer cancel()
-	for {
-		if ok, _ := a.present(ctx, project, workspaceDir+"/.git"); ok {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return errors.New("the workspace hasn't been cloned yet, so there's no branch to work on")
-		case <-time.After(a.readyPoll):
-		}
+	c := a.clone(project, p.Repo)
+	select {
+	case <-c.done:
+		return c.err
+	case <-ctx.Done():
+		return errors.New("the workspace hasn't been cloned yet, so there's no branch to work on")
 	}
 }
 

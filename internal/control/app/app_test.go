@@ -674,7 +674,7 @@ func TestStartClonesRepo(t *testing.T) {
 		case ev := <-ch:
 			if ev.Type == "sandbox" && ev.Data == "workspace ready" {
 				clones := f.docker.find(func(c []string) bool { return slices.Contains(c, "https://github.com/zaneGittins/orbit.git") })
-				if len(clones) != 1 || !slices.ContainsFunc(clones[0], func(a string) bool { return strings.Contains(a, "test -d /workspace/.git") }) {
+				if len(clones) != 1 || !slices.Contains(clones[0], cloneScript) || !slices.Contains(clones[0], workspaceDir) {
 					t.Fatalf("clone call = %v", clones)
 				}
 				return

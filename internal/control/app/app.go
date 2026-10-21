@@ -101,7 +101,10 @@ type App struct {
 
 	sweptMu sync.Mutex
 	swept   map[string]bool // projects whose inner containers were stopped this quiet spell
-	spawn   Spawn
+
+	clonesMu sync.Mutex
+	clones   map[string]*cloneRun // per project: the workspace clone under way
+	spawn    Spawn
 
 	sshMu   sync.Mutex
 	sshKeys []byte // authorized_keys for every sandbox's sshd
@@ -288,7 +291,7 @@ func (a *App) StartSandbox(ctx context.Context, project string) error {
 	}
 	a.Publish(Event{Type: "sandbox", Project: project, Data: "started"})
 	if p.Repo != "" {
-		go a.cloneWorkspace(project, p.Repo)
+		a.clone(project, p.Repo)
 	}
 	return nil
 }
@@ -315,25 +318,70 @@ func (a *App) waitReady(ctx context.Context, project string) error {
 	}
 }
 
-// cloneWorkspace clones the project's repo into an empty workspace, through
-// the broker like every other request. Clone never runs repo hooks. It waits
-// for the entrypoint first: git's TLS check needs the broker CA installed.
-func (a *App) cloneWorkspace(project, repo string) {
+// cloneRun is a workspace clone: done closes once err is set.
+type cloneRun struct {
+	done chan struct{}
+	err  error
+}
+
+// clone clones the project's repo into its workspace in the background, or
+// joins the clone already under way, so a sandbox's start and a chat
+// waiting on it never clone at once. A failed clone is forgotten, so the
+// next start tries again.
+func (a *App) clone(project, repo string) *cloneRun {
+	a.clonesMu.Lock()
+	defer a.clonesMu.Unlock()
+	if c := a.clones[project]; c != nil {
+		return c
+	}
+	if a.clones == nil {
+		a.clones = map[string]*cloneRun{}
+	}
+	c := &cloneRun{done: make(chan struct{})}
+	a.clones[project] = c
+	go func() {
+		c.err = a.cloneWorkspace(project, repo)
+		a.clonesMu.Lock()
+		delete(a.clones, project)
+		a.clonesMu.Unlock()
+		close(c.done)
+	}()
+	return c
+}
+
+// cloneWorkspace clones the project's repo into its workspace, through the
+// broker like every other request. It waits for the entrypoint first:
+// git's TLS check needs the broker CA installed.
+func (a *App) cloneWorkspace(project, repo string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	if err := a.waitReady(ctx, project); err != nil {
 		log.Printf("skybreaker: %v", err)
 		a.Publish(Event{Type: "sandbox", Project: project, Data: "clone failed: " + err.Error()})
-		return
+		return err
 	}
-	script := `test -d /workspace/.git || git -c core.hooksPath=/dev/null clone --quiet "$1" /workspace`
-	if _, err := a.sandbox.Exec(ctx, project, "sh", "-c", script, "sh", "https://github.com/"+repo+".git"); err != nil {
+	if _, err := a.sandbox.Exec(ctx, project, "sh", "-c", cloneScript, "sh", "https://github.com/"+repo+".git", workspaceDir); err != nil {
 		log.Printf("skybreaker: clone %s into %s: %v", repo, project, err)
 		a.Publish(Event{Type: "sandbox", Project: project, Data: "clone failed: " + err.Error()})
-		return
+		return gitFailed("cloning "+repo+" into "+workspaceDir, err)
 	}
 	a.Publish(Event{Type: "sandbox", Project: project, Data: "workspace ready"})
+	return nil
 }
+
+// cloneScript clones repo $1 into workspace $2 unless it holds one, never
+// running repo hooks. A workspace with files in it already (made before
+// the clone, or by an agent) is checked out around them: read-tree refuses
+// to overwrite any, and .git goes into place only once that's done, so a
+// refusal leaves the workspace as it was.
+const cloneScript = `set -e
+test -d "$2/.git" && exit 0
+if [ -z "$(ls -A "$2")" ]; then exec git -c core.hooksPath=/dev/null clone --quiet "$1" "$2"; fi
+t=$(mktemp -d "$2/.skybreaker-clone.XXXXXX")
+trap 'rm -rf "$t"' EXIT
+git -c core.hooksPath=/dev/null clone --quiet --no-checkout "$1" "$t"
+git -c core.hooksPath=/dev/null --git-dir="$t/.git" --work-tree="$2" read-tree -m -u HEAD
+mv "$t/.git" "$2/.git"`
 
 // RunsSession is the tmux session that holds scheduled runs' windows. A
 // sleeper keeps it alive between runs, and keeps the tmux server up for
