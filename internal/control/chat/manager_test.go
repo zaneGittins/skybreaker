@@ -565,3 +565,47 @@ func TestManagerUsage(t *testing.T) {
 		}
 	}
 }
+
+func TestCloseWaitsForAStartingHarness(t *testing.T) {
+	// A harness still starting when the manager closes is never left
+	// running, and nothing reaches the log once Close returns.
+	h := newHarness(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	start := h.m.c.Start
+	h.m.c.Start = func(ctx context.Context, s store.Session, argv []string, env map[string]string) (*Proc, error) {
+		close(entered)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return start(ctx, s, argv, env)
+	}
+	s := h.session("claude")
+	h.m.Send(context.Background(), s.ID, "hello")
+	<-entered
+	closed := make(chan struct{})
+	go func() { h.m.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close waited on the start")
+	}
+	n := len(h.events(s.ID))
+	h.mu.Lock()
+	procs := h.procs
+	h.mu.Unlock()
+	if len(procs) != 1 {
+		t.Fatalf("%d harnesses started", len(procs))
+	}
+	procs[0].mu.Lock()
+	killed := procs[0].killed
+	procs[0].mu.Unlock()
+	if !killed {
+		t.Error("the harness that started during Close is still running")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := len(h.events(s.ID)); got != n {
+		t.Errorf("%d events written after Close", got-n)
+	}
+}
