@@ -58,8 +58,15 @@ type Config struct {
 type Manager struct {
 	c Config
 
-	mu   sync.Mutex
-	runs map[string]*run
+	// ctx ends with Close, which waits for jobs: no harness starts once
+	// it has returned.
+	ctx    context.Context
+	cancel context.CancelFunc
+	jobs   sync.WaitGroup
+
+	mu     sync.Mutex
+	runs   map[string]*run
+	closed bool
 
 	subMu sync.Mutex
 	subs  map[string]map[chan Event]struct{}
@@ -102,8 +109,11 @@ func NewManager(c Config) *Manager {
 	if c.Options == nil {
 		c.Options = func(store.Session) Options { return Options{Cwd: "/workspace"} }
 	}
-	return &Manager{c: c, runs: map[string]*run{}, subs: map[string]map[chan Event]struct{}{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Manager{c: c, ctx: ctx, cancel: cancel, runs: map[string]*run{}, subs: map[string]map[chan Event]struct{}{}}
 }
+
+var errClosed = errors.New("Skybreaker is shutting down")
 
 var errNotChat = errors.New("not a chat session")
 
@@ -133,17 +143,28 @@ func (m *Manager) run(id string) *run {
 	return r
 }
 
-// enqueue runs job after the session's earlier jobs.
-func (r *run) enqueue(job func()) {
+// enqueue runs job after the session's earlier jobs, unless the manager
+// has closed.
+func (m *Manager) enqueue(r *run, job func()) {
 	r.jobMu.Lock()
 	r.jobs = append(r.jobs, job)
 	if r.busy {
 		r.jobMu.Unlock()
 		return
 	}
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		r.jobs = nil
+		r.jobMu.Unlock()
+		return
+	}
+	m.jobs.Add(1)
+	m.mu.Unlock()
 	r.busy = true
 	r.jobMu.Unlock()
 	go func() {
+		defer m.jobs.Done()
 		for {
 			r.jobMu.Lock()
 			if len(r.jobs) == 0 {
@@ -188,7 +209,7 @@ func (m *Manager) Send(ctx context.Context, id, text string) error {
 		}
 		m.c.Sessions.UpdateSession(id, func(x *store.Session) { x.Title = title })
 	}
-	r.enqueue(func() {
+	m.enqueue(r, func() {
 		if err := m.ensure(r); err != nil {
 			r.mu.Lock()
 			m.failTurn(r, "The agent didn't start: "+err.Error())
@@ -240,11 +261,21 @@ func (m *Manager) ensure(r *run) error {
 	for k, v := range drv.Env() {
 		env[k] = v
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	if m.ctx.Err() != nil {
+		return errClosed
+	}
+	ctx, cancel := context.WithTimeout(m.ctx, 15*time.Minute)
 	defer cancel()
 	p, err := m.c.Start(ctx, s, drv.Argv(opts), env)
 	if err != nil {
 		return err
+	}
+	if m.ctx.Err() != nil {
+		// Closed while it started: Close only stops what it can see.
+		if p.Kill != nil {
+			p.Kill()
+		}
+		return errClosed
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -631,7 +662,7 @@ func (m *Manager) Interrupt(id string) error {
 		if r.working {
 			// The harness is still starting: interrupt once the message
 			// it's starting for has gone in.
-			r.enqueue(func() {
+			m.enqueue(r, func() {
 				r.mu.Lock()
 				defer r.mu.Unlock()
 				if r.proc != nil {
@@ -749,7 +780,7 @@ func (m *Manager) Login(ctx context.Context, id string) error {
 		return err
 	}
 	r := m.run(id)
-	r.enqueue(func() {
+	m.enqueue(r, func() {
 		if err := m.ensure(r); err != nil {
 			r.mu.Lock()
 			m.emit(r, Event{Kind: KindLogin, Login: &Login{Needed: true, Error: err.Error()}})
@@ -787,7 +818,7 @@ func (m *Manager) Compact(ctx context.Context, id string) error {
 	r.used = time.Now()
 	m.emit(r, Event{Kind: KindTurn, Turn: &Turn{State: TurnWorking}})
 	r.mu.Unlock()
-	r.enqueue(func() {
+	m.enqueue(r, func() {
 		if err := m.ensure(r); err != nil {
 			r.mu.Lock()
 			m.failTurn(r, "The agent didn't start: "+err.Error())
@@ -935,6 +966,11 @@ func (m *Manager) Forget(id string) {
 
 // Close stops every harness process.
 func (m *Manager) Close() {
+	m.mu.Lock()
+	m.closed = true
+	m.mu.Unlock()
+	m.cancel()
+	m.jobs.Wait()
 	m.mu.Lock()
 	ids := make([]string, 0, len(m.runs))
 	for id := range m.runs {
