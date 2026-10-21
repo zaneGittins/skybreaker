@@ -1,14 +1,20 @@
-name: "CLA Assistant"
+name: CLA
 
-# pull_request_target is what lets the CLA bot comment on and set a status
-# for pull requests from forks. It is safe here because nothing from the pull
-# request runs: no checkout, no run steps, and the only PR-controlled input
-# (a comment's text) is compared in an `if`, never expanded into a command.
+# Checks that everyone with a commit in a pull request has signed CLA.md, and
+# records a signature when one of them comments the phrase in it. The result
+# is a check run named CLA on the pull request's head commit, which the
+# ruleset on main requires; signatures live in signatures/cla.json on the
+# cla-signatures branch.
+#
+# pull_request_target is what lets this comment on and check pull requests
+# from forks. It is safe here because nothing from the pull request runs: no
+# checkout, and everything the pull request controls (its commits, a
+# comment's text) is read as data by the script, never expanded into it.
 on: # zizmor: ignore[dangerous-triggers]
   issue_comment:
     types: [created]
   pull_request_target:
-    types: [opened, closed, synchronize]
+    types: [opened, reopened, synchronize, closed]
 
 permissions: {}
 
@@ -19,27 +25,98 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  CLAAssistant:
-    name: CLA
-    if: github.actor != 'dependabot[bot]'
+  cla:
+    name: Check the CLA
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request &&
+       (github.event.comment.body == 'recheck' ||
+        github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'))
     runs-on: ubuntu-latest
     permissions:
-      actions: write # re-run the check on "recheck"
-      contents: write # commit signatures to the cla-signatures branch
-      pull-requests: write # comment on the pull request
-      statuses: write # set the CLA status
+      checks: write # the CLA check run on the pull request
+      contents: write # signatures on the cla-signatures branch
+      pull-requests: write # the comment asking for signatures; locking after merge
     steps:
-      - name: "CLA Assistant"
-        if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
-        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
-          path-to-signatures: "signatures/cla.json"
-          path-to-document: "https://github.com/zaneGittins/skybreaker/blob/main/CLA.md"
-          # Not main: main takes changes only through pull requests, which
-          # the bot's commits aren't.
-          branch: "cla-signatures"
-          allowlist: "dependabot[bot],renovate[bot],github-actions[bot]"
-          # Lock PR comments after merge so signatures can't be revoked
-          lock-pullrequest-aftermerge: true
+          script: |
+            const PHRASE = 'I have read the CLA Document and I hereby sign the CLA';
+            const ALLOW = new Set(['dependabot[bot]', 'renovate[bot]', 'github-actions[bot]']);
+            const BRANCH = 'cla-signatures';
+            const FILE = 'signatures/cla.json';
+            const MARK = '<!-- skybreaker-cla -->';
+            const { owner, repo } = context.repo;
+            const doc = `https://github.com/${owner}/${repo}/blob/main/CLA.md`;
+            // Text the pull request controls goes into the comment as code,
+            // so it can't mention, link or reformat anything.
+            const code = (s) => '`' + String(s).replace(/[`\r\n]/g, ' ').slice(0, 100) + '`';
+
+            const pr = context.payload.pull_request ??
+              (await github.rest.pulls.get({ owner, repo, pull_number: context.payload.issue.number })).data;
+
+            // Merged pull requests are locked, so a signature can't be taken back.
+            if (context.eventName === 'pull_request_target' && context.payload.action === 'closed') {
+              if (pr.merged && !pr.locked) await github.rest.issues.lock({ owner, repo, issue_number: pr.number });
+              return;
+            }
+
+            // Everyone with a commit here, by GitHub account. A commit whose
+            // author has no account can't be signed for.
+            const people = new Map([[pr.user.id, pr.user.login]]);
+            const unlinked = new Set();
+            const commits = await github.paginate(github.rest.pulls.listCommits,
+              { owner, repo, pull_number: pr.number, per_page: 100 });
+            for (const c of commits) {
+              if (c.author) people.set(c.author.id, c.author.login);
+              else unlinked.add(c.commit.author.name || 'unknown');
+            }
+
+            const { data: file } = await github.rest.repos.getContent({ owner, repo, path: FILE, ref: BRANCH });
+            const signatures = JSON.parse(Buffer.from(file.content, 'base64').toString('utf8'));
+            const signed = new Set(signatures.signedContributors.map((s) => s.id));
+
+            const comment = context.payload.comment;
+            if (comment && comment.body.trim() === PHRASE && people.has(comment.user.id) && !signed.has(comment.user.id)) {
+              signatures.signedContributors.push({
+                name: comment.user.login,
+                id: comment.user.id,
+                comment_id: comment.id,
+                created_at: comment.created_at,
+                repoId: context.payload.repository.id,
+                pullRequestNo: pr.number,
+              });
+              await github.rest.repos.createOrUpdateFileContents({
+                owner, repo, path: FILE, branch: BRANCH, sha: file.sha,
+                message: `@${comment.user.login} has signed the CLA in #${pr.number}`,
+                content: Buffer.from(JSON.stringify(signatures, null, 2)).toString('base64'),
+              });
+              signed.add(comment.user.id);
+            }
+
+            const missing = [...people].filter(([id, login]) => !signed.has(id) && !ALLOW.has(login)).map(([, login]) => login);
+            const ok = missing.length === 0 && unlinked.size === 0;
+
+            let body = null;
+            if (!ok) {
+              const lines = [MARK, 'Thanks for the pull request! Before it can be merged, everyone with a commit in it needs to sign the [Contributor License Agreement](' + doc + ').'];
+              if (missing.length) lines.push('', 'Still to sign: ' + missing.map((l) => '@' + l).join(', ') + '. To sign, comment exactly:', '', '> ' + PHRASE);
+              if (unlinked.size) lines.push('', 'Some commits have an author with no GitHub account: ' + [...unlinked].map(code).join(', ') +
+                '. Add that commit email to your account (Settings → Emails), or recommit with one that is, then comment `recheck`.');
+              body = lines.join('\n');
+            }
+            const comments = await github.paginate(github.rest.issues.listComments,
+              { owner, repo, issue_number: pr.number, per_page: 100 });
+            const mine = comments.find((c) => c.user.type === 'Bot' && c.body.includes(MARK));
+            if (ok && mine) body = MARK + '\nEveryone has signed the [CLA](' + doc + '). Thank you!';
+            if (body && mine) await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+            else if (body) await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
+
+            await github.rest.checks.create({
+              owner, repo, name: 'CLA', head_sha: pr.head.sha, status: 'completed',
+              conclusion: ok ? 'success' : 'failure',
+              output: {
+                title: ok ? 'Everyone has signed the CLA' : 'Waiting for the CLA',
+                summary: ok ? 'Every author of a commit here has signed CLA.md.' : 'See the comment on the pull request.',
+              },
+            });
