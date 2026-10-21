@@ -23,6 +23,13 @@ type Network interface {
 	Close() error
 }
 
+// Named is a Network that knows its own name on the tailnet.
+type Named interface {
+	// Domain is the machine's name, such as skybreaker.tail1234.ts.net, or
+	// "" when the tailnet gives it no HTTPS certificate.
+	Domain() string
+}
+
 // Dev is a Network for local development without a tailnet. It listens on
 // loopback only and reports every loopback caller as peer, so it can never
 // vouch for anyone across a real network.

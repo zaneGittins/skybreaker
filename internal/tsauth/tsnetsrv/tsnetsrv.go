@@ -25,11 +25,13 @@ import (
 type localClient interface {
 	WhoIs(ctx context.Context, remoteAddr string) (*apitype.WhoIsResponse, error)
 	Status(ctx context.Context) (*ipnstate.Status, error)
+	CertPair(ctx context.Context, domain string) (certPEM, keyPEM []byte, err error)
 }
 
 type node struct {
-	srv *tsnet.Server
-	lc  localClient
+	srv    *tsnet.Server
+	lc     localClient
+	domain string
 }
 
 // Start brings the node up and waits until it is connected.
@@ -53,7 +55,24 @@ func Start(ctx context.Context, hostname, stateDir string) (tsauth.Network, erro
 		s.Close()
 		return nil, err
 	}
-	return &node{srv: s, lc: lc}, nil
+	n := &node{srv: s, lc: lc}
+	if d := s.CertDomains(); len(d) > 0 {
+		n.domain = d[0]
+		go warm(ctx, lc, n.domain)
+	}
+	return n, nil
+}
+
+// Domain is the node's name on the tailnet, the one its certificate is for.
+func (n *node) Domain() string { return n.domain }
+
+// warm fetches the node's certificate now, which a TLS listener would
+// otherwise do on its first visitor's handshake: that takes long enough
+// for the browser to give up.
+func warm(ctx context.Context, lc localClient, domain string) {
+	if _, _, err := lc.CertPair(ctx, domain); err != nil && ctx.Err() == nil {
+		log.Printf("skybreaker: no HTTPS certificate for %s yet: %v", domain, err)
+	}
 }
 
 func (n *node) ListenTLS(addr string) (net.Listener, error) { return n.srv.ListenTLS("tcp", addr) }

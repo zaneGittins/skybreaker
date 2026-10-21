@@ -12,7 +12,7 @@ To skip step 2's questions, paste [deploy/cloud-init.yaml](../deploy/cloud-init.
 ## Requirements
 
 - **A Linux host** with Docker. A VM is fine; allow about 4 GB of memory and a few cores per active project. On Debian and Ubuntu, the installer adds Docker if it's missing; elsewhere, [install it](https://docs.docker.com/engine/install/) first.
-- **A Tailscale tailnet** with MagicDNS and HTTPS certificates turned on (admin console → DNS). Skybreaker joins it as its own machine, `skybreaker`, and serves the app over HTTPS with a certificate from Tailscale; without them, `https://skybreaker.<your-tailnet>.ts.net` fails with a TLS error.
+- **A Tailscale tailnet** with MagicDNS and HTTPS certificates turned on (admin console → DNS). Skybreaker joins it as its own machine, `skybreaker`, and serves the app over HTTPS with a certificate from Tailscale; without them, `https://skybreaker.<your-tailnet>.ts.net` fails with a TLS error. Skybreaker fetches the certificate as it starts, which can take a minute the first time. For a second Skybreaker on the same tailnet, give it a name of its own (`--hostname`, or the wizard's machine name): Tailscale gives a machine asking for a taken name another one, and the installer says so if it happens.
 - **A GitHub account or organization** for the repos agents will work on. Skybreaker creates its GitHub App for you (see [GitHub](#github)).
 
 gVisor is required, and the installer adds it if it's missing.
@@ -31,6 +31,8 @@ For unattended installs, which need the auth key:
 sudo TS_AUTHKEY=tskey-auth-... skybreaker-setup install --yes \
   --login you@github --tailnet tail1234.ts.net --repo you/project
 ```
+
+Each sandbox is limited to 4 CPUs and 8 GB, or to the whole host if it's smaller; `sandbox.cpus` and `sandbox.memory` in the config change that, and a CPU limit above what the host has is lowered to fit.
 
 Add `--app-id 123456 --app-key app.pem` to use a GitHub App you made yourself.
 

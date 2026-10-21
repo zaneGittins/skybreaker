@@ -48,6 +48,7 @@ func main() {
 		skipSelf  = fs.Bool("skip-self-update", false, "don't update skybreaker-setup first")
 		login     = fs.String("login", "", "tailnet logins allowed in, comma-separated")
 		tailnet   = fs.String("tailnet", "", "the tailnet's DNS name, such as tail1234.ts.net")
+		hostname  = fs.String("hostname", "", "Skybreaker's machine name on the tailnet (default skybreaker)")
 		appID     = fs.String("app-id", "", "the GitHub App's ID")
 		appKey    = fs.String("app-key", "", "the GitHub App's private key file")
 		repo      = fs.String("repo", "", "the first project's repository, owner/name")
@@ -127,6 +128,7 @@ func main() {
 				a.Users = setup.SplitList(*login)
 			}
 			set(&a.Tailnet, *tailnet)
+			set(&a.Hostname, *hostname)
 			set(&a.AuthKey, os.Getenv("TS_AUTHKEY"))
 			set(&a.AppID, *appID)
 			set(&a.AppKey, *appKey)

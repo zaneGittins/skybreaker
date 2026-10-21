@@ -392,12 +392,47 @@ func TestInstallWithoutAuthKeyGivesUp(t *testing.T) {
 }
 
 func TestInstallWithAuthKeyDoesntWait(t *testing.T) {
-	h, f, out := testHost(t, map[string]string{"v1.1.0": "v1.1.0"})
+	h, _, out := testHost(t, map[string]string{"v1.1.0": "v1.1.0"})
 	a := testAnswers(t)
 	if err := h.Install(context.Background(), &a, readyChecks()); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if f.ran("journalctl") {
-		t.Error("read the log for a sign-in link with an auth key")
+	if strings.Contains(out.String(), "sign-in link") {
+		t.Errorf("waited for a sign-in link with an auth key:\n%s", out)
+	}
+}
+
+func TestInstallWarnsWhenTheNameIsTaken(t *testing.T) {
+	// Tailscale gives a second machine asking for a taken name one of its
+	// own: the install says where Skybreaker really is, and how to match.
+	h, f, out := testHost(t, map[string]string{"v1.1.0": "v1.1.0"})
+	f.out["systemctl show -p InvocationID"] = "inv1\n"
+	f.out["journalctl _SYSTEMD_INVOCATION_ID=inv1"] = "2026/10/21 10:00:00 skybreaker: on your tailnet at https://skybreaker-1.tail1234.ts.net\n" +
+		"2026/10/21 10:00:01 skybreaker v1.1.0: UI on 100.64.0.1:443, hooks on 10.0.0.1:8080, broker on 10.0.0.1:3128, 1 projects, 0 jobs\n"
+	a := testAnswers(t)
+	if err := h.Install(context.Background(), &a, readyChecks()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{"already called skybreaker", "https://skybreaker-1.tail1234.ts.net", "--hostname"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("no %q in:\n%s", want, out)
+		}
+	}
+	var status strings.Builder
+	h.Status(context.Background(), &status)
+	if !strings.Contains(status.String(), "https://skybreaker-1.tail1234.ts.net") {
+		t.Errorf("status shows the config's address, not the real one:\n%s", status.String())
+	}
+
+	// Its own name: nothing to say.
+	h, f, out = testHost(t, map[string]string{"v1.1.0": "v1.1.0"})
+	f.out["systemctl show -p InvocationID"] = "inv1\n"
+	f.out["journalctl _SYSTEMD_INVOCATION_ID=inv1"] = "2026/10/21 10:00:00 skybreaker: on your tailnet at https://skybreaker.tail1234.ts.net\n"
+	a = testAnswers(t)
+	if err := h.Install(context.Background(), &a, readyChecks()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out.String(), "already called") {
+		t.Errorf("warned about its own name:\n%s", out)
 	}
 }

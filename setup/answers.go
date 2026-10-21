@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 	"unicode"
@@ -41,12 +42,18 @@ type Answers struct {
 
 	Block []string // the LAN, kept from agents on top of the built-in private ranges
 	Image string
+
+	Hostname string // Skybreaker's machine name on the tailnet; empty for skybreaker
+	CPUs     int    // each sandbox's CPU limit; 0 for 4
+	MemoryGB int    // each sandbox's memory limit in GB; 0 for 8
 }
 
 var (
 	tailnetRe = regexp.MustCompile(`^[a-z0-9-]+(\.[a-z0-9-]+)+$`)
 	appIDRe   = regexp.MustCompile(`^[0-9]{1,12}$`)
 	branchRe  = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$`)
+	// A machine name is one DNS label, as Tailscale names machines.
+	hostnameRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 )
 
 // ValidateTailscale checks the wizard's Tailscale page.
@@ -62,6 +69,9 @@ func (a *Answers) ValidateTailscale() error {
 	}
 	if !tailnetRe.MatchString(a.Tailnet) {
 		errs = append(errs, errors.New("tailnet name: use its DNS name, such as tail1234.ts.net (admin console, DNS)"))
+	}
+	if a.Hostname != "" && !hostnameRe.MatchString(a.Hostname) {
+		errs = append(errs, errors.New("machine name: lowercase letters, digits and dashes, such as skybreaker-2"))
 	}
 	if a.AuthKey != "" && (!strings.HasPrefix(a.AuthKey, "tskey-") || strings.ContainsFunc(a.AuthKey, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) })) {
 		errs = append(errs, errors.New("auth key: paste a key from the admin console (Settings, Keys); it starts with tskey-. Or leave it empty"))
@@ -163,8 +173,16 @@ func ProjectName(repo string) string {
 	return s
 }
 
+// Machine is Skybreaker's machine name on the tailnet.
+func (a *Answers) Machine() string {
+	if a.Hostname == "" {
+		return "skybreaker"
+	}
+	return a.Hostname
+}
+
 // UIURL is where Skybreaker answers on the tailnet.
-func (a *Answers) UIURL() string { return "https://skybreaker." + a.Tailnet }
+func (a *Answers) UIURL() string { return "https://" + a.Machine() + "." + a.Tailnet }
 
 // File is one file an install writes.
 type File struct {
@@ -204,9 +222,17 @@ func (a *Answers) Files(l Layout) ([]File, error) {
 	if block == nil {
 		block = []string{}
 	}
+	cpus, memory := 4, 8
+	if a.CPUs > 0 {
+		cpus = a.CPUs
+	}
+	if a.MemoryGB > 0 {
+		memory = a.MemoryGB
+	}
 	data := map[string]any{
 		"A": a, "Data": l.Data, "SecretsFile": l.Secrets(), "KeyFile": l.AppKey(), "UIURL": a.UIURL(),
 		"Project": ProjectName(a.Repo), "Capabilities": caps, "Env": env, "Block": block,
+		"Machine": a.Machine(), "CPUs": strconv.Itoa(cpus), "Memory": strconv.Itoa(memory) + "g",
 	}
 	var cfg, sec bytes.Buffer
 	if err := configTmpl.Execute(&cfg, data); err != nil {
@@ -248,13 +274,14 @@ data_dir: {{q .Data}}
 users: {{q .A.Users}}
 ui_url: {{q .UIURL}}
 tailscale:
-  hostname: skybreaker
+  hostname: {{q .Machine}}
 secrets_file: {{q .SecretsFile}}
 
 sandbox:
   image: {{q .A.Image}}
-  memory: 8g
-  cpus: "4"
+  # Each sandbox's limits, fitted to this host when it was installed.
+  memory: {{.Memory}}
+  cpus: {{q .CPUs}}
 
 broker:
   netguard:

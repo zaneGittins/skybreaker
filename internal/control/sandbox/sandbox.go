@@ -14,7 +14,9 @@ import (
 	"net/netip"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/zaneGittins/skybreaker/internal/names"
@@ -217,6 +219,21 @@ func sortedPairs(m map[string]string) []string {
 	return out
 }
 
+// numCPU is the host's CPU count, which Docker won't let a container
+// exceed.
+var numCPU = runtime.NumCPU
+
+// hostCPUs is a CPU limit no larger than the host, so a config written for
+// a bigger machine still starts its sandboxes. Validate has already checked
+// it's a number.
+func hostCPUs(cpus string) string {
+	n := numCPU()
+	if v, err := strconv.ParseFloat(cpus, 64); err == nil && v > float64(n) {
+		return strconv.Itoa(n)
+	}
+	return cpus
+}
+
 // RunArgs builds the `docker run` arguments, without the docker binary.
 func (s Spec) RunArgs() ([]string, error) {
 	if err := s.Validate(); err != nil {
@@ -248,7 +265,7 @@ func (s Spec) RunArgs() ([]string, error) {
 		args = append(args, "--memory", s.Memory)
 	}
 	if s.CPUs != "" {
-		args = append(args, "--cpus", s.CPUs)
+		args = append(args, "--cpus", hostCPUs(s.CPUs))
 	}
 	for _, m := range s.Mounts() {
 		// --mount, unlike -v, fails on a missing source instead of creating

@@ -135,6 +135,8 @@ func TestRunArgsMounts(t *testing.T) {
 }
 
 func TestRunArgsLimitsAndOverrides(t *testing.T) {
+	defer func(n func() int) { numCPU = n }(numCPU)
+	numCPU = func() int { return 4 }
 	s := testSpec(t)
 	s.Hostname = "box"
 	s.Memory = "8g"
@@ -667,6 +669,24 @@ func TestImageStale(t *testing.T) {
 		stale, err := m.ImageStale(context.Background(), "orbit", "skybreaker-sandbox:1")
 		if err != nil || stale != c.stale {
 			t.Errorf("%+v: stale %v, %v", c, stale, err)
+		}
+	}
+}
+
+func TestRunArgsKeepCPUsToTheHost(t *testing.T) {
+	// Docker refuses a container more CPUs than the host has, so a config
+	// written for a bigger machine would stop every sandbox starting.
+	defer func(n func() int) { numCPU = n }(numCPU)
+	numCPU = func() int { return 2 }
+	for cpus, want := range map[string]string{"4": "2", "2": "2", "1.5": "1.5", "2.5": "2", "16": "2"} {
+		s := testSpec(t)
+		s.CPUs = cpus
+		args, err := s.RunArgs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := pairs(args, "--cpus"); len(got) != 1 || got[0] != want {
+			t.Errorf("cpus %s on 2 CPUs: --cpus = %v, want %s", cpus, got, want)
 		}
 	}
 }

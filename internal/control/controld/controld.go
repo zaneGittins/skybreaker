@@ -119,6 +119,17 @@ func Run(ctx context.Context, o Options) error {
 		}
 		defer uiNet.Close()
 	}
+	self := ""
+	if n, ok := uiNet.(tsauth.Named); ok {
+		if self = n.Domain(); self == "" {
+			log.Printf("skybreaker: your tailnet gives this machine no HTTPS certificate: turn on MagicDNS and HTTPS Certificates in the admin console (DNS)")
+		} else {
+			log.Printf("skybreaker: on your tailnet at https://%s", self)
+			if msg := config.Misnamed(cfg.UIURL, self); msg != "" {
+				log.Printf("skybreaker: %s", msg)
+			}
+		}
+	}
 	tailnet, _ := uiNet.(netguard.Tailnet)
 	brk, err := broker.Open(broker.Options{
 		DataDir: filepath.Join(cfg.DataDir, "broker"), SecretsFile: cfg.SecretsFile, AppSecretsFile: cfg.AppSecretsFile, Policy: cfg.Policy,
@@ -250,7 +261,7 @@ func Run(ctx context.Context, o Options) error {
 
 	changes := &settings{configPath: o.ConfigPath, secrets: cfg.SecretsFile, instructions: cfg.Instructions(), prompts: cfg.Prompts(), app: a, broker: brk, boards: boards, restart: requestRestart}
 	apiHandler, err := api.New(api.Deps{
-		Config: cfg, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews, SSHKeys: sshKeys,
+		Config: cfg, Self: self, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews, SSHKeys: sshKeys,
 		Projects: changes, Settings: changes, Usage: tokensUsed,
 		Static: web.Skybreaker(), Version: o.Version,
 		Upgrade: func(w http.ResponseWriter, r *http.Request) (terminal.Conn, error) { return wsock.Accept(w, r) },

@@ -119,7 +119,9 @@ type Runs interface {
 }
 
 type Deps struct {
-	Config     *config.Config
+	Config *config.Config
+	// Self is this machine's name on the tailnet, or "" when it isn't known.
+	Self       string
 	Backend    Backend
 	Approvals  Approvals
 	Network    Network

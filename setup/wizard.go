@@ -53,14 +53,16 @@ func NewWizard(defaults Answers, checks []Check) *Wizard {
 		{
 			name: "Tailscale", title: "Join your tailnet",
 			intro: []string{
-				"Skybreaker joins your tailnet as its own machine, skybreaker, and",
-				"answers only the logins you list here.",
+				"Skybreaker joins your tailnet as its own machine and answers only",
+				"the logins you list here.",
 			},
 			fields: []field{
 				{label: "Your tailnet login", hint: "as the admin console shows it: you@github; separate several with commas",
 					get: func(a *Answers) string { return list(a.Users) }, set: func(a *Answers, s string) { a.Users = SplitList(s) }},
 				{label: "Tailnet name", hint: "admin console, DNS: such as tail1234.ts.net",
 					get: func(a *Answers) string { return a.Tailnet }, set: func(a *Answers, s string) { a.Tailnet = strings.ToLower(strings.TrimSpace(s)) }},
+				{label: "Machine name", hint: "Skybreaker's name on the tailnet; another if a machine there is already called skybreaker",
+					get: func(a *Answers) string { return a.Hostname }, set: func(a *Answers, s string) { a.Hostname = strings.ToLower(strings.TrimSpace(s)) }},
 				{label: "Auth key", hint: "optional: empty to approve Skybreaker from a link once it starts; or admin console, Settings, Keys",
 					get: func(a *Answers) string { return a.AuthKey }, set: func(a *Answers, s string) { a.AuthKey = strings.TrimSpace(s) }},
 			},
