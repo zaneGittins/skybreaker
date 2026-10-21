@@ -30,7 +30,7 @@ function boardView(name, d) {
     type: 'button', 'data-col': k, 'aria-pressed': 'false',
     onclick: () => { current = k; prefs.set('boardCol', k); show() },
   }, el('span.cdot'), el('span', null, label), el('span.n', null, String(by[k].length))));
-  const cols = COLUMNS.map(([k, label]) => column(k, label, by[k], d.tint));
+  const cols = COLUMNS.map(([k, label]) => column(k, label, by[k], name));
   const show = () => {
     tabs.forEach(t => { const on = t.dataset.col === current; t.classList.toggle('on', on); t.setAttribute('aria-pressed', String(on)) });
     cols.forEach(c => c.classList.toggle('on', c.dataset.col === current));
@@ -38,17 +38,89 @@ function boardView(name, d) {
   show();
   return el('div.board-view', null,
     el('div.col-tabs', { role: 'group', 'aria-label': 'Column' }, tabs),
-    el('div.board-cols', null, cols),
-    captureBox(name, () => current === 'todo' ? 'todo' : 'backlog'));
+    el('div.board-cols', null, cols));
 }
 
-function column(status, label, items, tint) {
+function column(status, label, items, project) {
   const list = el('div.col-list', { 'data-status': status }, items.map(it => itemCard(it)));
   if (!items.length) list.append(el('div.col-empty', null, status === 'todo' ? 'Nothing ready. Move items here from Backlog.' : 'Empty'));
   dropTarget(list, status);
   return el('section.col.st-' + status, { 'data-col': status },
     el('div.col-head', null, el('span.cdot'), el('h2', null, label), el('span.n', null, String(items.length))),
-    list);
+    list, status === 'done' ? null : columnAdd(project, status, label));
+}
+
+// addItem adds an item from one line in the quick syntax, such as
+// "bug: crash on save #ui !": the prefix sets the type, #words add labels,
+// and ! or !! makes it high or urgent.
+async function addItem(project, text, status) {
+  const it = await api('POST', `/api/projects/${encodeURIComponent(project)}/items`, { text, status });
+  toast(`Added ${it.ref}`);
+  return it;
+}
+const QUICK_HINT = 'bug:, feat: or chore: sets the type, #word adds a label, ! or !! at the end makes it high or urgent.';
+
+// columnAdd is a column's add box on a desktop: a button at its foot that
+// opens a card to type into. It stays open to add several, through the
+// redraw each add brings.
+function columnAdd(project, status, label) {
+  const input = el('textarea.col-add-input', { rows: 2, placeholder: 'bug: crash on save #ui !', title: QUICK_HINT, 'aria-label': 'New item in ' + label, enterkeyhint: 'send' });
+  let adding = false;
+  const submit = async () => {
+    const text = input.value.trim();
+    if (!text || adding) return;
+    adding = true;
+    try { await addItem(project, text, status); input.value = ''; refresh() } catch (err) { toast(err.message, 'error') }
+    adding = false;
+  };
+  const show = on => {
+    state.boardAdd = on ? status : null;
+    form.hidden = !on;
+    open.hidden = on;
+    if (on) input.focus();
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit() }
+    if (e.key === 'Escape') { e.stopPropagation(); input.value = ''; show(false) }
+  });
+  const form = el('form.col-add-form', { hidden: true, onsubmit: e => { e.preventDefault(); submit() } }, input,
+    el('div.col-add-acts', null,
+      el('button.btn.primary.sm', { type: 'submit' }, 'Add'),
+      el('button.btn.ghost.sm', { type: 'button', onclick: () => { input.value = ''; show(false) } }, 'Cancel')));
+  const open = el('button.col-add-btn', { type: 'button', onclick: () => show(true) }, svg(ICON.plus), 'Add item');
+  if (state.boardAdd === status) requestAnimationFrame(() => show(true));
+  return el('div.col-add', null, open, form);
+}
+
+// newItemSheet adds an item on a phone, from the + : the column it goes in,
+// and the line.
+function newItemSheet(project, status) {
+  const open = COLUMNS.filter(([k]) => k !== 'done');
+  let into = open.some(([k]) => k === status) ? status : 'backlog';
+  const chips = el('div.chips', null, open.map(([k, label]) => el('button.chip' + (k === into ? '.on' : ''), {
+    type: 'button', 'data-col': k, onclick: e => {
+      into = k;
+      chips.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c === e.currentTarget));
+    },
+  }, label)));
+  const input = el('input.np-input.new-item-input', { type: 'text', placeholder: 'bug: crash on save #ui !', 'aria-label': 'New item', enterkeyhint: 'send', autocomplete: 'off' });
+  const add = el('button.btn.primary', { type: 'submit' }, svg(ICON.plus), 'Add');
+  const form = el('form.np-form.new-item', {
+    onsubmit: async e => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      add.disabled = true;
+      try { await addItem(project, text, into); closeSheet(); refresh() } catch (err) { toast(err.message, 'error'); add.disabled = false }
+    },
+  }, chips, input, el('p.np-hint', null, QUICK_HINT), add);
+  $('#sheet-root').replaceChildren(
+    el('div.backdrop', { onclick: closeSheet }),
+    el('div.picker', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New item' },
+      el('div.picker-grip'),
+      el('div.picker-head', null, el('h2', null, 'New item')),
+      form));
+  input.focus();
 }
 
 function itemCard(it) {
@@ -101,28 +173,6 @@ function dropTarget(list, status) {
 // Positions ride on the cards so a drop can work out its neighbours.
 const positions = new Map();
 const posOf = card => card ? positions.get(card.dataset.ref) : undefined;
-
-// captureBox is the add box: one line in the quick syntax, such as
-// "bug: crash on save #ui !".
-function captureBox(project, status) {
-  const input = el('input.capture-input', { type: 'text', placeholder: 'bug: crash on save #ui !', 'aria-label': 'New item', enterkeyhint: 'send' });
-  let busyAdding = false;
-  const add = async e => {
-    e.preventDefault();
-    const text = input.value.trim();
-    if (!text || busyAdding) return;
-    busyAdding = true;
-    try {
-      const it = await api('POST', `/api/projects/${encodeURIComponent(project)}/items`, { text, status: status() });
-      input.value = '';
-      toast(`Added ${it.ref}`);
-      refresh();
-    } catch (err) { toast(err.message, 'error') }
-    busyAdding = false;
-  };
-  return el('form.capture', { onsubmit: add }, input,
-    el('button.send-btn', { type: 'submit', 'aria-label': 'Add' }, svg(ICON.plus)));
-}
 
 // --- one item ----------------------------------------------------------------
 

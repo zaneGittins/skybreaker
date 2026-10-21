@@ -9,6 +9,9 @@
 const state = { meta: null, route: null, seq: 0, timers: [], term: null, chat: null };
 
 function navigate(path) {
+  // A form with unsaved changes (see saveBar) asks before it's left.
+  if (state.dirty && !confirm('Leave without saving your changes?')) return;
+  state.dirty = false;
   if (location.pathname + location.search !== path) history.pushState(null, '', path);
   moveTo();
 }
@@ -19,17 +22,24 @@ document.addEventListener('click', e => {
   e.preventDefault();
   navigate(a.getAttribute('href'));
 });
-window.addEventListener('popstate', () => moveTo());
+window.addEventListener('popstate', () => {
+  // Back can't be stopped, only undone: staying puts the address back.
+  if (state.dirty && !confirm('Leave without saving your changes?')) { history.pushState(null, '', state.path); return }
+  state.dirty = false;
+  moveTo();
+});
 
 // depth is how far in a page is: the inbox, then a project or a list, then
 // a chat or a run.
-const depth = r => !r ? 0 : r.name === 'home' ? 0 : r.name === 'session' || r.name === 'run' ? 2 : 1;
+const depth = r => !r ? 0 : r.name === 'home' ? 0 : r.name === 'session' || r.name === 'run' ? 2
+  : r.name === 'settings' ? 1 + !!r.section + (r.item !== undefined) : 1;
 
 // moveTo shows the page at the address now in the bar. On a phone, going
 // deeper slides the new page in from the right and coming back from the
 // left, the old page holding until the new one is drawn; elsewhere, and
 // between pages at one depth, the new page fades in.
 function moveTo() {
+  state.boardAdd = null;
   const from = depth(state.route), to = depth(route(location.pathname));
   const dir = to > from ? 'forward' : to < from ? 'back' : '';
   const slide = dir && document.startViewTransition && matchMedia('(max-width: 1023px)').matches && !matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -71,6 +81,7 @@ async function go() {
   closeSheet();
   closeMenu();
   state.route = route(location.pathname);
+  state.path = location.pathname + location.search;
   document.body.classList.toggle('term-mode', state.route.name === 'session');
   document.body.classList.remove('chat-mode');
   try {
@@ -80,7 +91,7 @@ async function go() {
       case 'session': await renderSession(seq, state.route.id); break;
       case 'run': await renderRun(seq, state.route.id); break;
       case 'activity': await renderActivity(seq); break;
-      case 'settings': await renderSettings(seq); break;
+      case 'settings': await renderSettings(seq, state.route); break;
       default: renderNotFound();
     }
     if (seq === state.seq) { markSidebar(); enter() }
@@ -96,7 +107,7 @@ async function go() {
 // then waits rather than wiping what they were doing.
 function busy() {
   const a = document.activeElement;
-  return sheetOpen() || !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.value);
+  return sheetOpen() || !!state.dirty || !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.value);
 }
 
 // refresh re-renders the current view in place after a live event, except
@@ -145,7 +156,6 @@ async function renderHome(seq) {
   const reviewRows = review.map(it => { const r = itemRow(it, tints[it.project]); r.classList.add('phone-only'); return r });
   const forYou = [...g.forYou.map(row), ...reviewRows];
   const main = el('div.home-main', null,
-    el('header.page-head', null, el('h1', null, needs ? 'For you' : 'All quiet'), el('p', null, summary)),
     requests.length || orphans.length ? el('div.approvals', null, requests.map(a => requestCard(a, tints[a.project])), orphans.map(a => approvalCard(a, tints[a.project]))) : null,
     forYou.length ? el('div.row-list' + (g.forYou.length ? '' : '.phone-only'), null, forYou) : null,
     g.forYou.some(s => pendingFor(s.id).length) ? el('div.approvals', null, d.pending.filter(a => g.forYou.some(s => s.id === a.session)).map(a => approvalCard(a, tints[a.project]))) : null,
@@ -164,7 +174,10 @@ async function renderHome(seq) {
     next.length ? el('section.rail-card', null, el('h2', null, 'Up next'), next.map(it => railItem(it))) : null,
     use ? limitsCard(use.limits) : null,
     use ? tokensCard(use.hours) : null);
-  $('#app').replaceChildren(el('div.page.home', null, main, rail),
+  // The heading spans the page, so the list and the rail start level.
+  $('#app').replaceChildren(el('div.page.home', null,
+    el('header.page-head', null, el('h1', null, needs ? 'For you' : 'All quiet'), el('p', null, summary)),
+    el('div.home-grid', null, main, rail)),
     el('button.fab', { type: 'button', onclick: () => newSessionSheet(d.projects), 'aria-label': 'New chat' }, svg(ICON.plus)));
 }
 
@@ -233,10 +246,10 @@ function limitsCard(limits) {
         l.windows.map(w => {
           const over = w.resets && Date.parse(w.resets) <= Date.now();
           const used = over ? 0 : Math.round(w.used);
-          return el('div.use-win', { title: `${limitLabel(w)} limit: ${used}% used` },
-            el('div.use-row', null, el('span', null, limitLabel(w)), el('b', null, over ? 'reset' : `${used}% used`)),
-            bar(used),
-            w.resets && !over ? el('span.use-reset', null, 'resets ' + until(w.resets)) : null);
+          // One line a window: what, how full, how much, and when it resets.
+          return el('div.use-win', { title: `${limitLabel(w)} limit: ${used}% used` + (w.resets && !over ? ', resets ' + until(w.resets) : '') },
+            el('span.use-label', null, limitLabel(w)), bar(used), el('b', null, over ? '0%' : `${used}%`),
+            el('span.use-reset', null, w.resets && !over ? until(w.resets).replace(/^in /, '') : ''));
         }));
     }));
 }
@@ -499,9 +512,11 @@ async function renderProject(seq, name, tab = 'chats') {
       el('span', null, label), n ? el('span.n', null, String(n)) : null)));
   const body = tab === 'board' ? boardView(p.name, b) : tab === 'runs' ? runsView(d) : chatsView(p, d, b, live, ended);
   const page = el('div.page.project.tab-' + tab, null, head, tabBar, body);
-  // The board has its own add box; elsewhere the + starts a chat here.
-  if (tab === 'board') $('#app').replaceChildren(page);
-  else $('#app').replaceChildren(page, el('button.fab', { type: 'button', onclick: () => pickHarness(p), 'aria-label': 'New chat in ' + p.name }, svg(ICON.plus)));
+  // On a phone the + adds an item on the board and starts a chat elsewhere;
+  // a desktop board adds in each column.
+  $('#app').replaceChildren(page, tab === 'board'
+    ? el('button.fab', { type: 'button', onclick: () => newItemSheet(p.name, prefs.get('boardCol') || 'todo'), 'aria-label': 'New item' }, svg(ICON.plus))
+    : el('button.fab', { type: 'button', onclick: () => pickHarness(p), 'aria-label': 'New chat in ' + p.name }, svg(ICON.plus)));
 }
 
 const projectPath = (name, tab) => '/p/' + encodeURIComponent(name) + (tab && tab !== 'chats' ? '/' + tab : '');

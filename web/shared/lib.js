@@ -35,6 +35,7 @@ function duration(from, to) {
 
 const PROJECT = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const NAME = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
+const SETTINGS_SECTIONS = ['instructions', 'prompts', 'rules', 'github', 'secrets', 'bundles', 'access'];
 
 // route maps a URL path to a view. Names are validated here so a crafted URL
 // never reaches an API path.
@@ -43,6 +44,18 @@ function route(path) {
   if (path === '/' || path === '') return { name: 'home' };
   if (path === '/activity') return { name: 'activity' };
   if (path === '/settings') return { name: 'settings' };
+  // Settings: a section, or a bundle or a project's access to edit.
+  const set = /^\/settings\/([a-z]+)(?:\/([^/]+))?$/.exec(path);
+  if (set) {
+    const [, section, item] = set;
+    if (!SETTINGS_SECTIONS.includes(section)) return { name: 'notfound' };
+    if (item === undefined) return { name: 'settings', section };
+    let v;
+    try { v = decodeURIComponent(item) } catch { return { name: 'notfound' } }
+    if (section === 'bundles' && (v === 'new' || NAME.test(v))) return { name: 'settings', section, item: v };
+    if (section === 'access' && PROJECT.test(v)) return { name: 'settings', section, item: v };
+    return { name: 'notfound' };
+  }
   const t = /^\/p\/([^/]+)\/(board|runs)$/.exec(path);
   if (t) {
     let v;
@@ -180,27 +193,6 @@ function auditRow(e) {
   return { tone, verb, target: reveal(target) };
 }
 
-// rulesToText and rulesFromText turn a host's rules into lines of
-// "METHOD /path action" for the settings page, and back.
-function rulesToText(e) {
-  if (e.methods && e.methods.length) return e.methods.join(',') + ' /** auto';
-  return (e.rules || []).map(r => r.match + ' ' + r.action).join('\n');
-}
-
-function rulesFromText(text) {
-  const rules = [];
-  const lines = String(text).split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line || line.startsWith('#')) continue;
-    const m = /^(\S+)\s+(\/\S*)\s+(auto|ask|deny)$/.exec(line);
-    if (!m) return { error: `line ${i + 1}: write it as METHOD /path auto, ask or deny` };
-    rules.push({ match: m[1] + ' ' + m[2], action: m[3] });
-  }
-  if (!rules.length) return { error: 'add at least one rule, such as GET /** auto' };
-  return { rules };
-}
-
 // hostsFromText splits a list of hosts typed with commas, spaces or lines.
 const hostsFromText = text => String(text).split(/[\s,]+/).map(h => h.trim()).filter(Boolean);
 
@@ -280,4 +272,4 @@ function limitLabel(l) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-if (typeof module !== 'undefined') module.exports = { activitySeries, usageSeries, compactCount, limitLabel, boardSeries, rulesToText, rulesFromText, hostsFromText, ago, until, duration, route, auditRow, dropPosition, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal };
+if (typeof module !== 'undefined') module.exports = { activitySeries, usageSeries, compactCount, limitLabel, boardSeries, hostsFromText, ago, until, duration, route, auditRow, dropPosition, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal };
