@@ -12,7 +12,7 @@ To skip step 2's questions, paste [deploy/cloud-init.yaml](../deploy/cloud-init.
 ## Requirements
 
 - **A Linux host** with Docker. A VM is fine; allow about 4 GB of memory and a few cores per active project. On Debian and Ubuntu, the installer adds Docker if it's missing; elsewhere, [install it](https://docs.docker.com/engine/install/) first.
-- **A Tailscale tailnet.** Skybreaker joins it as its own machine, `skybreaker`.
+- **A Tailscale tailnet** with MagicDNS and HTTPS certificates turned on (admin console → DNS). Skybreaker joins it as its own machine, `skybreaker`, and serves the app over HTTPS with a certificate from Tailscale; without them, `https://skybreaker.<your-tailnet>.ts.net` fails with a TLS error.
 - **A GitHub account or organization** for the repos agents will work on. Skybreaker creates its GitHub App for you (see [GitHub](#github)).
 
 gVisor is required, and the installer adds it if it's missing.

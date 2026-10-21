@@ -1,4 +1,6 @@
-VERSION ?= 0.0.1
+# A local build is named after the commit it's from, without the v a release
+# has, so the installer and the client take it for a hand build.
+VERSION ?= $(or $(shell git describe --tags --always --dirty 2>/dev/null | sed 's/^v//'),dev)
 LDFLAGS := -s -w -X main.Version=$(VERSION)
 XTERM   := 5.5.0
 FIT     := 0.10.0

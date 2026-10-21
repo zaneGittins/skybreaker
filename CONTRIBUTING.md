@@ -15,8 +15,7 @@ Skybreaker is maintained by a single developer. Contributions are welcome and ap
 # Clone the repo
 git clone https://github.com/zaneGittins/skybreaker.git
 
-# Build and test
-make deps vendor
+# Build and test (Go 1.27.2 or newer; node runs the UI's JS tests if it's installed)
 make
 
 # Work on the UI with scripted agents, no sandbox needed
@@ -29,7 +28,8 @@ More in [docs/development.md](docs/development.md).
 
 - Keep PRs focused on a single change.
 - Include a clear description of what and why.
-- Ensure `go vet`, `gofmt` and the tests pass (`go test -race ./...`).
+- Work test-first: a failing test, then the change. Security-boundary packages (the broker, sandboxes, auth) keep hostile cases: traversal, encoded separators, replay, foreign credentials, rebinding, protocol violations.
+- Ensure `go vet`, `gofmt` and the tests pass: `go test -race ./...`, `go test -tags nodeps ./...`, and for installer changes `(cd setup && go vet ./... && go test -race ./...)`.
 - Sign the [CLA](CLA.md) by commenting on your PR: *"I have read the CLA Document and I hereby sign the CLA"*
 
 ## Code Style
@@ -40,4 +40,4 @@ More in [docs/development.md](docs/development.md).
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [AGPL-3.0](LICENSE).
+Your contributions are licensed under the [AGPL-3.0](LICENSE). The [CLA](CLA.md) you sign also lets the maintainer offer them under other terms, such as a commercial license.

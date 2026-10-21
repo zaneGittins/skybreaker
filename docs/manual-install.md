@@ -15,7 +15,7 @@ docker info --format '{{json .Runtimes}}'                   # must list runsc
 ## 2. Build and install
 
 ```sh
-make deps vendor && make
+make
 sudo useradd --system --home /var/lib/skybreaker --shell /usr/sbin/nologin --groups docker skybreaker
 sudo install -m 755 bin/skybreaker /usr/local/bin/
 sudo install -d -m 700 -o skybreaker /etc/skybreaker
@@ -33,7 +33,7 @@ sudo chown skybreaker /etc/skybreaker/*.yaml && sudo chmod 600 /etc/skybreaker/*
 In `skybreaker.yaml`, set:
 
 - `users`: the tailnet logins allowed to use Skybreaker and answer approvals.
-- `ui_url`: `https://skybreaker.<your-tailnet>.ts.net`.
+- `ui_url`: `https://skybreaker.<your-tailnet>.ts.net`. The tailnet needs MagicDNS and HTTPS certificates turned on (admin console → DNS) for that address to serve.
 - `broker.netguard.block`: your LAN, so agents can't reach it through the broker.
 - `projects`: one per repo, with what its sandbox may reach in `allow` and `capabilities`.
 

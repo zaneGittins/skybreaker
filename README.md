@@ -56,7 +56,7 @@ More in [ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [security model](docs/se
 
 ## Get started
 
-You need a Linux host (on Debian and Ubuntu the installer adds Docker), a Tailscale tailnet and a GitHub account for your repos. Then:
+You need a Linux host (on Debian and Ubuntu the installer adds Docker), a Tailscale tailnet with MagicDNS and HTTPS certificates turned on, and a GitHub account for your repos. Then:
 
 ```sh
 curl -fsSL https://github.com/zaneGittins/skybreaker/releases/latest/download/install.sh | sh
@@ -73,9 +73,12 @@ curl -fsSL https://github.com/zaneGittins/skybreaker/releases/latest/download/in
 To build from source:
 
 ```sh
-make deps vendor   # tsnet and YAML (the server's only third-party modules), and xterm.js
 make               # vet, test, build: bin/skybreaker and bin/skybreaker-setup
 ```
+
+Go fetches the modules pinned in `go.mod`, and xterm.js is in the repository; `make deps` and `make vendor` are for bumping them.
+
+Skybreaker is young: releases are before 1.0, and one may change the config file. Each release's notes say what to update, and `sudo skybreaker-setup upgrade` checks your config before changing anything.
 
 ## License
 

@@ -4,3 +4,5 @@
 .claude/
 # Notes for local coding agents; not part of the project.
 CLAUDE.md
+# A local development config (docs/development.md).
+skybreaker.dev.yaml

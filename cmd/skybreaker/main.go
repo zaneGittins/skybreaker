@@ -19,7 +19,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/controld"
 )
 
-var Version = "0.0.1"
+var Version = "dev"
 
 func main() {
 	if len(os.Args) < 2 || slices.Contains(client.Commands, os.Args[1]) {

@@ -12,7 +12,7 @@ secrets_file: /etc/skybreaker/secrets.yaml
 
 sandbox:
   image: ghcr.io/zanegittins/skybreaker-sandbox:latest
-  memory: 8g
+  memory: 8g                            # a cap per sandbox; most use about 4 GB
   cpus: "4"
   # subnet_base: 10.89.0.0/16           # one /24 per project
   # hook_port: 7701
