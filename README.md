@@ -7,7 +7,7 @@
 
 <p align="center">
   <b>Coding agents that never see your credentials.</b><br>
-  Claude Code, Codex and pi in sandboxes on your own hardware, every request checked against your policy, driven from your phone.
+  Claude Code, Codex and pi in sandboxes on your own hardware, every request checked against your policy, driven from your phone, browser, terminal or VS Code.
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 
 ---
 
-Skybreaker runs coding agents per project inside gVisor sandboxes on a Linux host you control. Every request an agent makes leaves through Skybreaker's built-in broker, which holds the credentials, decides what's allowed and holds anything risky for your approval, down to which branches it may push and what its pull requests say. You drive the agents from a phone or a browser over Tailscale. It uses the official Claude Code and Codex CLIs, so your Claude and ChatGPT subscriptions work as they do in the vendors' own apps, and pi for your own keys or models you run yourself. It's one program, one config file and one machine.
+Skybreaker runs coding agents per project inside gVisor sandboxes on a Linux host you control. Every request an agent makes leaves through Skybreaker's built-in broker, which holds the credentials, decides what's allowed and holds anything risky for your approval, down to which branches it may push and what its pull requests say. You drive them over Tailscale from wherever you work: the web app on a desktop or phone, the agents' own terminal UIs on your laptop, or VS Code inside the sandbox. It uses the official Claude Code and Codex CLIs, so your Claude and ChatGPT subscriptions work as they do in the vendors' own apps, and pi for your own keys or models you run yourself. It's one program, one config file and one machine.
 
 <p align="center">
   <img src="docs/img/screen-home.png" alt="Home: an approval waiting, and chats ordered by what needs you" width="250">
@@ -37,10 +37,10 @@ Skybreaker runs coding agents per project inside gVisor sandboxes on a Linux hos
 
 - **Credentials stay out of reach.** The broker adds GitHub App tokens and API keys on the way out, and only to the hosts each secret is bound to.
 - **Deny by default.** Every host and request is allowed, held for your approval or denied by per-project policy. Everything that leaves is audited, with a kill switch.
-- **Chat from your phone.** Agents run in their structured modes and appear as a clean conversation, with tool calls, diffs, approvals and questions inline. The inbox shows what needs you first, and web push tells you when.
+- **Chat on a desktop or a phone.** Agents run in their structured modes and appear as a clean conversation in the web app, with tool calls, diffs, approvals and questions inline. The inbox shows what needs you first, and web push tells you when.
+- **Or from your terminal and editor.** `skybreaker` on your laptop attaches to a session in Claude Code's, Codex's or pi's own terminal UI, and opens a project's sandbox in desktop VS Code over SSH, all over your tailnet.
 - **A board per project.** Agents pick up, claim and hand back work through Skybreaker's MCP tools, scoped to their own project.
 - **Review and ship.** Read the workspace's changes against its base branch, then have the agent commit, push and open a pull request.
-- **Or from your terminal and editor.** `skybreaker` on your laptop attaches to a session in Claude Code's, Codex's or pi's own terminal UI, and opens a project's sandbox in desktop VS Code over SSH, all over your tailnet.
 - **Keeps itself current.** A weekly rebuild picks up new CLI versions and promotes them only after a protocol check.
 
 ## How it fits together
@@ -48,7 +48,7 @@ Skybreaker runs coding agents per project inside gVisor sandboxes on a Linux hos
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zaneGittins/skybreaker/main/docs/img/architecture-dark.svg">
-    <img src="https://raw.githubusercontent.com/zaneGittins/skybreaker/main/docs/img/architecture-light.svg" alt="Your phone reaches the app over Tailscale. The app drives agents in a gVisor sandbox per project. Every request from a sandbox leaves through the broker, which adds credentials." width="100%">
+    <img src="https://raw.githubusercontent.com/zaneGittins/skybreaker/main/docs/img/architecture-light.svg" alt="Your phone, browser, terminal or VS Code reaches the app over Tailscale. The app drives agents in a gVisor sandbox per project. Every request from a sandbox leaves through the broker, which adds credentials." width="100%">
   </picture>
 </p>
 
