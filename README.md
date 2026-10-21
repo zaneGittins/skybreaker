@@ -26,11 +26,9 @@
 Skybreaker runs coding agents per project inside gVisor sandboxes on a Linux host you control. Every request an agent makes leaves through Skybreaker's built-in broker, which holds the credentials, decides what's allowed and holds anything risky for your approval, down to which branches it may push and what its pull requests say. You drive them over Tailscale from wherever you work: the web app on a desktop or phone, the agents' own terminal UIs on your laptop, or VS Code inside the sandbox. It uses the official Claude Code and Codex CLIs, so your Claude and ChatGPT subscriptions work as they do in the vendors' own apps, and pi for your own keys or models you run yourself. It's one program, one config file and one machine.
 
 <p align="center">
-  <img src="docs/img/screen-home.png" alt="Home: an approval waiting, and chats ordered by what needs you" width="250">
+  <img src="docs/img/screen-desktop.png" alt="A chat on a desktop: the agent's plan, its tool calls and edits, and the result" width="560">
   &nbsp;
-  <img src="docs/img/screen-chat.png" alt="A chat with a plan, tool calls and their results" width="250">
-  &nbsp;
-  <img src="docs/img/screen-board.png" alt="A project's board, urgent work first" width="250">
+  <img src="docs/img/screen-home.png" alt="Home on a phone: an approval waiting, and chats ordered by what needs you" width="162">
 </p>
 
 ## What it does
