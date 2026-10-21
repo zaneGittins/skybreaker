@@ -79,7 +79,7 @@ def architecture(c):
     left, lw, host_x = 24, 180, 290
     sky_x, sb_x, fw, cw = 312, 704, 280, 240
     top, bottom = 76, 352
-    out = head(c, w, h, "Skybreaker architecture: your phone reaches the app over Tailscale; the app drives agents in a gVisor sandbox per project; every request from a sandbox leaves through the broker, which adds credentials.")
+    out = head(c, w, h, "Skybreaker architecture: your phone, browser, terminal or VS Code reaches the app over Tailscale; the app drives agents in a gVisor sandbox per project; every request from a sandbox leaves through the broker, which adds credentials.")
     out += [
         f'<rect x="{host_x}" y="20" width="{w - host_x - 16}" height="{h - 40}" rx="16" fill="{c["host"]}" stroke="{c["frame"]}"/>',
         f'<text class="caps" x="{host_x + 22}" y="48">ONE LINUX HOST</text>',
@@ -88,7 +88,7 @@ def architecture(c):
         f'<text class="frame-title" x="{sky_x + 42}" y="{top + 28}">skybreaker</text>',
         f'<rect x="{sb_x}" y="{top}" width="{fw}" height="{bottom - top}" rx="14" fill="none" stroke="{c["frame"]}" stroke-dasharray="5 5"/>',
         f'<text class="frame-title" x="{sb_x + 20}" y="{top + 28}">gVisor sandbox<tspan class="sub" dx="6">one per project</tspan></text>',
-        card(left, r1, lw, "Phone or browser", ["anywhere on", "your tailnet"]),
+        card(left, r1, lw, "Your devices", ["phone, browser, terminal,", "VS Code on your tailnet"]),
         card(left, r2, lw, "The internet", ["GitHub, model APIs,", "package registries"]),
         card(sky_x + 20, r1, cw, "App", ["chats, boards, inbox,", "approvals, activity"]),
         card(sky_x + 20, r2, cw, "Broker", ["holds every credential,", "decides what may leave"]),
