@@ -341,12 +341,63 @@ func (a *App) clone(project, repo string) *cloneRun {
 	a.clones[project] = c
 	go func() {
 		c.err = a.cloneWorkspace(project, repo)
+		if c.err == nil {
+			a.setupWorkspace(project)
+		}
 		a.clonesMu.Lock()
 		delete(a.clones, project)
 		a.clonesMu.Unlock()
 		close(c.done)
 	}()
 	return c
+}
+
+// WaitWorkspace waits for the clone and setup a new sandbox starts in the
+// background, if one is under way, so an agent starts with the tools the
+// setup script installs.
+func (a *App) WaitWorkspace(ctx context.Context, project string) error {
+	a.clonesMu.Lock()
+	c := a.clones[project]
+	a.clonesMu.Unlock()
+	if c == nil {
+		return nil
+	}
+	select {
+	case <-c.done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("sandbox %s is still being set up: %w", project, ctx.Err())
+	}
+}
+
+// setupTimeout bounds the repo's setup script.
+const setupTimeout = 10 * time.Minute
+
+// setupLog is where the setup script's output goes, inside the sandbox.
+const setupLog = "/var/log/skybreaker-setup.log"
+
+// setupScript runs the repo's .skybreaker/setup.sh, as root in the
+// workspace, once per container: a new container starts from the image, so
+// what the script put outside the home and workspace is gone. It prints
+// "ran" when the script ran and succeeded.
+const setupScript = `test -e /run/skybreaker-setup && exit 0
+touch /run/skybreaker-setup
+cd /workspace && test -f .skybreaker/setup.sh || exit 0
+bash .skybreaker/setup.sh </dev/null >"$1" 2>&1 && echo ran`
+
+// setupWorkspace runs the repo's setup script, saying how it went. A
+// failure doesn't stop agents starting.
+func (a *App) setupWorkspace(project string) {
+	ctx, cancel := context.WithTimeout(context.Background(), setupTimeout)
+	defer cancel()
+	out, err := a.sandbox.Exec(ctx, project, "sh", "-c", setupScript, "sh", setupLog)
+	switch {
+	case err != nil:
+		log.Printf("skybreaker: setup in %s: %v", project, err)
+		a.Publish(Event{Type: "sandbox", Project: project, Data: "setup failed: see " + setupLog + " in the sandbox"})
+	case strings.TrimSpace(string(out)) == "ran":
+		a.Publish(Event{Type: "sandbox", Project: project, Data: "setup done"})
+	}
 }
 
 // cloneWorkspace clones the project's repo into its workspace, through the

@@ -1,18 +1,24 @@
 # The Skybreaker sandbox image: one long-lived runsc container per project, with
-# the repo, toolchains, tmux, the harness CLIs and an inner dockerd.
+# the repo, toolchains, tmux, the harness CLIs, Chromium and an inner dockerd.
 # Build on the Skybreaker host (or pull ghcr.io/zanegittins/skybreaker-sandbox):
 #   docker build -t skybreaker-sandbox:0.0.1 images/sandbox
 # skybreaker-sandbox-update (deploy/) rebuilds it weekly with the newest CLIs and
 # promotes it only if they still speak what Skybreaker's chat drivers expect.
+ARG UV_VERSION=0.13.4
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+
 FROM ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG PLAYWRIGHT=0
+# PLAYWRIGHT=0 leaves the browser out, for a smaller image.
+ARG PLAYWRIGHT=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl gnupg git tmux tini bash less procps jq ripgrep make \
       build-essential python3 python3-pip python3-venv bubblewrap \
       docker.io docker-compose-v2 iproute2 openssh-server \
+      fd-find file tree unzip zip xz-utils sqlite3 shellcheck \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_*
 
 # Node, the current LTS line, for the harness CLIs (Ubuntu's is too old for
@@ -26,6 +32,10 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o 
     && echo "deb [signed-by=/usr/share/keyrings/githubcli.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 
+# uv, for the Python tools agents install themselves (ansible, ...), under
+# /root, which outlives the container.
+COPY --from=uv /uv /uvx /usr/local/bin/
+
 # Go, pinned by checksum, for the image's own architecture (an arm64 host
 # builds an arm64 image). Toolchain switches and modules come via the broker.
 ARG GO_VERSION=1.27.2
@@ -37,7 +47,8 @@ RUN arch="${TARGETARCH:-$(dpkg --print-architecture)}" \
     && curl -fsSL -o /tmp/go.tgz "https://go.dev/dl/go${GO_VERSION}.linux-${arch}.tar.gz" \
     && echo "${sum}  /tmp/go.tgz" | sha256sum -c - \
     && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz
-ENV PATH=/usr/local/go/bin:/root/go/bin:$PATH
+# What agents install goes last, so it never shadows the harnesses' own.
+ENV PATH=/usr/local/go/bin:/root/go/bin:$PATH:/root/.local/bin:/root/.local/share/mise/shims
 
 # Harness CLIs, from the builtin harness manifests' install lines. Retried:
 # a CLI can resolve a dependency version (an AWS SDK package, say) while its
@@ -49,7 +60,18 @@ RUN for try in 1 2 3; do \
     done \
     && npm cache clean --force
 
-RUN if [ "$PLAYWRIGHT" = "1" ]; then npx -y playwright install --with-deps chromium; fi
+# mise, for the other tools agents install themselves (terraform, doctl,
+# ...), likewise under /root. npm has it for every architecture.
+RUN npm install -g @jdxcode/mise && npm cache clean --force
+
+# Chromium and its libraries, for screenshots and browser tests. Outside
+# /root, which the home directory mounts over. Projects pinning another
+# Playwright fetch their own build from its CDN.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN if [ "$PLAYWRIGHT" = "1" ]; then \
+      npm install -g playwright && playwright install --with-deps chromium \
+      && npm cache clean --force && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 COPY docker-daemon.json /etc/docker/daemon.json
 COPY gitconfig /etc/gitconfig
@@ -71,6 +93,7 @@ RUN chmod 755 /usr/local/bin/skybreaker-entrypoint /usr/local/bin/skybreaker-che
 ENV GIT_TERMINAL_PROMPT=0 \
     GH_PROMPT_DISABLED=1 \
     DISABLE_AUTOUPDATER=1 \
+    MISE_USE_VERSIONS_HOST=false \
     TERM=xterm-256color
 
 WORKDIR /workspace

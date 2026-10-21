@@ -117,6 +117,19 @@ To see what an agent is building, open the project's menu (or **Preview** on a d
 
 A preview page loads only from its own server, so fonts or scripts from CDNs don't load there. Its cookies are `HttpOnly`, so frameworks that read a CSRF cookie from script (Django's `csrftoken`, `XSRF-TOKEN`) need it sent another way while previewed.
 
+## Tools in the sandbox
+
+The sandbox image has git, gh, Go, Node, Python, Docker, ripgrep, fd, jq, shellcheck, sqlite3 and Chromium with Playwright (`playwright screenshot <url> shot.png`). Agents install anything else themselves, under `/root`, which outlives the container:
+
+```sh
+mise use -g terraform doctl     # most CLIs, from their GitHub or HashiCorp releases
+uv tool install ansible-core    # Python tools
+```
+
+The `tools` capability lets a project reach where these come from: PyPI, Ansible Galaxy, HashiCorp's releases and Playwright's browsers; the `github` capability adds public GitHub release downloads. `apt install` works too where a project allows Ubuntu's mirrors, but is lost when the sandbox restarts onto a new image.
+
+For setup every container needs, commit `.skybreaker/setup.sh` to the repository. A new sandbox runs it as root in `/workspace` once the repository is cloned, logging to `/var/log/skybreaker-setup.log`, and chats and scheduled runs wait for it (up to 10 minutes). Terminals open at once.
+
 ## Usage
 
 On a desktop, the home page shows the tokens your chats and scheduled runs used each day for the last two weeks, by harness, and how much of your Claude and Codex plans' 5-hour and weekly limits is used, as each last reported it. Only harnesses that reported anything appear. Terminal sessions report nothing to Skybreaker, so they aren't counted. The counts are kept for a month in `usage.json` in the data directory.
