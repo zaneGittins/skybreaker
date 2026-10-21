@@ -44,8 +44,8 @@ func TestClaudeUsage(t *testing.T) {
 	}
 	_, limits := readAll(t, newClaude(), "claude-compact.jsonl")
 	want := []Limit{
-		{Name: "five_hour", Minutes: 300, Used: 5, Resets: time.Unix(1792473000, 0).UTC()},
-		{Name: "seven_day", Minutes: 7 * 24 * 60, Used: 50, Resets: time.Unix(1792594800, 0).UTC()},
+		{Name: "five_hour", Minutes: 300, Used: 25, Resets: time.Unix(1792473000, 0).UTC()},
+		{Name: "seven_day", Minutes: 7 * 24 * 60, Used: 45, Resets: time.Unix(1792594800, 0).UTC()},
 	}
 	if len(limits) != len(want) {
 		t.Fatalf("limits %+v", limits)

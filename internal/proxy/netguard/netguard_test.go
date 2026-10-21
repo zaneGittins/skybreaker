@@ -25,7 +25,7 @@ func TestAllowedDefaults(t *testing.T) {
 		"10.1.2.3":               false,
 		"172.16.0.1":             false,
 		"172.31.255.255":         false,
-		"192.168.77.241":          false,
+		"192.168.77.241":         false,
 		"169.254.169.254":        false, // cloud metadata
 		"100.64.0.1":             false, // tailnet CGNAT
 		"100.100.100.100":        false, // Tailscale DNS
