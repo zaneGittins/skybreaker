@@ -1,8 +1,17 @@
 # Getting started
 
+## Quick start
+
+1. **Make a server.** A new Debian or Ubuntu VM with about 4 GB of memory and a few cores per active project.
+2. **Install.** On the server, run the line under [Install](#install). It adds Docker, gVisor and nftables, then asks for your tailnet login, tailnet name and repo. Leave the auth key empty: once Skybreaker starts, the installer shows a link, and you approve the machine on your tailnet from it.
+3. **Connect GitHub.** Open `https://skybreaker.<your-tailnet>.ts.net/settings`, choose **Create GitHub App** and install it on your repo.
+4. **Start a chat.** Tap **+**, pick Claude or Codex, and sign in once.
+
+To skip step 2's questions, paste [deploy/cloud-init.yaml](../deploy/cloud-init.yaml) into the server's user data when you create it, with your own values. It installs everything as the server boots.
+
 ## Requirements
 
-- **A Linux host** with Docker. A VM is fine; allow about 4 GB of memory and a few cores per active project.
+- **A Linux host** with Docker. A VM is fine; allow about 4 GB of memory and a few cores per active project. On Debian and Ubuntu, the installer adds Docker if it's missing; elsewhere, [install it](https://docs.docker.com/engine/install/) first.
 - **A Tailscale tailnet.** Skybreaker joins it as its own machine, `skybreaker`.
 - **A GitHub account or organization** for the repos agents will work on. Skybreaker creates its GitHub App for you (see [GitHub](#github)).
 
@@ -14,9 +23,9 @@ gVisor is required, and the installer adds it if it's missing.
 curl -fsSL https://github.com/zaneGittins/skybreaker/releases/latest/download/install.sh | sh
 ```
 
-The installer asks for your tailnet login, a Tailscale auth key (admin console → Settings → Keys) and your first repo. Leave the GitHub App's fields empty to create the App afterwards in Settings, or give the ID and private key of one you made. It then installs gVisor and nftables, writes the config to `/etc/skybreaker`, validates it, installs the systemd units and sandbox image, and starts Skybreaker. If a step fails, fix the cause and run `sudo skybreaker-setup install` again; it picks up where it stopped.
+The installer asks for your tailnet login, your tailnet's name and your first repo. A Tailscale auth key (admin console → Settings → Keys) is optional: without one, the installer shows a sign-in link once Skybreaker starts and waits while you approve the machine. `sudo skybreaker-setup status` shows the link again if you miss it. Either way, turn off key expiry for the `skybreaker` machine in the admin console, or it drops off the tailnet when its key expires. Leave the GitHub App's fields empty to create the App afterwards in Settings, or give the ID and private key of one you made. It then installs gVisor and nftables, writes the config to `/etc/skybreaker`, validates it, installs the systemd units and sandbox image, and starts Skybreaker. If a step fails, fix the cause and run `sudo skybreaker-setup install` again; it picks up where it stopped.
 
-For unattended installs:
+For unattended installs, which need the auth key:
 
 ```sh
 sudo TS_AUTHKEY=tskey-auth-... skybreaker-setup install --yes \

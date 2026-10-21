@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -119,5 +120,74 @@ func TestRegisterRunscRefusesBrokenDaemonJSON(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(l.Docker); string(b) != `{"log-driver": ` || f.ran("systemctl restart docker") {
 		t.Error("touched a daemon.json it couldn't read")
+	}
+}
+
+func osRelease(t *testing.T, l *Layout, content string) {
+	t.Helper()
+	l.OSRelease = filepath.Join(t.TempDir(), "os-release")
+	if err := os.WriteFile(l.OSRelease, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrereqsFixDockerOnDebianAndUbuntu(t *testing.T) {
+	for _, c := range []struct{ release, distro, codename string }{
+		{"PRETTY_NAME=\"Ubuntu 24.04.3 LTS\"\nID=ubuntu\nID_LIKE=debian\nVERSION_CODENAME=noble\n", "ubuntu", "noble"},
+		{"ID=debian\nVERSION_CODENAME='trixie'\n", "debian", "trixie"},
+	} {
+		l := testLayout(t)
+		osRelease(t, &l, c.release)
+		f := newFakeRunner(l)
+		f.fail["docker"] = errors.New("not found")
+		f.fail["runsc"] = errors.New("not found")
+		h := &Host{Layout: l, Cmd: f}
+		checks := h.Prereqs(context.Background())
+		if b := Blocked(checks); len(b) != 0 {
+			t.Fatalf("%s: blocked: %v", c.distro, b)
+		}
+		m := checksByName(checks)
+		// Registering runsc needs Docker, which the fixes install first.
+		for _, n := range []string{"Docker", "gVisor", "gVisor in Docker"} {
+			if m[n].OK || m[n].Fix == nil {
+				t.Errorf("%s: %s: %+v", c.distro, n, m[n])
+			}
+		}
+		if err := m["Docker"].Fix.Apply(context.Background(), h); err != nil {
+			t.Fatal(err)
+		}
+		if !f.ran("sh -c " + dockerAptScript + " sh " + c.distro + " " + c.codename) {
+			t.Errorf("%s: calls:\n%s", c.distro, strings.Join(f.calls, "\n"))
+		}
+	}
+}
+
+func TestPrereqsDockerElsewhereBlocks(t *testing.T) {
+	for _, release := range []string{
+		"ID=fedora\nVERSION_CODENAME=\n",
+		"ID=linuxmint\nID_LIKE=\"ubuntu debian\"\nVERSION_CODENAME=wilma\n",
+		"ID=ubuntu\nVERSION_CODENAME=\"noble; rm -rf /\"\n",
+		"ID=debian\n",
+	} {
+		l := testLayout(t)
+		osRelease(t, &l, release)
+		f := newFakeRunner(l)
+		f.fail["docker"] = errors.New("not found")
+		c := checksByName((&Host{Layout: l, Cmd: f}).Prereqs(context.Background()))["Docker"]
+		if c.Fix != nil || !strings.Contains(c.Detail, "docs.docker.com") {
+			t.Errorf("%q: %+v", release, c)
+		}
+	}
+}
+
+func TestPrereqsDockerNotRunning(t *testing.T) {
+	l := testLayout(t)
+	osRelease(t, &l, "ID=ubuntu\nVERSION_CODENAME=noble\n")
+	f := newFakeRunner(l)
+	f.fail["docker version"] = errors.New("Cannot connect to the Docker daemon")
+	f.out["docker --version"] = "Docker version 28.4.0"
+	c := checksByName((&Host{Layout: l, Cmd: f}).Prereqs(context.Background()))["Docker"]
+	if c.OK || c.Fix != nil || !strings.Contains(c.Detail, "not running") {
+		t.Errorf("%+v", c)
 	}
 }

@@ -61,7 +61,7 @@ func NewWizard(defaults Answers, checks []Check) *Wizard {
 					get: func(a *Answers) string { return list(a.Users) }, set: func(a *Answers, s string) { a.Users = SplitList(s) }},
 				{label: "Tailnet name", hint: "admin console, DNS: such as tail1234.ts.net",
 					get: func(a *Answers) string { return a.Tailnet }, set: func(a *Answers, s string) { a.Tailnet = strings.ToLower(strings.TrimSpace(s)) }},
-				{label: "Auth key", hint: "admin console, Settings, Keys, Generate auth key; needed for the first start only",
+				{label: "Auth key", hint: "optional: empty to approve Skybreaker from a link once it starts; or admin console, Settings, Keys",
 					get: func(a *Answers) string { return a.AuthKey }, set: func(a *Answers, s string) { a.AuthKey = strings.TrimSpace(s) }},
 			},
 			check: (*Answers).ValidateTailscale,
@@ -301,7 +301,7 @@ func (w *Wizard) viewPage(p *page) string {
 
 func (w *Wizard) viewSummary() string {
 	a := &w.a
-	key := "not set"
+	key := "none: approve the machine from a link after the install"
 	if a.AuthKey != "" {
 		key = a.AuthKey[:min(len(a.AuthKey), 14)] + "…"
 	}

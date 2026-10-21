@@ -159,6 +159,10 @@ func install(ctx context.Context, h *setup.Host, unattended bool, flags func(*se
 		if err := d.Validate(); err != nil {
 			fatal(err)
 		}
+		// Nobody is there to open a sign-in link.
+		if d.AuthKey == "" {
+			fatal(errors.New("an unattended install needs a Tailscale auth key in TS_AUTHKEY"))
+		}
 		a = &d
 	default:
 		d := h.Defaults(ctx)
