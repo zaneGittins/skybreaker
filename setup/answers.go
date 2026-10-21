@@ -28,7 +28,7 @@ var Harnesses = []string{"claude", "codex", "pi"}
 type Answers struct {
 	Users   []string // tailnet logins allowed in, such as you@github
 	Tailnet string   // the tailnet's DNS name, such as tail1234.ts.net
-	AuthKey string   // a Tailscale auth key, for the first start only
+	AuthKey string   // a Tailscale auth key, for the first start only; empty to approve the machine from a link
 
 	AppID  string // the GitHub App's ID; empty with AppKey to create it in Settings later
 	AppKey string // path to its private key on this host
@@ -63,8 +63,8 @@ func (a *Answers) ValidateTailscale() error {
 	if !tailnetRe.MatchString(a.Tailnet) {
 		errs = append(errs, errors.New("tailnet name: use its DNS name, such as tail1234.ts.net (admin console, DNS)"))
 	}
-	if !strings.HasPrefix(a.AuthKey, "tskey-") || strings.ContainsFunc(a.AuthKey, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) {
-		errs = append(errs, errors.New("auth key: paste a key from the admin console (Settings, Keys); it starts with tskey-"))
+	if a.AuthKey != "" && (!strings.HasPrefix(a.AuthKey, "tskey-") || strings.ContainsFunc(a.AuthKey, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) })) {
+		errs = append(errs, errors.New("auth key: paste a key from the admin console (Settings, Keys); it starts with tskey-. Or leave it empty"))
 	}
 	return errors.Join(errs...)
 }
@@ -173,8 +173,9 @@ type File struct {
 	Mode os.FileMode
 }
 
-// Files renders the config, the secrets, the Tailscale auth key and a copy
-// of the App's private key, all readable by the skybreaker user alone.
+// Files renders the config, the secrets, the Tailscale auth key (an empty
+// env file without one) and a copy of the App's private key, all readable
+// by the skybreaker user alone.
 func (a *Answers) Files(l Layout) ([]File, error) {
 	if err := a.Validate(); err != nil {
 		return nil, err
@@ -217,7 +218,10 @@ func (a *Answers) Files(l Layout) ([]File, error) {
 	files := []File{
 		{l.Config(), cfg.Bytes(), 0o600},
 		{l.Secrets(), sec.Bytes(), 0o600},
-		{filepath.Join(l.Etc, "env"), []byte("TS_AUTHKEY=" + a.AuthKey + "\n"), 0o600},
+		{filepath.Join(l.Etc, "env"), nil, 0o600},
+	}
+	if a.AuthKey != "" {
+		files[2].Data = []byte("TS_AUTHKEY=" + a.AuthKey + "\n")
 	}
 	if key != nil {
 		files = append(files, File{l.AppKey(), key, 0o600})

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/zaneGittins/skybreaker"
 )
@@ -48,7 +49,12 @@ func (h *Host) Install(ctx context.Context, a *Answers, checks []Check) error {
 			fixes = append(fixes, c.Fix)
 		}
 	}
-	h.Out.Steps(len(fixes) + 7)
+	join := a != nil && a.AuthKey == ""
+	steps := len(fixes) + 7
+	if join {
+		steps += 2
+	}
+	h.Out.Steps(steps)
 	for _, f := range fixes {
 		h.Out.Step(f.Step)
 		if err := f.Apply(ctx, h); err != nil {
@@ -116,10 +122,75 @@ func (h *Host) Install(ctx context.Context, a *Answers, checks []Check) error {
 		return h.fail("Starting Skybreaker", err)
 	}
 	h.Out.Done("Skybreaker " + rel + " is running")
+	if join {
+		if err := h.joinTailnet(ctx); err != nil {
+			return err
+		}
+	}
 	if a != nil && a.AppLater() {
 		h.Out.Note("Next: create the GitHub App at " + a.UIURL() + "/settings")
 	}
 	return nil
+}
+
+// joinPolls is how many times, two seconds apart, joinTailnet reads the log
+// before giving up: ten minutes to open the link and approve.
+const joinPolls = 300
+
+// joinTailnet waits for Skybreaker, started without an auth key, to log
+// its sign-in link, shows it, and waits for the machine to be approved.
+func (h *Host) joinTailnet(ctx context.Context) error {
+	h.Out.Step("Waiting for Skybreaker's sign-in link")
+	shown := ""
+	for i := 0; ; i++ {
+		link, up := h.tailnetLogin(ctx)
+		switch {
+		case up && shown == "":
+			h.Out.Done("Skybreaker is on your tailnet")
+			return nil
+		case up:
+			h.Out.Done("Approved: Skybreaker is on your tailnet")
+			return nil
+		case link != "" && link != shown:
+			if shown == "" {
+				h.Out.Done("Approve Skybreaker on your tailnet: open this link and sign in")
+			} else {
+				h.Out.Warn("The sign-in link changed")
+			}
+			h.Out.Note(link)
+			h.Out.Step("Waiting for you to approve it")
+			shown = link
+		}
+		if i >= joinPolls || ctx.Err() != nil {
+			h.Out.Fail("Skybreaker isn't on your tailnet yet")
+			return errors.New("it's still waiting for approval; sudo skybreaker-setup status shows the link")
+		}
+		h.Sleep(2 * time.Second)
+	}
+}
+
+// tsnet logs the link every few seconds until the machine is approved, and
+// Skybreaker logs its UI address once it's up (controld.Run).
+var (
+	authLinkRe = regexp.MustCompile(`or go to: (https://\S+)`)
+	upLineRe   = regexp.MustCompile(`(?m)^.*skybreaker \S+: UI on `)
+)
+
+// tailnetLogin reads the running service's log for the last sign-in link
+// tsnet printed, and whether Skybreaker has since come up.
+func (h *Host) tailnetLogin(ctx context.Context) (link string, up bool) {
+	id, err := h.run(ctx, "systemctl", "show", "-p", "InvocationID", "--value", "skybreaker")
+	if err != nil || id == "" {
+		return "", false
+	}
+	log, _ := h.run(ctx, "journalctl", "_SYSTEMD_INVOCATION_ID="+id, "--no-pager", "-o", "cat")
+	if upLineRe.MatchString(log) {
+		return "", true
+	}
+	if m := authLinkRe.FindAllStringSubmatch(log, -1); m != nil {
+		link = m[len(m)-1][1]
+	}
+	return link, false
 }
 
 func (h *Host) fail(step string, err error) error {
@@ -455,6 +526,9 @@ func (h *Host) Status(ctx context.Context, w io.Writer) {
 			style = ErrorStyle
 		}
 		fmt.Fprintf(w, "  %-34s %s\n", u, style.Render(orNone(state)))
+	}
+	if link, up := h.tailnetLogin(ctx); !up && link != "" {
+		fmt.Fprintf(w, "\n  %s\n  %s\n", WarnStyle.Render("Waiting to be approved on your tailnet: open this link and sign in"), link)
 	}
 	if u := configuredURL(h.Config()); u != "" {
 		fmt.Fprintf(w, "\n  %s\n", AccentStyle.Render(u))

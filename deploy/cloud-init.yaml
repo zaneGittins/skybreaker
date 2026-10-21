@@ -1,0 +1,21 @@
+#cloud-config
+# Skybreaker on a new Debian or Ubuntu server, with no questions asked.
+# Paste this as the server's user data (DigitalOcean, Hetzner, AWS and most
+# others have a field for it) after replacing the four values below.
+# skybreaker-setup installs Docker, gVisor and nftables, then Skybreaker;
+# follow it in /var/log/cloud-init-output.log.
+#
+# TS_AUTHKEY is a Tailscale auth key (admin console, Settings, Keys). The
+# provider keeps user data readable from its metadata service (Skybreaker
+# keeps sandboxes away from it), so make the key one-off, not reusable.
+runcmd:
+  - - sh
+    - -c
+    - |
+      set -e
+      export TS_AUTHKEY=tskey-auth-REPLACE-ME
+      curl -fsSL https://github.com/zaneGittins/skybreaker/releases/latest/download/install.sh |
+        sh -s -- install --yes \
+          --login you@github \
+          --tailnet tail1234.ts.net \
+          --repo you/project

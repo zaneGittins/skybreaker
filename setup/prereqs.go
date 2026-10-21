@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/zaneGittins/skybreaker"
@@ -40,7 +41,8 @@ func Blocked(checks []Check) []Check {
 
 // Prereqs checks the host: systemd, Docker, nftables and gVisor registered
 // with Docker. Missing gVisor and nftables are installed from apt where
-// there is apt; everything else is the user's to install.
+// there is apt, and Docker from Docker's own apt repository on Debian and
+// Ubuntu; everything else is the user's to install.
 func (h *Host) Prereqs(ctx context.Context) []Check {
 	first := func(s string) string { l, _, _ := strings.Cut(s, "\n"); return l }
 	_, aptErr := h.run(ctx, "apt-get", "--version")
@@ -58,6 +60,14 @@ func (h *Host) Prereqs(ctx context.Context) []Check {
 	docker := Check{Name: "Docker"}
 	if out, err := h.run(ctx, "docker", "version", "--format", "{{.Server.Version}}"); err == nil {
 		docker.OK, docker.Detail = true, "Docker "+first(out)
+	} else if _, err := h.run(ctx, "docker", "--version"); err == nil {
+		docker.Detail = "Docker is installed but not running: systemctl enable --now docker"
+	} else if distro, codename := dockerDistro(h.OSRelease); apt && distro != "" && codename != "" {
+		docker.Detail, docker.Fix = "not installed", &Fix{Title: "Install Docker Engine from Docker's apt repository", Step: "Installing Docker", Done: "Installed Docker",
+			Apply: func(ctx context.Context, h *Host) error {
+				_, err := h.run(ctx, "sh", "-c", dockerAptScript, "sh", distro, codename)
+				return err
+			}}
 	} else {
 		docker.Detail = "install Docker Engine and start it: https://docs.docker.com/engine/install/"
 	}
@@ -87,7 +97,7 @@ func (h *Host) Prereqs(ctx context.Context) []Check {
 	}
 	checks = append(checks, gvisor)
 
-	if docker.OK && (gvisor.OK || gvisor.Fix != nil) {
+	if (docker.OK || docker.Fix != nil) && (gvisor.OK || gvisor.Fix != nil) {
 		c = Check{Name: "gVisor in Docker"}
 		if out, err := h.run(ctx, "docker", "info", "--format", "{{json .Runtimes}}"); err == nil && strings.Contains(out, `"runsc"`) {
 			c.OK, c.Detail = true, "runsc is registered"
@@ -98,6 +108,47 @@ func (h *Host) Prereqs(ctx context.Context) []Check {
 	}
 	return checks
 }
+
+// dockerDistro reads the os-release file for the distribution and release
+// Docker's apt repository is named by, or "" for one it doesn't serve.
+func dockerDistro(osRelease string) (distro, codename string) {
+	b, err := os.ReadFile(osRelease)
+	if err != nil {
+		return "", ""
+	}
+	v := map[string]string{}
+	for _, l := range strings.Split(string(b), "\n") {
+		if k, val, ok := strings.Cut(strings.TrimSpace(l), "="); ok {
+			v[k] = strings.Trim(val, `"'`)
+		}
+	}
+	switch v["ID"] {
+	case "debian", "ubuntu":
+		distro, codename = v["ID"], v["VERSION_CODENAME"]
+	default:
+		return "", ""
+	}
+	if !codenameRe.MatchString(codename) {
+		return "", ""
+	}
+	return distro, codename
+}
+
+var codenameRe = regexp.MustCompile(`^[a-z]+$`)
+
+// docs.docker.com/engine/install/ubuntu (and debian), the apt repository:
+// $1 is the distribution, $2 its codename.
+const dockerAptScript = `set -e
+apt-get update
+apt-get install -y ca-certificates curl
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL "https://download.docker.com/linux/$1/gpg" -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$1 $2 stable" > /etc/apt/sources.list.d/docker.list
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+systemctl enable --now docker
+`
 
 // gvisor.dev/docs/user_guide/install, the apt repository.
 const gvisorAptScript = `set -e

@@ -24,6 +24,8 @@ type Layout struct {
 	Units  string // systemd units
 	Image  string // the sandbox image's build context, for the weekly rebuild
 	Docker string // dockerd's daemon.json
+
+	OSRelease string // os-release, read for the distribution Docker is installed for
 }
 
 // DefaultLayout matches the paths in deploy/*.service.
@@ -34,6 +36,8 @@ var DefaultLayout = Layout{
 	Units:  "/etc/systemd/system",
 	Image:  "/opt/skybreaker/image",
 	Docker: "/etc/docker/daemon.json",
+
+	OSRelease: "/etc/os-release",
 }
 
 func (l Layout) Config() string  { return filepath.Join(l.Etc, "skybreaker.yaml") }

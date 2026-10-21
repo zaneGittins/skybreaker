@@ -168,7 +168,6 @@ func TestValidate(t *testing.T) {
 		{"login", func(a *Answers) { a.Users = []string{"you @github"} }},
 		{"tailnet", func(a *Answers) { a.Tailnet = "" }},
 		{"tailnet", func(a *Answers) { a.Tailnet = "https://tail1234.ts.net" }},
-		{"auth key", func(a *Answers) { a.AuthKey = "" }},
 		{"auth key", func(a *Answers) { a.AuthKey = "hunter2" }},
 		{"auth key", func(a *Answers) { a.AuthKey = "tskey-auth-x\nSKYBREAKER_DO_TOKEN=y" }},
 		{"App ID", func(a *Answers) { a.AppID = "abc" }},
@@ -191,10 +190,29 @@ func TestValidate(t *testing.T) {
 		}
 	}
 	a := testAnswers(t)
-	a.GitName, a.GitEmail, a.Block = "", "", nil
+	a.GitName, a.GitEmail, a.Block, a.AuthKey = "", "", nil, ""
 	if err := a.Validate(); err != nil {
 		t.Errorf("optional fields: %v", err)
 	}
+}
+
+func TestFilesWithoutAuthKey(t *testing.T) {
+	l := testLayout(t)
+	a := testAnswers(t)
+	a.AuthKey = ""
+	files, err := a.Files(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if f.Path == filepath.Join(l.Etc, "env") {
+			if len(f.Data) != 0 || f.Mode != 0o600 {
+				t.Errorf("env = %q, mode %v", f.Data, f.Mode)
+			}
+			return
+		}
+	}
+	t.Error("no env file: a key from an earlier install would stay")
 }
 
 func TestProjectName(t *testing.T) {

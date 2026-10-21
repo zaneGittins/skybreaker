@@ -364,6 +364,8 @@ func Run(ctx context.Context, o Options) error {
 			}
 		}
 	}()
+	// skybreaker-setup reads this line to tell the service is on the
+	// tailnet (setup/install.go, upLineRe).
 	log.Printf("skybreaker %s: UI on %s, hooks on %s, broker on %s, %d projects, %d jobs", o.Version, ul.Addr(), hl.Addr(), pl.Addr(), len(cfg.Projects), len(cfg.Jobs))
 	if o.Ready != nil {
 		o.Ready(ul.Addr(), hl.Addr(), pl.Addr())

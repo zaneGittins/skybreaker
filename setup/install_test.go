@@ -342,3 +342,62 @@ func TestUpgradeReplacesHandBuild(t *testing.T) {
 		t.Errorf("binary = %q\n%s", b, out)
 	}
 }
+
+// tailnetJournal makes the running service log a sign-in link, and come up
+// once the installer has waited for it.
+func tailnetJournal(h *Host, f *fakeRunner, approve bool) {
+	f.out["systemctl show -p InvocationID"] = "inv1\n"
+	f.out["journalctl _SYSTEMD_INVOCATION_ID=inv1"] = "2026/10/21 10:00:00 To start this tsnet server, restart with TS_AUTHKEY set, or go to: https://login.tailscale.com/a/abc123\n"
+	h.Sleep = func(time.Duration) {
+		if approve && f.ran("journalctl") {
+			f.mu.Lock()
+			f.out["journalctl _SYSTEMD_INVOCATION_ID=inv1"] += "2026/10/21 10:00:09 skybreaker v1.1.0: UI on 100.64.0.1:443, hooks on 10.0.0.1:8080, broker on 10.0.0.1:3128, 1 projects, 0 jobs\n"
+			f.mu.Unlock()
+		}
+	}
+}
+
+func TestInstallWithoutAuthKeyShowsSignInLink(t *testing.T) {
+	h, f, out := testHost(t, map[string]string{"v1.1.0": "v1.1.0"})
+	tailnetJournal(h, f, true)
+	a := testAnswers(t)
+	a.AuthKey = ""
+	if err := h.Install(context.Background(), &a, readyChecks()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{"https://login.tailscale.com/a/abc123", "Approved: Skybreaker is on your tailnet"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("no %q in:\n%s", want, out)
+		}
+	}
+	if strings.Count(out.String(), "login.tailscale.com") != 1 {
+		t.Errorf("the link is shown more than once:\n%s", out)
+	}
+}
+
+func TestInstallWithoutAuthKeyGivesUp(t *testing.T) {
+	h, f, _ := testHost(t, map[string]string{"v1.1.0": "v1.1.0"})
+	tailnetJournal(h, f, false)
+	a := testAnswers(t)
+	a.AuthKey = ""
+	err := h.Install(context.Background(), &a, readyChecks())
+	if err == nil || !strings.Contains(err.Error(), "skybreaker-setup status") {
+		t.Fatalf("err = %v", err)
+	}
+	var status strings.Builder
+	h.Status(context.Background(), &status)
+	if !strings.Contains(status.String(), "https://login.tailscale.com/a/abc123") {
+		t.Errorf("status doesn't show the link:\n%s", status.String())
+	}
+}
+
+func TestInstallWithAuthKeyDoesntWait(t *testing.T) {
+	h, f, out := testHost(t, map[string]string{"v1.1.0": "v1.1.0"})
+	a := testAnswers(t)
+	if err := h.Install(context.Background(), &a, readyChecks()); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if f.ran("journalctl") {
+		t.Error("read the log for a sign-in link with an auth key")
+	}
+}
