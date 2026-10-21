@@ -706,7 +706,7 @@ async function newProjectSheet() {
     el('input', { type: 'checkbox', value, checked: checked || null }),
     el('span.np-check-text', null, el('b', null, label), sub ? el(reach ? 'span.np-reach' : 'span', null, sub) : null));
   const agentBoxes = agents.map(h => box(h, h === 'claude' || h === 'codex', harnessLabel(h), HARNESS_INFO[h] || ''));
-  const wanted = ['github', ...(agents.includes('claude') ? ['claude-login'] : []), ...(agents.includes('codex') ? ['codex-login'] : [])];
+  const wanted = ['github', 'tools', ...(agents.includes('claude') ? ['claude-login'] : []), ...(agents.includes('codex') ? ['codex-login'] : [])];
   const capBoxes = caps.map(c => box(c.name, wanted.includes(c.name), c.name, c.reaches.join(', '), true));
   const error = el('p.np-error', { role: 'alert', hidden: true });
   const create = el('button.btn.primary', { type: 'submit' }, 'Create project');

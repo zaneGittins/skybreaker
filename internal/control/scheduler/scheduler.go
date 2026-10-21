@@ -36,7 +36,9 @@ var ErrBusy = errors.New("a run of this job is already in progress")
 // Backend is the slice of the app a run needs.
 type Backend interface {
 	StartSandbox(ctx context.Context, project string) error // a no-op when it runs
-	EnsureTmux(ctx context.Context, project string) error   // the server and options runs rely on
+	// WaitWorkspace waits for a new sandbox's clone and setup script.
+	WaitWorkspace(ctx context.Context, project string) error
+	EnsureTmux(ctx context.Context, project string) error // the server and options runs rely on
 	Exec(ctx context.Context, project string, args ...string) ([]byte, error)
 	ProjectDir(project string) string
 	// ProjectMCP is how a run reaches Skybreaker's MCP server.
@@ -235,6 +237,10 @@ func (s *Scheduler) execute(ctx, parent context.Context, job *config.Job, run st
 	}
 
 	if err := s.backend.StartSandbox(ctx, job.Project); err != nil {
+		fail("sandbox: %v", err)
+		return
+	}
+	if err := s.backend.WaitWorkspace(ctx, job.Project); err != nil {
 		fail("sandbox: %v", err)
 		return
 	}

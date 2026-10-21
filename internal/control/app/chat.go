@@ -116,6 +116,9 @@ func (a *App) startChat(ctx context.Context, s store.Session, argv []string, env
 	if err := a.ensureWorktree(ctx, &s, nil); err != nil {
 		return nil, err
 	}
+	if err := a.WaitWorkspace(ctx, s.Project); err != nil {
+		return nil, err
+	}
 	if s.Terminal != "" {
 		a.closeChatTerminal(ctx, s)
 		a.chat.Note(s.ID, "Back in the chat. The agent remembers what happened in the terminal, but it isn't shown here.")

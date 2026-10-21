@@ -126,8 +126,47 @@ func TestRenderedConfigOnlyNamesChosenLogins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if caps := strings.Join(cfg.Projects["my-repo"].Capabilities, ","); caps != "github,claude-login" {
+	if caps := strings.Join(cfg.Projects["my-repo"].Capabilities, ","); caps != "github,tools,claude-login" {
 		t.Errorf("capabilities = %s", caps)
+	}
+}
+
+// Agents install their own tools (mise, uv, Playwright), so a fresh
+// install reaches where those come from, and only for reading.
+func TestRenderedConfigReachesToolDownloads(t *testing.T) {
+	l := testLayout(t)
+	writeConfig(t, testAnswers(t), l)
+	cfg, err := config.Load(l.Config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pp, ok := cfg.Policy.Project("my-repo")
+	if !ok {
+		t.Fatal("no policy for my-repo")
+	}
+	for _, h := range []string{"releases.hashicorp.com", "galaxy.ansible.com", "pypi.org", "files.pythonhosted.org", "cdn.playwright.dev", "playwright.download.prss.microsoft.com"} {
+		if pp.Host(h) == nil {
+			t.Errorf("can't reach %s", h)
+		}
+	}
+	for _, c := range []struct {
+		host, method, path, action, follows string
+	}{
+		{"github.com", "GET", "/digitalocean/doctl/releases/download/v1.150.0/doctl-1.150.0-linux-amd64.tar.gz", "auto", "release-assets.githubusercontent.com"},
+		{"github.com", "GET", "/mikefarah/yq/releases/latest/download/yq_linux_amd64", "auto", "github.com"},
+		{"api.github.com", "GET", "/repos/hashicorp/terraform/releases/latest", "auto", ""},
+		{"api.github.com", "GET", "/repos/digitalocean/doctl/attestations/sha256:abc", "auto", ""},
+		{"github.com", "POST", "/digitalocean/doctl/releases/download/v1/x", "deny", ""},
+		{"github.com", "POST", "/someone/else.git/git-receive-pack", "deny", ""},
+		{"api.github.com", "GET", "/repos/someone/else/contents/secrets.txt", "deny", ""},
+	} {
+		d := pp.Host(c.host).Rules.Decide(c.method, c.path)
+		if string(d.Action) != c.action {
+			t.Errorf("%s %s%s = %s (%s), want %s", c.method, c.host, c.path, d.Action, d.Reason, c.action)
+		}
+		if c.follows != "" && (d.Rule == nil || !d.Rule.Follows(c.follows)) {
+			t.Errorf("%s %s%s doesn't follow redirects to %s", c.method, c.host, c.path, c.follows)
+		}
 	}
 }
 

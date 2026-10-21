@@ -36,7 +36,11 @@ type fakeBackend struct {
 	log      string
 	started  int
 	tmuxUp   int
-	failWT   bool
+	// waited counts WaitWorkspace calls; execsBefore is how many commands
+	// ran before the first.
+	waited      int
+	execsBefore int
+	failWT      bool
 }
 
 func (b *fakeBackend) EnsureTmux(context.Context, string) error {
@@ -52,6 +56,16 @@ func (b *fakeBackend) StartSandbox(context.Context, string) error {
 	b.mu.Unlock()
 	return nil
 }
+func (b *fakeBackend) WaitWorkspace(context.Context, string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.waited == 0 {
+		b.execsBefore = len(b.calls)
+	}
+	b.waited++
+	return nil
+}
+
 func (b *fakeBackend) ProjectDir(p string) string { return filepath.Join(b.dir, "projects", p) }
 
 func (b *fakeBackend) ProjectMCP(p string) harness.MCP {
@@ -164,6 +178,10 @@ func TestTriggerRun(t *testing.T) {
 	}
 	if b.started == 0 {
 		t.Error("sandbox not started")
+	}
+	// The run waits for the sandbox's setup before touching the workspace.
+	if b.waited == 0 || b.execsBefore != 0 {
+		t.Errorf("waited %d times, after %d commands", b.waited, b.execsBefore)
 	}
 }
 

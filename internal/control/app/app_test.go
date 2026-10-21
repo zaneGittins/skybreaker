@@ -1073,3 +1073,76 @@ func TestInstructions(t *testing.T) {
 		}
 	}
 }
+
+func TestSetupRunsAfterClone(t *testing.T) {
+	// A new container runs the repo's setup script once the workspace is
+	// cloned, and a failure says where its output went.
+	f := newFixture(t)
+	f.app.readyPoll = 5 * time.Millisecond
+	var order []string
+	f.docker.set(func() {
+		f.docker.execOut = func(args []string) (string, error) {
+			switch {
+			case slices.Contains(args, "https://github.com/zaneGittins/orbit.git"):
+				order = append(order, "clone")
+			case slices.Contains(args, setupScript):
+				order = append(order, "setup")
+				return "", errors.New("exit status 1")
+			}
+			return "", nil
+		}
+	})
+	ch, cancel := f.app.Subscribe()
+	defer cancel()
+	if err := f.app.StartSandbox(context.Background(), "orbit"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case ev := <-ch:
+			if d, _ := ev.Data.(string); strings.HasPrefix(d, "setup failed") {
+				if !strings.Contains(d, setupLog) {
+					t.Errorf("event %q doesn't say where the output is", ev.Data)
+				}
+				f.docker.mu.Lock()
+				defer f.docker.mu.Unlock()
+				if !slices.Equal(order, []string{"clone", "setup"}) {
+					t.Fatalf("order %v, want clone then setup", order)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatal("setup never ran")
+		}
+	}
+}
+
+func TestAgentsWaitForSetup(t *testing.T) {
+	// Chats and runs start once the setup script is done, so the tools it
+	// installs are there.
+	f := newFixture(t)
+	f.app.readyPoll = 5 * time.Millisecond
+	release := make(chan struct{})
+	f.docker.set(func() {
+		f.docker.execOut = func(args []string) (string, error) {
+			if slices.Contains(args, setupScript) {
+				<-release
+				return "ran\n", nil
+			}
+			return "", nil
+		}
+	})
+	if err := f.app.StartSandbox(context.Background(), "orbit"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := f.app.WaitWorkspace(ctx, "orbit"); err == nil {
+		t.Fatal("didn't wait for setup")
+	}
+	close(release)
+	if err := f.app.WaitWorkspace(context.Background(), "orbit"); err != nil {
+		t.Fatal(err)
+	}
+}

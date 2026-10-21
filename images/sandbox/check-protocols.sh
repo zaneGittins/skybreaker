@@ -1,11 +1,20 @@
 #!/bin/sh
 # Checks the harness CLIs in this image still have every flag and protocol
-# method Skybreaker's chat drivers use. The weekly rebuild
+# method Skybreaker's chat drivers use, and the tools agents count on are
+# there. The weekly rebuild
 # (skybreaker-sandbox-update) and the image workflow run it before an image
 # is promoted:
 #   docker run --rm --network none --entrypoint skybreaker-check-protocols IMAGE
 set -e
 go version # a toolchain for another architecture fails here, not in a sandbox
+for t in rg fd jq shellcheck sqlite3 unzip uv mise gh; do
+  command -v "$t" >/dev/null || { echo "the image lost $t" >&2; exit 1; }
+done
+if command -v playwright >/dev/null; then
+  shot=$(mktemp -d)/shot.png
+  playwright screenshot "data:text/html,<p>ok</p>" "$shot" >/dev/null && [ -s "$shot" ] \
+    || { echo "Chromium can't take a screenshot" >&2; exit 1; }
+fi
 claude --version
 codex --version
 pi --version

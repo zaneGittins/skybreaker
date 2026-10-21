@@ -62,6 +62,8 @@ Each project gets a long-lived `runsc` container, `skybreaker-<project>`, on its
 
 The sandbox runs its own dockerd for builds and `docker compose`, storing images in the project's `docker/` directory on disk. Inner containers have no DNS either and reach the broker through the sandbox. A `runc` wrapper mounts the sandbox's CA bundle into every container and build step, so they trust the broker without image changes.
 
+A new container runs the repository's `.skybreaker/setup.sh` after the clone, in the same background run (`App.WaitWorkspace`), so chats and scheduled runs start once it's done. Only `/root`, `/workspace` and inner Docker storage persist, so the image puts what agents install with mise and uv (under `/root`) last on `PATH`, behind the harnesses' own tools.
+
 The host never reads sandbox-writable paths directly: workspaces, homes and inner Docker storage are never read, and scheduled runs' output is read through `os.Root`.
 
 ## Chats

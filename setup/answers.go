@@ -187,7 +187,7 @@ func (a *Answers) Files(l Layout) ([]File, error) {
 			return nil, err
 		}
 	}
-	caps := []string{"github"}
+	caps := []string{"github", "tools"}
 	for _, h := range []string{"claude", "codex"} {
 		if slices.Contains(a.Harnesses, h) {
 			caps = append(caps, h+"-login")
@@ -282,8 +282,6 @@ projects:
         mode: mitm
         rules:
           - { match: "GET /proxy-golang-org-prod/**", action: auto }
-      - { host: pypi.org, mode: tunnel }
-      - { host: files.pythonhosted.org, mode: tunnel }
     capabilities: {{q .Capabilities}}
 
 # Capabilities are named bundles of hosts and routes that projects opt into.
@@ -298,6 +296,10 @@ capabilities:
         - { match: "GET /{repo}.git/info/refs", action: auto }
         - { match: "POST /{repo}.git/git-upload-pack", action: auto }
         - { match: "POST /{repo}.git/git-receive-pack", action: auto, refs: ["refs/heads/feature/*", "refs/heads/fix/*", "refs/heads/docs/*", "refs/heads/chore/*"] }
+        # Public release downloads, for tools agents install (mise, curl).
+        # The token is narrowed to {repo}, so other private repos stay out.
+        - { match: "GET /*/*/releases/download/**", action: auto, follow_redirects: ["release-assets.githubusercontent.com", "objects.githubusercontent.com"] }
+        - { match: "GET /*/*/releases/latest/download/*", action: auto, follow_redirects: ["github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"] }
     - host: api.github.com
       mode: mitm
       inject: { bearer: github_app }
@@ -311,6 +313,10 @@ capabilities:
         - { match: "GET /repos/{repo}/actions/artifacts/*/*", action: ask, follow_redirects: ["*.blob.core.windows.net", "*.actions.githubusercontent.com"] }
         - { match: "GET /repos/{repo}/actions/**", action: auto, follow_redirects: ["*.blob.core.windows.net", "*.actions.githubusercontent.com"] }
         - { match: "GET /repos/{repo}/**", action: auto }
+        # Release and attestation lookups, for mise.
+        - { match: "GET /repos/*/*/releases", action: auto }
+        - { match: "GET /repos/*/*/releases/**", action: auto }
+        - { match: "GET /repos/*/*/attestations/**", action: auto }
         - { match: "POST /repos/{repo}/pulls", action: auto }
         - { match: "POST /repos/{repo}/issues/*/comments", action: auto }
         - { match: "PATCH /repos/{repo}/pulls/*", action: auto }
@@ -323,6 +329,17 @@ capabilities:
             mutations: [createPullRequest, updatePullRequest, markPullRequestReadyForReview, addComment, createIssue]
             other: ask
         - { match: "GET /user", action: auto }
+
+  # Where agents install tools from: Python packages (uv, pip), Ansible
+  # collections, HashiCorp's releases (mise) and Playwright's browsers.
+  # GitHub releases come with the github capability.
+  tools:
+    - { host: pypi.org, mode: tunnel }
+    - { host: files.pythonhosted.org, mode: tunnel }
+    - { host: galaxy.ansible.com, mode: tunnel }
+    - { host: releases.hashicorp.com, mode: mitm, methods: [GET, HEAD] }
+    - { host: cdn.playwright.dev, mode: mitm, methods: [GET, HEAD] }
+    - { host: playwright.download.prss.microsoft.com, mode: mitm, methods: [GET, HEAD] }
 
   # Claude and ChatGPT subscriptions: the harnesses sign in themselves and
   # keep their tokens in the sandbox's home.
