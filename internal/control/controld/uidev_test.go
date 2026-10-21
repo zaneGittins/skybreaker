@@ -193,8 +193,9 @@ func devClaude(m map[string]any, say func(any), raw func(string)) {
 		r := m["request"].(map[string]any)
 		if r["subtype"] == "initialize" {
 			say(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": m["request_id"], "response": map[string]any{"models": []any{
-				map[string]any{"value": "default", "resolvedModel": "claude-opus-5-5", "displayName": "Default (recommended)", "description": "Test model · for everyday tasks"},
-				map[string]any{"value": "fast", "resolvedModel": "claude-sonnet-5-5", "displayName": "Fast", "description": "Quicker answers"},
+				// As the real CLI lists them: the default names its model first.
+				map[string]any{"value": "default", "resolvedModel": "claude-opus-5-5", "displayName": "Default (recommended)", "description": "Opus 5.5 · Best for everyday, complex tasks"},
+				map[string]any{"value": "sonnet", "resolvedModel": "claude-sonnet-5-5", "displayName": "Sonnet", "description": "Sonnet 5.5 · Quicker answers"},
 			}}}})
 		}
 		if r["subtype"] == "set_model" {
