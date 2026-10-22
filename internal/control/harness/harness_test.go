@@ -266,7 +266,7 @@ func TestCodexHeadlessFlags(t *testing.T) {
 
 func TestChatAndResume(t *testing.T) {
 	b := Builtins()
-	if b["claude"].Chat != "claude" || b["codex"].Chat != "codex" || b["shell"].Chat != "" || b["pi"].Chat != "" {
+	if b["claude"].Chat != "claude" || b["codex"].Chat != "codex" || b["shell"].Chat != "" || b["pi"].Chat != "pi" {
 		t.Errorf("chat drivers: claude %q codex %q shell %q pi %q", b["claude"].Chat, b["codex"].Chat, b["shell"].Chat, b["pi"].Chat)
 	}
 	got := b["claude"].ResumeArgs("abc", MCP{Config: "/etc/skybreaker/orbit-mcp.json"})
@@ -275,6 +275,9 @@ func TestChatAndResume(t *testing.T) {
 	}
 	if got := b["codex"].ResumeArgs("t1", MCP{}); !slices.Equal(got, []string{"codex", "resume", "t1", "--no-alt-screen"}) {
 		t.Errorf("codex resume = %q", got)
+	}
+	if got := b["pi"].ResumeArgs("p1", MCP{Config: "/etc/skybreaker/mcp.json"}); !slices.Equal(got, []string{"skybreaker-pi", "--skybreaker-mcp", "/etc/skybreaker/mcp.json", "--session-id", "p1"}) {
+		t.Errorf("pi resume = %q", got)
 	}
 	// Nothing to resume, or no resume command: the plain TUI.
 	if got := b["claude"].ResumeArgs("", MCP{}); !slices.Equal(got, []string{"claude"}) {

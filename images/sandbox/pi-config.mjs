@@ -24,9 +24,11 @@ const object = v => v && typeof v === 'object' && !Array.isArray(v) ? v : {};
 
 fs.mkdirSync(agent, { recursive: true, mode: 0o700 });
 
-// MCP: Skybreaker's own server, under its name.
-const ours = object(object(read(mcpFile)).mcpServers).skybreaker;
-if (ours) {
+// MCP: Skybreaker's own server, under its name. Every pi in the sandbox
+// shares this config, so the chat calling names itself in a header.
+const ours = object(object(object(read(mcpFile)).mcpServers).skybreaker);
+if (ours.url) {
+  ours.headers = { ...object(ours.headers), 'X-Skybreaker-Session': '!printf %s "${SKYBREAKER_SESSION:--}"' };
   const f = path.join(agent, 'mcp.json');
   const mcp = object(read(f));
   mcp.mcpServers = { ...object(mcp.mcpServers), skybreaker: ours };

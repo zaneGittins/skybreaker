@@ -427,16 +427,35 @@ func TestMCPCaller(t *testing.T) {
 	orbit := f.app.cfg.Subnet("orbit").Addr().Next().Next().String() + ":40000"
 	bifract := f.app.cfg.Subnet("bifract").Addr().Next().Next().String() + ":40000"
 	tok := f.app.HookToken("orbit")
-	try := func(remote, path string) (mcp.Caller, error) {
+	tryAs := func(remote, path, session string) (mcp.Caller, error) {
 		r := httptest.NewRequest("POST", path, nil)
 		r.RemoteAddr = remote
+		if session != "" {
+			r.Header.Set("X-Skybreaker-Session", session)
+		}
 		return f.app.MCPCaller(r)
 	}
+	try := func(remote, path string) (mcp.Caller, error) { return tryAs(remote, path, "") }
 	if c, err := try(orbit, "/mcp/orbit/"+tok+"/"+s.ID); err != nil || c.Project != "orbit" || c.Session != s.ID {
 		t.Fatalf("own chat: %+v %v", c, err)
 	}
 	if c, err := try(orbit, "/mcp/orbit/"+tok+"/-"); err != nil || c.Session != "-" {
 		t.Fatalf("no chat: %+v %v", c, err)
+	}
+	// pi's MCP config is shared by its sessions, so it names the chat in a
+	// header; one in the URL wins.
+	if c, err := tryAs(orbit, "/mcp/orbit/"+tok+"/-", s.ID); err != nil || c.Session != s.ID {
+		t.Fatalf("chat by header: %+v %v", c, err)
+	}
+	if c, err := tryAs(orbit, "/mcp/orbit/"+tok+"/-", "-"); err != nil || c.Session != "-" {
+		t.Fatalf("no chat by header: %+v %v", c, err)
+	}
+	if c, err := tryAs(orbit, "/mcp/orbit/"+tok+"/"+s.ID, "sother"); err != nil || c.Session != s.ID {
+		t.Fatalf("URL and header: %+v %v", c, err)
+	}
+	// A pi that outlives its chat still reaches the board.
+	if c, err := tryAs(orbit, "/mcp/orbit/"+tok+"/-", "sghost"); err != nil || c.Session != "-" {
+		t.Errorf("unknown session by header: %+v %v", c, err)
 	}
 	for name, c := range map[string][2]string{
 		"another project's network": {bifract, "/mcp/orbit/" + tok + "/-"},
@@ -454,6 +473,9 @@ func TestMCPCaller(t *testing.T) {
 	other, _ := f.app.NewChat(context.Background(), "bifract", "claude", NewOptions{})
 	if _, err := try(orbit, "/mcp/orbit/"+tok+"/"+other.ID); err == nil {
 		t.Error("bifract's chat named from orbit")
+	}
+	if c, err := tryAs(orbit, "/mcp/orbit/"+tok+"/-", other.ID); err != nil || c.Session != "-" {
+		t.Errorf("bifract's chat named from orbit by header: %+v %v", c, err)
 	}
 }
 

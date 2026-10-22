@@ -45,6 +45,12 @@ func TestPiConfig(t *testing.T) {
 	if servers["skybreaker"] == nil || servers["docs"] == nil {
 		t.Fatalf("mcp servers %v", servers)
 	}
+	// pi's config is shared by every pi in the sandbox, so the chat calling
+	// is named in a header from its environment, "-" outside one.
+	ours := servers["skybreaker"].(map[string]any)
+	if h, _ := ours["headers"].(map[string]any); h["X-Skybreaker-Session"] != `!printf %s "${SKYBREAKER_SESSION:--}"` {
+		t.Errorf("skybreaker server %v", ours)
+	}
 	if fi, _ := os.Stat(filepath.Join(agent, "models.json")); fi.Mode().Perm() != 0o600 {
 		t.Errorf("models.json is %v", fi.Mode().Perm())
 	}

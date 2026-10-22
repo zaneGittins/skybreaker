@@ -146,9 +146,11 @@ details.earlier .row-list { margin-top: 4px; }
 .bc-none { fill: var(--border-strong); }
 .bc-claude { fill: var(--av-claude); }
 .bc-codex { fill: var(--av-codex); }
+.bc-pi { fill: var(--t-feature); }
 .bc-other { fill: var(--text-2); opacity: .7; }
 .bc-key.claude::before { background: var(--av-claude); }
 .bc-key.codex::before { background: var(--av-codex); }
+.bc-key.pi::before { background: var(--t-feature); }
 .bc-key.other::before { background: var(--text-2); }
 .bc-day:hover rect:not(.bc-hit) { opacity: 1; }
 .bc-day:hover .bc-hit { fill: var(--surface-2); }
