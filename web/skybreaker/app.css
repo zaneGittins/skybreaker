@@ -352,14 +352,15 @@ button.sub-model:hover { color: var(--text); text-decoration: underline; text-un
 .msg.user .bubble.clamped { max-height: 18em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
 .att-row { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: min(88%, 620px); margin-bottom: 6px; }
 .att { position: relative; display: flex; align-items: center; gap: 8px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); color: var(--text); text-decoration: none; }
-.att-img { width: 120px; height: 120px; overflow: hidden; background: var(--bg-2); }
-.att-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.att-img { width: 120px; height: 120px; background: var(--bg-2); }
+/* Rounded here, not clipped by the tile, so the remove button's target isn't. */
+.att-img img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: 13px; }
 .att-file { height: 44px; max-width: 260px; padding: 0 12px; font-size: 13.5px; }
 .att-file svg { width: 17px; height: 17px; flex-shrink: 0; color: var(--text-2); }
 .att-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
 .att-size { flex-shrink: 0; color: var(--muted); font-size: 12.5px; }
 a.att:hover { border-color: var(--border-strong); }
-.attach-tray { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 8px; scrollbar-width: thin; }
+.attach-tray { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding: 4px 2px 8px; scrollbar-width: thin; }
 .attach-tray[hidden] { display: none; }
 .attach-tray .att { flex-shrink: 0; }
 .attach-tray .att-img { width: 64px; height: 64px; }
@@ -372,13 +373,17 @@ a.att:hover { border-color: var(--border-strong); }
 .att-x svg { width: 12px; height: 12px; stroke-width: 2.6; }
 /* A larger target than it looks, for a finger. */
 .att-x::after { content: ''; position: absolute; inset: -8px; }
-.attach-btn {
-  flex-shrink: 0; width: 40px; height: 40px; border: 0; border-radius: 50%; display: grid; place-items: center;
-  background: transparent; color: var(--text-2); touch-action: manipulation;
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.att-add {
+  flex-shrink: 0; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 14px;
+  border: 1px dashed var(--border-strong); background: transparent; color: var(--text-2); touch-action: manipulation;
 }
-.attach-btn:hover { color: var(--text); background: var(--surface-2); }
-.attach-btn svg { width: 19px; height: 19px; }
-.chat-page.dropping .composer, .chat-page.dropping[class*="sc-"] .composer { border-color: var(--sun); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sun) 30%, transparent); }
+.att-add:hover { color: var(--text); border-color: var(--text-2); }
+.att-add svg { width: 18px; height: 18px; }
+.send-btn.attach { background: var(--surface-2); color: var(--text-2); }
+.send-btn.attach:hover { color: var(--text); background: var(--surface-3); }
+.send-btn.attach svg { stroke-width: 2; }
+.chat-page.dropping .composer, .chat-page.dropping[class*="sc-"] .composer, .chat-page.dropping[class*="sc-"] .composer:focus-within { border-color: var(--sun); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sun) 30%, transparent); }
 .show-more { border: 0; background: none; color: var(--text-2); font-size: 13px; font-weight: 700; padding: 4px 6px; }
 
 .msg.agent { font-size: 15.5px; line-height: 1.62; color: var(--text); }

@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, fitSize, fmtSize } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -442,8 +442,8 @@ test('foldChat: a tool waits on its approval, then carries on', () => {
 test('foldChat: a message keeps its attachments, and Try again skips it', () => {
   const c = newChat();
   const att = { name: 'shot.png', kind: 'image', size: 10, kept: 'ab.png', path: '/tmp/attachments/s/ab-shot.png' };
-  foldChat(c, { seq: 1, kind: 'user', id: 'u1', text: '', attach: [att, null, { name: 'no kept copy' }] });
-  assert.deepEqual(c.items[0].attach, [att]);
+  foldChat(c, { seq: 1, kind: 'user', id: 'u1', text: '', attach: [att, null, { name: 'no kept copy' }, { kept: 'b.png', thumb: 7 }] });
+  assert.deepEqual(c.items[0].attach, [{ ...att, thumb: '' }, { kept: 'b.png', thumb: '' }]);
   assert.equal(c.items[0].text, '');
   assert.equal(c.lastUser, '');
   foldChat(c, { seq: 2, kind: 'user', id: 'u2', text: 'plain' });
@@ -487,4 +487,24 @@ test('fitSize and fmtSize', () => {
   assert.equal(fmtSize(250 * 1024), '250 KB');
   assert.equal(fmtSize(3.4 * 1024 * 1024), '3.4 MB');
   assert.equal(ATTACH.imageBytes, 3932160); // the server's maxImageInput
+});
+
+test('thumbSize: fills a square tile, within bounds', () => {
+  assert.deepEqual(thumbSize(2000, 1333), { w: 360, h: 240 });
+  assert.deepEqual(thumbSize(924, 2000), { w: 240, h: 519 });
+  assert.deepEqual(thumbSize(100, 80), { w: 100, h: 80 });
+  assert.deepEqual(thumbSize(10000, 100), { w: 960, h: 10 });
+});
+
+test('composerAction: one button that stops, attaches or sends', () => {
+  const a = (o = {}) => composerAction({ working: false, text: '', files: 0, ask: false, ...o });
+  assert.equal(a(), 'attach');
+  assert.equal(a({ text: 'hi' }), 'send');
+  assert.equal(a({ files: 1 }), 'send');
+  assert.equal(a({ working: true }), 'stop');
+  assert.equal(a({ working: true, text: 'more' }), 'send');
+  assert.equal(a({ working: true, files: 1 }), 'send');
+  // While the agent waits on an answer, files can't go: the button sends words.
+  assert.equal(a({ ask: true }), 'send');
+  assert.equal(a({ ask: true, working: true }), 'send');
 });

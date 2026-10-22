@@ -222,50 +222,72 @@ function contextRing() {
   return { node: s, set };
 }
 
-// prepareFile reads a file to attach. An image too large for the models is
-// scaled down, a screenshot staying PNG where it can; a photo becomes JPEG.
+// prepareFile reads a file to attach. An image is decoded once: scaled
+// down if it's too large for the models (a screenshot staying PNG where it
+// can, a photo becoming JPEG, WebP becoming one the server can check), and
+// given a thumbnail for its previews unless it's small enough to be one.
 async function prepareFile(file) {
   let blob = file;
   let name = file.name || 'file';
-  if (scalable(file.type)) {
-    blob = await fitImage(file).catch(() => file);
-    if (blob !== file && blob.type === 'image/jpeg') name = name.replace(/\.[^.]*$/, '') + '.jpg';
+  let thumb = '';
+  const bmp = scalable(file.type) ? await createImageBitmap(file).catch(() => null) : null;
+  if (bmp) {
+    try {
+      blob = await fitImage(file, bmp).catch(() => file);
+      if (blob !== file && blob.type === 'image/jpeg') name = name.replace(/\.[^.]*$/, '') + '.jpg';
+      thumb = await makeThumb(bmp, blob).catch(() => '');
+    } finally { bmp.close() }
   }
-  const url = await new Promise((ok, fail) => {
-    const r = new FileReader();
-    r.onload = () => ok(r.result);
-    r.onerror = () => fail(r.error);
-    r.readAsDataURL(blob);
-  });
-  // url is the preview, and its base64 what's sent.
-  return { name, size: blob.size, image: /^image\/(png|jpeg|gif|webp)$/.test(blob.type), url };
+  // url's base64 is what's sent.
+  return { name, size: blob.size, image: /^image\/(png|jpeg|gif|webp)$/.test(blob.type), url: await dataURL(blob), thumb };
 }
 
-async function fitImage(file) {
-  const bmp = await createImageBitmap(file);
-  const { w, h } = fitSize(bmp.width, bmp.height, ATTACH.imageSide);
-  const native = /^image\/(png|jpeg|webp)$/.test(file.type);
-  if (native && w === bmp.width && file.size <= ATTACH.imageBytes) {
-    bmp.close();
-    return file;
+const dataURL = blob => new Promise((ok, fail) => {
+  const r = new FileReader();
+  r.onload = () => ok(r.result);
+  r.onerror = () => fail(r.error);
+  r.readAsDataURL(blob);
+});
+
+const base64 = url => url.slice(url.indexOf(',') + 1);
+
+// drawScaled draws an image at w×h, on white for a format without
+// transparency.
+function drawScaled(bmp, w, h, white) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d');
+  if (white) { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h) }
+  g.drawImage(bmp, 0, 0, w, h);
+  return c;
+}
+
+const encode = (c, type, q) => new Promise((ok, fail) => c.toBlob(b => b ? ok(b) : fail(new Error('encode')), type, q));
+
+// encodeFit is the image as PNG if it may have transparency and fits in
+// max bytes, else as JPEG.
+async function encodeFit(bmp, w, h, type, max, quality) {
+  if (/^image\/(png|webp)$/.test(type)) {
+    const png = await encode(drawScaled(bmp, w, h, false), 'image/png');
+    if (png.size <= max) return png;
   }
-  const draw = fill => {
-    const c = document.createElement('canvas');
-    c.width = w;
-    c.height = h;
-    const g = c.getContext('2d');
-    if (fill) { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h) }
-    g.drawImage(bmp, 0, 0, w, h);
-    return c;
-  };
-  const encode = (c, type, q) => new Promise((ok, fail) => c.toBlob(b => b ? ok(b) : fail(new Error('encode')), type, q));
-  try {
-    if (file.type === 'image/png') {
-      const png = await encode(draw(false), 'image/png');
-      if (png.size <= ATTACH.imageBytes) return png;
-    }
-    return await encode(draw(true), 'image/jpeg', 0.85);
-  } finally { bmp.close() }
+  return encode(drawScaled(bmp, w, h, true), 'image/jpeg', quality);
+}
+
+async function fitImage(file, bmp) {
+  const { w, h } = fitSize(bmp.width, bmp.height, ATTACH.imageSide);
+  if (/^image\/(png|jpeg)$/.test(file.type) && w === bmp.width && file.size <= ATTACH.imageBytes) return file;
+  return encodeFit(bmp, w, h, file.type, ATTACH.imageBytes, 0.85);
+}
+
+// makeThumb is a small copy of an image for its previews, or '' if the
+// image is as small as a thumbnail or its thumbnail comes out too large.
+async function makeThumb(bmp, blob) {
+  const { w, h } = thumbSize(bmp.width, bmp.height);
+  if (w === bmp.width && blob.size <= ATTACH.thumb) return '';
+  const t = await encodeFit(bmp, w, h, blob.type, ATTACH.thumb, 0.8);
+  return t.size <= ATTACH.thumb ? dataURL(t) : '';
 }
 
 async function renderChat(seq, d) {
@@ -293,15 +315,20 @@ async function renderChat(seq, d) {
   const input = el('textarea.composer-input', {
     rows: '1', 'aria-label': 'Message', enterkeyhint: coarse() ? 'enter' : 'send', autocapitalize: 'sentences', spellcheck: 'true',
   });
-  const sendBtn = el('button.send-btn', { type: 'submit', 'aria-label': 'Send', onmousedown: e => e.preventDefault() });
+  // With nothing written, the send button attaches files instead.
+  const sendBtn = el('button.send-btn', {
+    type: 'submit', 'aria-label': 'Send', onmousedown: e => e.preventDefault(),
+    onclick: e => { if (sendBtn.classList.contains('attach')) { e.preventDefault(); picker.click() } },
+  });
   const modeBtn = el('button.mode-chip', { type: 'button', onclick: () => modeMenu() });
   const picker = el('input', { type: 'file', multiple: true, hidden: true, onchange: () => { addFiles([...picker.files]); picker.value = '' } });
-  const attachBtn = el('button.attach-btn', { type: 'button', 'aria-label': 'Attach files', title: 'Attach files', onmousedown: e => e.preventDefault(), onclick: () => picker.click() }, svg(ICON.clip));
-  const tray = el('div.attach-tray', { hidden: true, 'aria-live': 'polite' });
-  const composer = el('form.composer', { onsubmit: e => { e.preventDefault(); submit() } }, modeBtn, attachBtn, input, sendBtn, picker);
+  const tray = el('div.attach-tray', { hidden: true });
+  // What a screen reader hears of the tray: a line, not every tile again.
+  const trayStatus = el('span.sr-only', { role: 'status' });
+  const composer = el('form.composer', { onsubmit: e => { e.preventDefault(); submit() } }, modeBtn, input, sendBtn, picker);
   const ended = el('div.ended-bar', { hidden: true });
   const hints = el('div.cmd-hints', { hidden: true });
-  const footer = el('div.chat-foot', null, dock, hints, tray, composer, ended);
+  const footer = el('div.chat-foot', null, dock, hints, tray, trayStatus, composer, ended);
   const goalBar = el('div.chat-goal', { hidden: true });
   const ring = contextRing();
   // The ring is how full the context window is, and says so in figures.
@@ -506,50 +533,78 @@ async function renderChat(seq, d) {
     const ask = [...chat.asks.values()][0];
     composer.hidden = session.status !== 'running' || (ask?.ask.kind === 'question' && !oneQuestion(ask));
     input.placeholder = oneQuestion(ask) ? 'Or answer in your own words…' : ask ? 'Or tell it what to do instead…' : chat.working ? 'Add to what it\'s doing…' : `Message ${harnessLabel(session.harness)}`;
-    const stop = chat.working && !input.value.trim() && !ask && !pending.length;
-    sendBtn.classList.toggle('stop', stop);
-    sendBtn.setAttribute('aria-label', stop ? 'Stop' : 'Send');
-    sendBtn.replaceChildren(svg(stop ? ICON.stop : ICON.send));
-    sendBtn.disabled = !stop && !input.value.trim() && !pending.length;
+    const action = composerAction({ working: chat.working, text: input.value.trim(), files: pending.length, ask: !!ask });
+    sendBtn.classList.toggle('stop', action === 'stop');
+    sendBtn.classList.toggle('attach', action === 'attach');
+    sendBtn.setAttribute('aria-label', { stop: 'Stop', attach: 'Attach files', send: 'Send' }[action]);
+    sendBtn.title = action === 'attach' ? 'Attach files' : '';
+    sendBtn.replaceChildren(svg({ stop: ICON.stop, attach: ICON.clip, send: ICON.send }[action]));
+    sendBtn.disabled = action === 'send' && !input.value.trim() && !pending.length;
     tray.hidden = !pending.length || composer.hidden;
   };
   input.addEventListener('input', () => { grow(); syncComposer(); saveDraft(); showHints() });
 
   // --- attachments: picked, pasted or dropped; images scaled down first ---
-  let pending = []; // { name, size, image, url } or, while it's read, { name, busy }
-  // drawTray redraws the attachments; after a removal, focus goes to the
-  // next one's remove button, or the input.
+  let pending = []; // { name, size, image, url, thumb } or, while it's read, { name, busy }
+  let uploading = []; // what's being sent, which can't be removed
+  // drawTray redraws the attachments, keeping focus on the remove button it
+  // was on; after a removal, focus goes to the one now in that place.
   const drawTray = removedAt => {
+    const was = [...tray.querySelectorAll('.att-x')].indexOf(document.activeElement);
     tray.replaceChildren(...pending.map(p => {
-      const remove = el('button.att-x', {
-        type: 'button', 'aria-label': 'Remove ' + p.name, title: 'Remove',
-        onclick: () => { const i = pending.indexOf(p); pending = pending.filter(x => x !== p); drawTray(i) },
+      const name = reveal(p.name);
+      const remove = uploading.includes(p) ? null : el('button.att-x', {
+        type: 'button', 'aria-label': 'Remove ' + name, title: 'Remove',
+        onclick: () => {
+          const i = pending.indexOf(p);
+          pending = pending.filter(x => x !== p);
+          trayStatus.textContent = 'Removed ' + name;
+          drawTray(i);
+        },
       }, svg(ICON.x));
-      if (p.busy) return el('div.att.att-file', { 'aria-busy': 'true', title: p.name }, el('span.spinner'), el('span.att-name', null, p.name), remove);
-      if (p.image) return el('div.att.att-img', { title: p.name }, el('img', { src: p.url, alt: p.name }), remove);
-      return el('div.att.att-file', { title: p.name }, svg(ICON.file), el('span.att-name', null, p.name), el('span.att-size', null, fmtSize(p.size)), remove);
+      if (p.busy) return el('div.att.att-file', { 'aria-busy': 'true', title: name }, el('span.spinner'), el('span.att-name', null, name), el('span.sr-only', null, ', reading'), remove);
+      if (p.image) return el('div.att.att-img', { title: name }, el('img', { src: p.thumb || p.url, alt: name }), remove);
+      return el('div.att.att-file', { title: name }, svg(ICON.file), el('span.att-name', null, name), el('span.att-size', null, fmtSize(p.size)), remove);
     }));
+    // Once files wait to go, the button sends; more come from here.
+    if (pending.length < ATTACH.files && !uploading.length) {
+      tray.append(el('button.att-add', { type: 'button', 'aria-label': 'Attach more files', title: 'Attach more files', onclick: () => picker.click() }, svg(ICON.plus)));
+    }
     syncComposer();
-    if (removedAt === undefined) return;
     const xs = tray.querySelectorAll('.att-x');
-    (xs[removedAt] || xs[xs.length - 1] || input).focus();
+    const at = removedAt ?? was;
+    if (at < 0) return;
+    if (xs.length) (xs[at] || xs[xs.length - 1]).focus();
+    // Not on a phone, where focusing the input opens the keyboard.
+    else if (removedAt !== undefined && !coarse()) input.focus();
   };
+  // Files are read one at a time, across batches: decoding several large
+  // photos at once can use up a phone's memory.
+  let reading = Promise.resolve();
+  const read = f => (reading = reading.then(() => prepareFile(f)).catch(() => null));
   const addFiles = async files => {
     if (!files.length) return;
     const early = readProblem(pending, files);
     if (early) { toast(early, 'error'); return }
     const slots = files.map(f => ({ name: f.name || 'file', busy: true }));
     pending = [...pending, ...slots];
+    trayStatus.textContent = 'Reading ' + (files.length === 1 ? reveal(slots[0].name) : files.length + ' files');
     drawTray();
-    const ready = await Promise.all(files.map(f => prepareFile(f).catch(() => null)));
-    const unread = slots.filter((_, i) => !ready[i]).map(s => s.name);
-    if (unread.length) toast(`Couldn't read ${unread.join(', ')}.`, 'error');
-    // Slots removed while reading stay out; another batch may still read.
-    const got = slots.map((s, i) => pending.includes(s) ? ready[i] : null);
-    const problem = attachProblem(pending.filter(p => !slots.includes(p)), got.filter(Boolean));
-    if (problem) toast(problem, 'error');
-    pending = pending.flatMap(p => !slots.includes(p) ? [p] : !problem && got[slots.indexOf(p)] ? [got[slots.indexOf(p)]] : []);
-    drawTray();
+    const refused = [];
+    for (const [i, f] of files.entries()) {
+      const slot = slots[i];
+      const ready = await read(f);
+      if (!pending.includes(slot)) continue; // removed while it was read
+      // Files join while they fit; the rest are named.
+      const name = reveal(slot.name);
+      const problem = ready ? attachProblem(pending.filter(p => p !== slot), [ready]) : `Couldn't read ${name}.`;
+      if (problem) refused.push(problem.includes(name) ? problem : `${name} was left out: ${problem[0].toLowerCase()}${problem.slice(1)}`);
+      pending = pending.flatMap(p => p !== slot ? [p] : problem ? [] : [ready]);
+      drawTray();
+    }
+    const n = pending.filter(p => !p.busy).length;
+    trayStatus.textContent = n + (n === 1 ? ' file' : ' files') + ' attached';
+    if (refused.length) toast(refused.join(' '), 'error');
   };
   input.addEventListener('paste', e => {
     const files = [...(e.clipboardData?.files || [])];
@@ -667,8 +722,13 @@ async function renderChat(seq, d) {
   const submit = async () => {
     if (sending) return;
     const text = input.value.trim();
-    // A command runs as it would without files, which stay attached.
+    // A command runs as it would without files, which stay attached;
+    // except one that leaves this chat, which would lose them.
     const command = parseCommand(text);
+    if (command && pending.length && (command.cmd === 'clear' || command.cmd === 'fork')) {
+      toast('Send or remove the attached files first.');
+      return;
+    }
     if (!command && pending.length) return sendFiles(text);
     if (!text) {
       if (chat.working) interrupt();
@@ -709,21 +769,29 @@ async function renderChat(seq, d) {
     const problem = attachProblem([], sent);
     if (problem) { toast(problem, 'error'); return }
     sending = true;
+    uploading = sent;
+    drawTray();
     sendBtn.disabled = true;
+    sendBtn.setAttribute('aria-label', 'Sending');
+    sendBtn.setAttribute('aria-busy', 'true');
     sendBtn.replaceChildren(el('span.spinner'));
     try {
-      await api('POST', `/api/sessions/${id}/messages`, { text, files: sent.map(p => ({ name: p.name, data: p.url.slice(p.url.indexOf(',') + 1) })) });
-      // Files added while this one went stay for the next.
+      await api('POST', `/api/sessions/${id}/messages`, { text, files: sent.map(p => ({ name: p.name, data: base64(p.url), thumb: p.thumb ? base64(p.thumb) : undefined })) });
+      // Files added, or words typed, while this one went stay for the next.
       pending = pending.filter(p => !sent.includes(p));
-      drawTray();
-      input.value = '';
-      prefs.set(draftKey, '');
-      grow();
+      if (input.value.trim() === text) {
+        input.value = '';
+        prefs.set(draftKey, '');
+        grow();
+      }
+      trayStatus.textContent = 'Sent';
       stick = true;
       toBottom(true);
     } catch (e) { toast(e.message, 'error') } finally {
       sending = false;
-      syncComposer();
+      uploading = [];
+      sendBtn.removeAttribute('aria-busy');
+      drawTray();
     }
   };
   const interrupt = async () => {
@@ -807,10 +875,18 @@ async function renderChat(seq, d) {
 
   // attachRow shows what a message carried, from the chat's own copies.
   function attachRow(attach) {
-    const url = a => `/api/sessions/${encodeURIComponent(id)}/shown/${encodeURIComponent(a.kept)}`;
-    return el('div.att-row', null, attach.map(a => a.kind === 'image'
-      ? el('a.att.att-img', { href: url(a), target: '_blank', rel: 'noopener noreferrer', title: reveal(a.name) }, el('img', { src: url(a), alt: reveal(a.name), loading: 'lazy' }))
-      : el('a.att.att-file', { href: url(a), download: a.name, title: reveal(a.name) }, svg(ICON.file), el('span.att-name', null, reveal(a.name)), el('span.att-size', null, fmtSize(a.size)))));
+    const url = name => `/api/sessions/${encodeURIComponent(id)}/shown/${encodeURIComponent(name)}`;
+    return el('div.att-row', null, attach.map(a => {
+      if (a.kind !== 'image') {
+        return el('a.att.att-file', { href: url(a.kept) + '?name=' + encodeURIComponent(a.name), download: a.name, title: reveal(a.name) },
+          svg(ICON.file), el('span.att-name', null, reveal(a.name)), el('span.att-size', null, fmtSize(a.size)));
+      }
+      // A thumbnail that won't load gives way to the image itself.
+      let fellBack = !a.thumb;
+      const img = el('img', { src: url(a.thumb || a.kept), alt: reveal(a.name), loading: 'lazy',
+        onerror: () => { if (!fellBack) { fellBack = true; img.src = url(a.kept) } } });
+      return el('a.att.att-img', { href: url(a.kept), target: '_blank', rel: 'noopener noreferrer', title: reveal(a.name) }, img);
+    }));
   }
 
   function thinkingRow(it) {

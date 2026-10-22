@@ -64,6 +64,9 @@ func (b *fakeBackend) ChatSend(_ context.Context, id, text string, files ...chat
 		call += fmt.Sprintf(" [%s:%s]", f.Name, f.Data)
 	}
 	b.chat.call(call)
+	if b.onSend != nil {
+		b.onSend()
+	}
 	switch text {
 	case "named":
 		return errors.New("not found.txt is empty")
@@ -537,5 +540,33 @@ func TestChatSendLimitsUploads(t *testing.T) {
 	}
 	if got := b.chat.got(); len(got) != 2 {
 		t.Errorf("calls = %q", got)
+	}
+
+	// The place is for decoding: sending, which may start a sandbox, is
+	// done without it.
+	held := -1
+	b.onSend = func() { held = len(s.uploads) }
+	send(context.Background(), big, 2<<20)
+	if held != 0 {
+		t.Errorf("sent holding %d places", held)
+	}
+}
+
+// A file the user attached downloads under its own name.
+func TestChatShownNamesDownloads(t *testing.T) {
+	f := newFixture(t, you)
+	for q, want := range map[string]string{
+		"?name=server%20log.txt": `attachment; filename="server log.txt"`,
+		"?name=%E6%97%A5.txt":    `attachment; filename*=utf-8''%E6%97%A5.txt`,
+		"":                       "attachment",
+	} {
+		resp, err := http.Get(f.ts.URL + "/api/sessions/c1/shown/0123456789abcdef0123456789abcdef.bin" + q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if got := resp.Header.Get("Content-Disposition"); got != want {
+			t.Errorf("%q: %q, want %q", q, got, want)
+		}
 	}
 }

@@ -37,6 +37,7 @@ type fakeBackend struct {
 	events     chan app.Event
 	chat       *fakeChat
 	authorized string // what SetAuthorizedKeys last got
+	onSend     func() // called as a message is sent
 }
 
 func (b *fakeBackend) SandboxState(_ context.Context, p string) (sandbox.State, error) {

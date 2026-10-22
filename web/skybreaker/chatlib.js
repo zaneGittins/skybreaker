@@ -380,7 +380,8 @@ function foldChat(c, e) {
   const auto = () => 'e' + (e.seq || c.items.length) + ':' + c.items.length;
   switch (e.kind) {
     case 'user': {
-      const attach = Array.isArray(e.attach) ? e.attach.filter(a => a && typeof a.kept === 'string') : [];
+      const attach = Array.isArray(e.attach) ? e.attach.filter(a => a && typeof a.kept === 'string')
+        .map(a => ({ ...a, thumb: typeof a.thumb === 'string' ? a.thumb : '' })) : [];
       // Try again resends text alone, so it's offered only without files.
       c.lastUser = attach.length ? '' : e.text;
       return add({ type: 'user', id: e.id || auto(), text: e.text || '', attach, time: e.time });
@@ -601,9 +602,9 @@ function fmtTokens(n) {
 }
 
 // ATTACH is how much a message can carry, as the server allows. Images
-// over imageSide or imageBytes are scaled down so every model takes them;
-// one is read only if under imageRead.
-const ATTACH = { files: 10, file: 10 << 20, total: 25 << 20, imageSide: 2000, imageBytes: (5 << 20) / 4 * 3, imageRead: 64 << 20 };
+// over imageSide or imageBytes are scaled down so every model takes them,
+// and one is read only if under imageRead; thumb bounds a thumbnail.
+const ATTACH = { files: 10, file: 10 << 20, total: 25 << 20, imageSide: 2000, imageBytes: (5 << 20) / 4 * 3, imageRead: 64 << 20, thumb: 96 << 10 };
 
 // scalable is an image type the browser can draw smaller. GIFs aren't, so
 // they keep their animation.
@@ -630,6 +631,20 @@ function readProblem(have, files) {
   const big = files.find(f => f.size > (scalable(f.type) ? ATTACH.imageRead : ATTACH.file));
   if (big) return `${big.name || 'That file'} is over ${(scalable(big.type) ? ATTACH.imageRead : ATTACH.file) >> 20} MB.`;
   return '';
+}
+
+// composerAction is what the composer's one button does: stop the agent
+// working, or with nothing written attach files, or else send.
+function composerAction({ working, text, files, ask }) {
+  if (text || files || ask) return 'send';
+  return working ? 'stop' : 'attach';
+}
+
+// thumbSize scales w×h down for a thumbnail that fills a square tile at
+// twice its 120px: 240 on the shorter side, at most 960 on the longer.
+function thumbSize(w, h) {
+  const k = Math.min(1, 240 / Math.min(w, h), 960 / Math.max(w, h));
+  return { w: Math.max(1, Math.round(w * k)), h: Math.max(1, Math.round(h * k)) };
 }
 
 // fitSize scales w×h down to fit max on its longer side.
@@ -701,4 +716,4 @@ function agentActivity(it) {
   return it.children?.length ? 'Thinking' : 'Starting';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, fitSize, fmtSize };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction };

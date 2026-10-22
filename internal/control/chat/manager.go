@@ -99,6 +99,12 @@ type run struct {
 	jobMu sync.Mutex
 	jobs  []func()
 	busy  bool
+
+	// sendMu takes one message at a time from its files to its job, so
+	// messages keep their order and a quota checked holds until used.
+	sendMu sync.Mutex
+	// imaging is the bytes of images in messages waiting for their job.
+	imaging atomic.Int64
 }
 
 const subBuffer = 256
@@ -203,11 +209,21 @@ func (m *Manager) Send(ctx context.Context, id, text string, files ...File) erro
 	if len(text) > 200<<10 {
 		return errors.New("message too long")
 	}
+	r := m.run(id)
+	r.sendMu.Lock()
+	defer r.sendMu.Unlock()
+	if waiting := r.imaging.Load(); waiting > 0 && waiting+int64(filesSize(files)) > maxWaitingImages {
+		return errors.New("the agent hasn't taken the images already sent; send these once it has")
+	}
 	atts, note, images, err := m.attach(ctx, s, files)
 	if err != nil {
 		return err
 	}
-	r := m.run(id)
+	imaging := int64(0)
+	for _, im := range images {
+		imaging += int64(len(im.Data))
+	}
+	r.imaging.Add(imaging)
 	r.mu.Lock()
 	r.used = time.Now()
 	m.emit(r, Event{Kind: KindUser, ID: "u" + strconv.FormatInt(time.Now().UnixNano(), 36), Text: text, Attach: atts})
@@ -228,6 +244,7 @@ func (m *Manager) Send(ctx context.Context, id, text string, files ...File) erro
 		text = strings.TrimPrefix(text+"\n\n"+note, "\n\n")
 	}
 	m.enqueue(r, func() {
+		defer r.imaging.Add(-imaging)
 		if err := m.ensure(r); err != nil {
 			r.mu.Lock()
 			m.failTurn(r, "The agent didn't start: "+err.Error())
@@ -244,6 +261,17 @@ func (m *Manager) Send(ctx context.Context, id, text string, files ...File) erro
 		m.write(r, lines)
 	})
 	return nil
+}
+
+// maxWaitingImages bounds the images held for a chat whose agent hasn't
+// started or taken its earlier messages yet.
+var maxWaitingImages int64 = 64 << 20
+
+func filesSize(files []File) (n int) {
+	for _, f := range files {
+		n += len(f.Data)
+	}
+	return n
 }
 
 // failTurn ends the current turn with an error. Callers hold r.mu.
@@ -340,12 +368,13 @@ func (m *Manager) write(r *run, lines [][]byte) {
 		if r.in == nil {
 			return
 		}
-		if r.queued.Load()+int64(len(l)) > maxQueued {
+		n := int64(len(l)) + 1 // and its newline
+		if r.queued.Load()+n > maxQueued {
 			log.Printf("skybreaker: chat %s: the harness isn't reading its input; closing it", r.id)
 			r.closeInput()
 			return
 		}
-		r.queued.Add(int64(len(l)) + 1)
+		r.queued.Add(n)
 		select {
 		case r.in <- append(l, '\n'):
 		default:

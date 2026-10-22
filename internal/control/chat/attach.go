@@ -1,9 +1,15 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif" // decoders for checking images
+	_ "image/jpeg"
+	_ "image/png"
+	"maps"
 	"net/http"
 	"path"
 	"strings"
@@ -16,17 +22,19 @@ import (
 
 // A File is one the user attached to a message.
 type File struct {
-	Name string `json:"name"` // as the user's device named it
-	Data []byte `json:"data"`
+	Name  string `json:"name"` // as the user's device named it
+	Data  []byte `json:"data"`
+	Thumb []byte `json:"thumb,omitempty"` // a small copy of an image, for previews
 }
 
 // Attachment is a file sent with a message, as the chat records it.
 type Attachment struct {
-	Name string `json:"name"`
-	Kind string `json:"kind"`
-	Size int64  `json:"size"`
-	Kept string `json:"kept"` // the chat's copy, served as shown files are
-	Path string `json:"path"` // where it is in the sandbox
+	Name  string `json:"name"`
+	Kind  string `json:"kind"`
+	Size  int64  `json:"size"`
+	Kept  string `json:"kept"`            // the chat's copy, served as shown files are
+	Thumb string `json:"thumb,omitempty"` // the kept thumbnail of an image
+	Path  string `json:"path"`            // where it is in the sandbox
 }
 
 // Attachment kinds.
@@ -44,28 +52,48 @@ type SandboxFile struct {
 	Data []byte
 }
 
-// ImageExt is the extension each image type the models take is kept under.
-var ImageExt = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
+// imageExt is the extension each image type is kept under, by its sniffed
+// type. SVG isn't one: it can carry script, so it's kept as a file.
+var imageExt = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
+
+// ImageType is the extension an image of the sniffed type mime is kept
+// under, if it's one.
+func ImageType(mime string) (string, bool) {
+	ext, ok := imageExt[mime]
+	return ext, ok
+}
+
+// ImageTypes maps each image type kept to its extension.
+func ImageTypes() map[string]string { return maps.Clone(imageExt) }
 
 const (
 	maxAttachments = 10
 	maxAttachment  = 10 << 20
 	MaxAttachTotal = 25 << 20 // a message's attachments in all
 	// maxImageInput is the largest image sent as image input: Claude's API
-	// takes 5 MB of base64. maxImagesInput bounds a message's images, as
-	// the whole request has a limit too. Other images go as files.
-	maxImageInput  = 5 << 20 / 4 * 3
-	maxImagesInput = 12 << 20
+	// takes 5 MB of base64. Other images go as files.
+	maxImageInput = 5 << 20 / 4 * 3
+	// maxImageSide is the largest side of an image sent as image input,
+	// within what every model takes.
+	maxImageSide = 2000
 	// AttachDir is in the sandbox's home, which outlives the container,
 	// and out of the repository, where an agent might commit attachments.
 	AttachDir = "/root/.skybreaker/attachments"
 	// attachTimeout bounds writing one message's files into the sandbox.
 	attachTimeout = time.Minute
+	// A thumbnail is a JPEG or PNG the browser made, at most this large.
+	maxThumb     = 96 << 10
+	maxThumbSide = 960
 )
+
+// maxImagesInput bounds a message's image input, as the whole request has
+// a limit too.
+var maxImagesInput = 12 << 20
 
 // attach writes files into the sandbox, then keeps them with the chat. It
 // returns what the chat records, what the harness is told and the images
-// it sees. Nothing is kept if any file is refused or can't be written.
+// it sees. Callers hold the run's sendMu, so the room checked is there to
+// keep them in. A thumbnail that can't be kept is dropped.
 func (m *Manager) attach(ctx context.Context, s store.Session, files []File) ([]Attachment, string, []Image, error) {
 	if len(files) == 0 {
 		return nil, "", nil, nil
@@ -102,9 +130,9 @@ func (m *Manager) attach(ctx context.Context, s store.Session, files []File) ([]
 	writes := make([]SandboxFile, len(files))
 	for i, f := range files {
 		mimes[i] = http.DetectContentType(f.Data)
-		ext, image := ImageExt[mimes[i]]
+		ext, isImage := imageExt[mimes[i]]
 		a := Attachment{Name: displayName(f.Name), Kind: AttachFile, Size: int64(len(f.Data))}
-		if image {
+		if isImage {
 			a.Kind = AttachImage
 		} else {
 			ext = ".bin"
@@ -125,14 +153,53 @@ func (m *Manager) attach(ctx context.Context, s store.Session, files []File) ([]
 		if _, err := m.c.Log.KeepAttached(s.ID, f.Data, exts[i]); err != nil {
 			return nil, "", nil, err
 		}
+		if ext := thumbExt(f, atts[i].Kind); ext != "" {
+			if name, err := m.c.Log.KeepThumb(s.ID, f.Thumb, ext); err == nil {
+				atts[i].Thumb = name
+			}
+		}
 		a := atts[i]
 		fmt.Fprintf(&note, "\n[Attached %s: %s]", a.Kind, a.Path)
-		if a.Kind == AttachImage && len(f.Data) <= maxImageInput && inline+len(f.Data) <= maxImagesInput {
+		if a.Kind == AttachImage && inline+len(f.Data) <= maxImagesInput && imageInput(f.Data) {
 			inline += len(f.Data)
 			images = append(images, Image{Mime: mimes[i], Data: f.Data})
 		}
 	}
 	return atts, strings.TrimPrefix(note.String(), "\n"), images, nil
+}
+
+// imageInput reports whether an image can go to the model as one: a PNG,
+// JPEG or GIF that decodes whole, within the models' limits. A model
+// refuses anything else, and would go on refusing it in the conversation.
+func imageInput(data []byte) bool {
+	if len(data) > maxImageInput {
+		return false
+	}
+	c, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || c.Width < 1 || c.Height < 1 || c.Width > maxImageSide || c.Height > maxImageSide {
+		return false
+	}
+	_, _, err = image.Decode(bytes.NewReader(data))
+	return err == nil
+}
+
+var thumbTypes = map[string]string{"image/jpeg": ".jpg", "image/png": ".png"}
+
+// thumbExt is the extension a file's thumbnail is kept under, or "" if it
+// has none worth keeping: only an image's, only a small JPEG or PNG.
+func thumbExt(f File, kind string) string {
+	if kind != AttachImage || len(f.Thumb) == 0 || len(f.Thumb) > maxThumb {
+		return ""
+	}
+	ext := thumbTypes[http.DetectContentType(f.Thumb)]
+	if ext == "" {
+		return ""
+	}
+	c, _, err := image.DecodeConfig(bytes.NewReader(f.Thumb))
+	if err != nil || c.Width < 1 || c.Height < 1 || c.Width > maxThumbSide || c.Height > maxThumbSide {
+		return ""
+	}
+	return ext
 }
 
 // baseName is a file's own name, without the folders a browser may give,

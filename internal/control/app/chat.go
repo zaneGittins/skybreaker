@@ -119,6 +119,7 @@ func (a *App) startChat(ctx context.Context, s store.Session, argv []string, env
 	if err := a.WaitWorkspace(ctx, s.Project); err != nil {
 		return nil, err
 	}
+	a.restoreAttachments(ctx, s)
 	if s.Terminal != "" {
 		a.closeChatTerminal(ctx, s)
 		a.chat.Note(s.ID, "Back in the chat. The agent remembers what happened in the terminal, but it isn't shown here.")
@@ -263,10 +264,12 @@ func (a *App) ChatFork(ctx context.Context, id string) (store.Session, error) {
 		f.PermMode = chat.ModeAsk
 	}
 	if err := a.chat.Copy(s.ID, f.ID); err != nil {
+		a.chat.Forget(f.ID)
 		a.dropWorktree(f)
 		return store.Session{}, err
 	}
 	if err := a.store.CreateSession(f); err != nil {
+		a.chat.Forget(f.ID)
 		a.dropWorktree(f)
 		return store.Session{}, err
 	}
