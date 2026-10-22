@@ -10,8 +10,8 @@ import (
 )
 
 // check-protocols.sh, which gates every new image, checks each flag the
-// chat drivers start their harness with, so a CLI that drops one isn't
-// promoted.
+// chat drivers start their harness with, in the env they set, so a CLI that
+// drops one isn't promoted.
 func TestCheckProtocolsCoversDriverFlags(t *testing.T) {
 	script, err := os.ReadFile("check-protocols.sh")
 	if err != nil {
@@ -19,6 +19,11 @@ func TestCheckProtocolsCoversDriverFlags(t *testing.T) {
 	}
 	for _, name := range []string{"claude", "pi"} {
 		d := chat.New(name)
+		for k, v := range d.Env() {
+			if !strings.Contains(string(script), k+"="+v+" ") {
+				t.Errorf("%s driver runs with %s=%s, which check-protocols.sh doesn't set", name, k, v)
+			}
+		}
 		for _, o := range []chat.Options{
 			{Mode: chat.ModeAsk, NewID: "n", MCP: "http://broker/mcp", Model: "m"},
 			{Mode: chat.ModeAuto, Resume: "r", Fork: true},
