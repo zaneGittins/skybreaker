@@ -869,13 +869,20 @@ func (a *App) busy(ctx context.Context, project string) bool {
 // MCPCaller places a request to the sandboxes' MCP mount,
 // /mcp/<project>/<hook token>/<session or ->: it must come from that
 // project's own sandbox network and carry its hook token, and a session it
-// names must be one of that project's.
+// names must be one of that project's. A URL naming none can name it in
+// X-Skybreaker-Session, as pi's config, shared by its sessions, does; a
+// session there that isn't the project's names none.
 func (a *App) MCPCaller(r *http.Request) (mcp.Caller, error) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/mcp/"), "/")
 	if len(parts) != 3 {
 		return mcp.Caller{}, ErrNotFound
 	}
 	project, token, session := parts[0], parts[1], parts[2]
+	if h := r.Header.Get("X-Skybreaker-Session"); session == "-" && h != "" {
+		if s, ok := a.store.Session(h); ok && s.Project == project {
+			session = h
+		}
+	}
 	ap, err := netip.ParseAddrPort(r.RemoteAddr)
 	if err != nil {
 		return mcp.Caller{}, err

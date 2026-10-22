@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -83,6 +85,8 @@ func New(name string) Driver {
 		return newClaude()
 	case "codex":
 		return newCodex()
+	case "pi":
+		return newPi()
 	}
 	return nil
 }
@@ -118,6 +122,21 @@ func stepEnd(status string) string {
 		return StatusFailed
 	}
 	return StatusDeclined
+}
+
+// otherTool fills in a card for a tool known only by its name: an MCP
+// server's tool by server and tool, and any by its first string argument.
+func otherTool(t *Tool, name string, in map[string]any) {
+	t.Kind = ToolOther
+	if server, tool, ok := strings.Cut(strings.TrimPrefix(name, "mcp__"), "__"); ok && strings.HasPrefix(name, "mcp__") {
+		t.Kind, t.Name = ToolMCP, server+" · "+tool
+	}
+	for _, k := range slices.Sorted(maps.Keys(in)) {
+		if s, ok := in[k].(string); ok && s != "" {
+			t.Title = firstLine(s)
+			break
+		}
+	}
 }
 
 // Rel shows a path in the workspace, or in a session's worktree, relative

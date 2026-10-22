@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -988,16 +986,7 @@ func claudeTool(name string, raw json.RawMessage) *Tool {
 		}
 		t.Output = strings.Join(lines, "\n")
 	default:
-		t.Kind = ToolOther
-		if server, tool, ok := strings.Cut(strings.TrimPrefix(name, "mcp__"), "__"); ok && strings.HasPrefix(name, "mcp__") {
-			t.Kind, t.Name = ToolMCP, server+" · "+tool
-		}
-		for _, k := range slices.Sorted(maps.Keys(in)) {
-			if s, ok := in[k].(string); ok && s != "" {
-				t.Title = firstLine(s)
-				break
-			}
-		}
+		otherTool(t, name, in)
 	}
 	if len(t.Title) > 300 {
 		t.Title = clip(t.Title, 300)

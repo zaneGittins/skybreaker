@@ -46,7 +46,7 @@ type Manifest struct {
 var (
 	approvals    = []string{"claude-hooks", "codex-app-server", "none"}
 	results      = []string{"claude-stream-json", "codex-json", "text"}
-	chats        = []string{"", "claude", "codex"}
+	chats        = []string{"", "claude", "codex", "pi"}
 	validName    = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 	placeholder  = regexp.MustCompile(`\{[a-z_]+\}`)
 	placeholders = []string{"{prompt}", "{budget}", "{allowed_tools}", "{mcp_config}", "{mcp_url}", "{model}"}
@@ -124,6 +124,8 @@ func Builtins() map[string]Manifest {
 			Login:    []string{".pi"},
 			Egress:   []string{"its provider's API, or a route to your model server"},
 			Result:   "text",
+			Chat:     "pi",
+			Resume:   []string{"skybreaker-pi", "--skybreaker-mcp", "{mcp_config}", "--session-id", "{resume}"},
 		},
 		// A plain terminal in the sandbox. Every project has it.
 		Shell: {

@@ -1,8 +1,8 @@
 // Package chat runs harnesses in their structured modes (Claude Code's
-// stream-json, Codex's app-server) and turns what they say into one small
-// event model the UI draws as a conversation. Each harness has a Driver, a
-// pure translator; the Manager runs the processes, keeps each session's
-// event log and fans events out.
+// stream-json, Codex's app-server, pi's RPC mode) and turns what they say
+// into one small event model the UI draws as a conversation. Each harness
+// has a Driver, a pure translator; the Manager runs the processes, keeps
+// each session's event log and fans events out.
 //
 // The UI depends only on the events here. A harness that changes its
 // protocol is absorbed in its driver: unknown messages are ignored, and an

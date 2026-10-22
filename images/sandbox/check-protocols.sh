@@ -18,7 +18,17 @@ fi
 claude --version
 codex --version
 pi --version
-pi --help | grep -q -- "--print" || { echo "pi no longer has --print" >&2; exit 1; }
+# has HELP FLAG: the help lists the flag itself, not one it starts.
+has() { printf "%s" "$1" | grep -qE -- "(^|[ ,])$2([ ,=]|\$)"; }
+pi_help=$(pi --help)
+for flag in --print --mode --model --session-id --session --fork; do
+  has "$pi_help" "$flag" || { echo "pi no longer has $flag" >&2; exit 1; }
+done
+# The chat driver's RPC mode, which answers state offline.
+pi_dir=$(mktemp -d)
+printf '{"type":"get_state"}\n' | PI_OFFLINE=1 PI_CODING_AGENT_DIR="$pi_dir" pi --mode rpc --no-session 2>/dev/null \
+  | grep -q '"command":"get_state","success":true' || { echo "pi no longer answers get_state in RPC mode" >&2; exit 1; }
+rm -rf "$pi_dir"
 help=$(claude --help)
 for flag in --print --input-format --output-format --include-partial-messages --permission-prompt-tool --model \
             --permission-mode --allow-dangerously-skip-permissions --session-id --resume --fork-session --mcp-config --verbose; do
