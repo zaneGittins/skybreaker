@@ -29,13 +29,19 @@ pi_dir=$(mktemp -d)
 printf '{"type":"get_state"}\n' | PI_OFFLINE=1 PI_CODING_AGENT_DIR="$pi_dir" pi --mode rpc --no-session 2>/dev/null \
   | grep -q '"command":"get_state","success":true' || { echo "pi no longer answers get_state in RPC mode" >&2; exit 1; }
 rm -rf "$pi_dir"
-help=$(claude --help)
-for flag in --print --input-format --output-format --include-partial-messages --permission-prompt-tool --model \
-            --permission-mode --allow-dangerously-skip-permissions --session-id --resume --fork-session --mcp-config --verbose; do
-  printf "%s" "$help" | grep -q -- "$flag" || { echo "claude no longer has $flag" >&2; exit 1; }
+# The chat driver's command line, in each permission mode it uses. claude
+# parses it before reading an empty stdin, offline, so a flag it lost fails
+# here; --help can't tell, as it leaves out the SDK's --permission-prompt-tool.
+for mode in default acceptEdits bypassPermissions plan; do
+  claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages \
+    --permission-prompt-tool stdio --permission-mode "$mode" --allow-dangerously-skip-permissions \
+    --mcp-config '{"mcpServers":{}}' --model=haiku </dev/null >/dev/null \
+    || { echo "claude no longer takes the chat driver's command line in mode $mode" >&2; exit 1; }
 done
-for mode in acceptEdits bypassPermissions plan; do
-  printf "%s" "$help" | grep -q -- "$mode" || { echo "claude no longer has permission mode $mode" >&2; exit 1; }
+# What a resume, a fork and a scheduled run add.
+help=$(claude --help)
+for flag in --session-id --resume --fork-session --bare --permission-prompts --max-budget-usd --allowedTools; do
+  has "$help" "$flag" || { echo "claude no longer has $flag" >&2; exit 1; }
 done
 codex resume --help | grep -q -- --no-alt-screen || { echo "codex resume lost --no-alt-screen" >&2; exit 1; }
 # Terminals, resumes and runs get Skybreaker's MCP server as a -c override,
