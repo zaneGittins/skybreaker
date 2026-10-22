@@ -86,7 +86,7 @@ func (a *App) newChatManager(dir string) (*chat.Manager, error) {
 		return nil, err
 	}
 	return chat.NewManager(chat.Config{
-		Log: l, Sessions: a.store, Start: a.startChat, Options: a.chatOptions,
+		Log: l, Sessions: a.store, Start: a.startChat, Attach: a.attach, Options: a.chatOptions,
 		Driver: func(s store.Session) chat.Driver {
 			m, ok := a.cfg.Harnesses.Get(s.Harness)
 			if !ok || m.Chat == "" {
@@ -300,12 +300,12 @@ func (a *App) chatSession(id string) (store.Session, error) {
 	return s, nil
 }
 
-func (a *App) ChatSend(ctx context.Context, id, text string) error {
+func (a *App) ChatSend(ctx context.Context, id, text string, files ...chat.File) error {
 	if _, err := a.chatSession(id); err != nil {
 		return err
 	}
 	a.store.UpdateSession(id, func(x *store.Session) { x.Seen = time.Now().UTC() })
-	return a.chat.Send(ctx, id, text)
+	return a.chat.Send(ctx, id, text, files...)
 }
 
 func (a *App) ChatAnswer(ctx context.Context, id, ask string, ans chat.Answer) error {

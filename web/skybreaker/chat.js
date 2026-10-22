@@ -66,6 +66,7 @@ Object.assign(ICON, {
   alert: ['M12 3l10 18H2z', 'M12 10v4', 'M12 17h.01'],
   branch: ['M6 3v12', 'M18 3a3 3 0 1 0 0 6a3 3 0 1 0 0-6', 'M6 15a3 3 0 1 0 0 6a3 3 0 1 0 0-6', 'M18 9a9 9 0 0 1-9 9'],
   image: ['M4 5h16v14H4z', 'M4 16l5-5 4 4 3-3 4 4', 'M15.5 8.5h.01'],
+  clip: ['M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.1-8.1a3.3 3.3 0 0 1 4.7 4.7l-8.1 8.1a1.7 1.7 0 0 1-2.4-2.4l7.4-7.4'],
 });
 
 const TOOL_ICON = { command: 'term', edit: 'pencil', read: 'file', search: 'search', web: 'globe', agent: 'agent', todo: 'list', mcp: 'plug', other: 'bolt' };
@@ -221,6 +222,52 @@ function contextRing() {
   return { node: s, set };
 }
 
+// prepareFile reads a file to attach. An image too large for the models is
+// scaled down, a screenshot staying PNG where it can; a photo becomes JPEG.
+async function prepareFile(file) {
+  let blob = file;
+  let name = file.name || 'file';
+  if (scalable(file.type)) {
+    blob = await fitImage(file).catch(() => file);
+    if (blob !== file && blob.type === 'image/jpeg') name = name.replace(/\.[^.]*$/, '') + '.jpg';
+  }
+  const url = await new Promise((ok, fail) => {
+    const r = new FileReader();
+    r.onload = () => ok(r.result);
+    r.onerror = () => fail(r.error);
+    r.readAsDataURL(blob);
+  });
+  // url is the preview, and its base64 what's sent.
+  return { name, size: blob.size, image: /^image\/(png|jpeg|gif|webp)$/.test(blob.type), url };
+}
+
+async function fitImage(file) {
+  const bmp = await createImageBitmap(file);
+  const { w, h } = fitSize(bmp.width, bmp.height, ATTACH.imageSide);
+  const native = /^image\/(png|jpeg|webp)$/.test(file.type);
+  if (native && w === bmp.width && file.size <= ATTACH.imageBytes) {
+    bmp.close();
+    return file;
+  }
+  const draw = fill => {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d');
+    if (fill) { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h) }
+    g.drawImage(bmp, 0, 0, w, h);
+    return c;
+  };
+  const encode = (c, type, q) => new Promise((ok, fail) => c.toBlob(b => b ? ok(b) : fail(new Error('encode')), type, q));
+  try {
+    if (file.type === 'image/png') {
+      const png = await encode(draw(false), 'image/png');
+      if (png.size <= ATTACH.imageBytes) return png;
+    }
+    return await encode(draw(true), 'image/jpeg', 0.85);
+  } finally { bmp.close() }
+}
+
 async function renderChat(seq, d) {
   const id = d.session.id;
   let session = d.session, project = d.project;
@@ -248,10 +295,13 @@ async function renderChat(seq, d) {
   });
   const sendBtn = el('button.send-btn', { type: 'submit', 'aria-label': 'Send', onmousedown: e => e.preventDefault() });
   const modeBtn = el('button.mode-chip', { type: 'button', onclick: () => modeMenu() });
-  const composer = el('form.composer', { onsubmit: e => { e.preventDefault(); submit() } }, modeBtn, input, sendBtn);
+  const picker = el('input', { type: 'file', multiple: true, hidden: true, onchange: () => { addFiles([...picker.files]); picker.value = '' } });
+  const attachBtn = el('button.attach-btn', { type: 'button', 'aria-label': 'Attach files', title: 'Attach files', onmousedown: e => e.preventDefault(), onclick: () => picker.click() }, svg(ICON.clip));
+  const tray = el('div.attach-tray', { hidden: true, 'aria-live': 'polite' });
+  const composer = el('form.composer', { onsubmit: e => { e.preventDefault(); submit() } }, modeBtn, attachBtn, input, sendBtn, picker);
   const ended = el('div.ended-bar', { hidden: true });
   const hints = el('div.cmd-hints', { hidden: true });
-  const footer = el('div.chat-foot', null, dock, hints, composer, ended);
+  const footer = el('div.chat-foot', null, dock, hints, tray, composer, ended);
   const goalBar = el('div.chat-goal', { hidden: true });
   const ring = contextRing();
   // The ring is how full the context window is, and says so in figures.
@@ -278,8 +328,11 @@ async function renderChat(seq, d) {
   // startNode greets a chat with nothing in it yet; the first item replaces it.
   let startNode = null;
   state.chat = v;
+  // Ends listeners outside the page, which outlive it.
+  const unlisten = new AbortController();
   v.close = () => {
     v.closed = true;
+    unlisten.abort();
     v.es?.close();
     clearInterval(v.timer);
     window.visualViewport?.removeEventListener('resize', onViewport);
@@ -453,13 +506,72 @@ async function renderChat(seq, d) {
     const ask = [...chat.asks.values()][0];
     composer.hidden = session.status !== 'running' || (ask?.ask.kind === 'question' && !oneQuestion(ask));
     input.placeholder = oneQuestion(ask) ? 'Or answer in your own words…' : ask ? 'Or tell it what to do instead…' : chat.working ? 'Add to what it\'s doing…' : `Message ${harnessLabel(session.harness)}`;
-    const stop = chat.working && !input.value.trim() && !ask;
+    const stop = chat.working && !input.value.trim() && !ask && !pending.length;
     sendBtn.classList.toggle('stop', stop);
     sendBtn.setAttribute('aria-label', stop ? 'Stop' : 'Send');
     sendBtn.replaceChildren(svg(stop ? ICON.stop : ICON.send));
-    sendBtn.disabled = !stop && !input.value.trim();
+    sendBtn.disabled = !stop && !input.value.trim() && !pending.length;
+    tray.hidden = !pending.length || composer.hidden;
   };
   input.addEventListener('input', () => { grow(); syncComposer(); saveDraft(); showHints() });
+
+  // --- attachments: picked, pasted or dropped; images scaled down first ---
+  let pending = []; // { name, size, image, url } or, while it's read, { name, busy }
+  // drawTray redraws the attachments; after a removal, focus goes to the
+  // next one's remove button, or the input.
+  const drawTray = removedAt => {
+    tray.replaceChildren(...pending.map(p => {
+      const remove = el('button.att-x', {
+        type: 'button', 'aria-label': 'Remove ' + p.name, title: 'Remove',
+        onclick: () => { const i = pending.indexOf(p); pending = pending.filter(x => x !== p); drawTray(i) },
+      }, svg(ICON.x));
+      if (p.busy) return el('div.att.att-file', { 'aria-busy': 'true', title: p.name }, el('span.spinner'), el('span.att-name', null, p.name), remove);
+      if (p.image) return el('div.att.att-img', { title: p.name }, el('img', { src: p.url, alt: p.name }), remove);
+      return el('div.att.att-file', { title: p.name }, svg(ICON.file), el('span.att-name', null, p.name), el('span.att-size', null, fmtSize(p.size)), remove);
+    }));
+    syncComposer();
+    if (removedAt === undefined) return;
+    const xs = tray.querySelectorAll('.att-x');
+    (xs[removedAt] || xs[xs.length - 1] || input).focus();
+  };
+  const addFiles = async files => {
+    if (!files.length) return;
+    const early = readProblem(pending, files);
+    if (early) { toast(early, 'error'); return }
+    const slots = files.map(f => ({ name: f.name || 'file', busy: true }));
+    pending = [...pending, ...slots];
+    drawTray();
+    const ready = await Promise.all(files.map(f => prepareFile(f).catch(() => null)));
+    const unread = slots.filter((_, i) => !ready[i]).map(s => s.name);
+    if (unread.length) toast(`Couldn't read ${unread.join(', ')}.`, 'error');
+    // Slots removed while reading stay out; another batch may still read.
+    const got = slots.map((s, i) => pending.includes(s) ? ready[i] : null);
+    const problem = attachProblem(pending.filter(p => !slots.includes(p)), got.filter(Boolean));
+    if (problem) toast(problem, 'error');
+    pending = pending.flatMap(p => !slots.includes(p) ? [p] : !problem && got[slots.indexOf(p)] ? [got[slots.indexOf(p)]] : []);
+    drawTray();
+  };
+  input.addEventListener('paste', e => {
+    const files = [...(e.clipboardData?.files || [])];
+    // Text with a picture of itself, as from a spreadsheet, pastes as text.
+    if (!files.length || e.clipboardData.types.includes('text/plain')) return;
+    e.preventDefault();
+    addFiles(files);
+  });
+  // Files dragged anywhere stay in the app, even with nowhere to attach them.
+  let drags = 0;
+  const fileDrag = e => e.dataTransfer?.types.includes('Files');
+  const on = (type, fn) => document.addEventListener(type, fn, { signal: unlisten.signal });
+  on('dragenter', e => { if (fileDrag(e)) { drags++; page.classList.toggle('dropping', !composer.hidden) } });
+  on('dragleave', e => { if (fileDrag(e) && --drags <= 0) { drags = 0; page.classList.remove('dropping') } });
+  on('dragover', e => { if (fileDrag(e)) e.preventDefault() });
+  on('drop', e => {
+    if (!fileDrag(e)) return;
+    e.preventDefault();
+    drags = 0;
+    page.classList.remove('dropping');
+    if (!composer.hidden) addFiles([...e.dataTransfer.files]);
+  });
 
   // --- Skybreaker's own commands: /rename, /color, /goal, /clear, /fork, /compact, /prompt ---
   api('GET', '/api/prompts').then(r => { prompts = r.prompts || []; showHints() }).catch(() => { });
@@ -555,11 +667,13 @@ async function renderChat(seq, d) {
   const submit = async () => {
     if (sending) return;
     const text = input.value.trim();
+    // A command runs as it would without files, which stay attached.
+    const command = parseCommand(text);
+    if (!command && pending.length) return sendFiles(text);
     if (!text) {
       if (chat.working) interrupt();
       return;
     }
-    const command = parseCommand(text);
     if (command) {
       sending = true;
       if (await runCommand(command)) clearInput();
@@ -578,6 +692,30 @@ async function renderChat(seq, d) {
       } else {
         await api('POST', `/api/sessions/${id}/messages`, { text });
       }
+      input.value = '';
+      prefs.set(draftKey, '');
+      grow();
+      stick = true;
+      toBottom(true);
+    } catch (e) { toast(e.message, 'error') } finally {
+      sending = false;
+      syncComposer();
+    }
+  };
+  const sendFiles = async text => {
+    if (pending.some(p => p.busy)) { toast('Still reading the files. Send again in a moment.'); return }
+    if (chat.asks.size) { toast('Answer the agent first, then send the files.'); return }
+    const sent = pending;
+    const problem = attachProblem([], sent);
+    if (problem) { toast(problem, 'error'); return }
+    sending = true;
+    sendBtn.disabled = true;
+    sendBtn.replaceChildren(el('span.spinner'));
+    try {
+      await api('POST', `/api/sessions/${id}/messages`, { text, files: sent.map(p => ({ name: p.name, data: p.url.slice(p.url.indexOf(',') + 1) })) });
+      // Files added while this one went stay for the next.
+      pending = pending.filter(p => !sent.includes(p));
+      drawTray();
       input.value = '';
       prefs.set(draftKey, '');
       grow();
@@ -662,9 +800,17 @@ async function renderChat(seq, d) {
   // --- items ---
   function userBubble(it) {
     const long = it.text.split('\n').length > 14 || it.text.length > 1400;
-    const body = el('div.bubble' + (long ? '.clamped' : ''), null, it.text);
-    return el('div.msg.user', null, body,
+    const body = it.text ? el('div.bubble' + (long ? '.clamped' : ''), null, it.text) : null;
+    return el('div.msg.user', null, it.attach.length ? attachRow(it.attach) : null, body,
       long ? el('button.show-more', { type: 'button', onclick: e => { body.classList.remove('clamped'); e.currentTarget.remove() } }, 'Show all') : null);
+  }
+
+  // attachRow shows what a message carried, from the chat's own copies.
+  function attachRow(attach) {
+    const url = a => `/api/sessions/${encodeURIComponent(id)}/shown/${encodeURIComponent(a.kept)}`;
+    return el('div.att-row', null, attach.map(a => a.kind === 'image'
+      ? el('a.att.att-img', { href: url(a), target: '_blank', rel: 'noopener noreferrer', title: reveal(a.name) }, el('img', { src: url(a), alt: reveal(a.name), loading: 'lazy' }))
+      : el('a.att.att-file', { href: url(a), download: a.name, title: reveal(a.name) }, svg(ICON.file), el('span.att-name', null, reveal(a.name)), el('span.att-size', null, fmtSize(a.size)))));
   }
 
   function thinkingRow(it) {

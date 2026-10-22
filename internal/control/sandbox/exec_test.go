@@ -52,3 +52,21 @@ func TestExecRunnerKeepsOrdinaryOutput(t *testing.T) {
 		t.Fatalf("docker's message lost: %v", err)
 	}
 }
+
+func TestExecInput(t *testing.T) {
+	out, err := ExecRunner{}.RunInput(context.Background(), strings.NewReader("from stdin"), 0, "cat")
+	if err != nil || string(out) != "from stdin" {
+		t.Fatalf("RunInput = %q, %v", out, err)
+	}
+	if _, err := (ExecRunner{}).RunInput(context.Background(), strings.NewReader("0123456789"), 4, "cat"); !errors.Is(err, ErrOutputLimit) {
+		t.Errorf("past its own limit = %v", err)
+	}
+	m := &Manager{R: ExecRunner{}, Docker: "echo"}
+	out, err = m.ExecInput(context.Background(), "orbit", []byte("x"), 0, "sh", "-c", "cat")
+	if err != nil || strings.TrimSpace(string(out)) != "exec -i "+ContainerName("orbit")+" sh -c cat" {
+		t.Errorf("ExecInput ran %q, %v", out, err)
+	}
+	if _, err := m.ExecInput(context.Background(), "../x", nil, 0, "true"); err == nil {
+		t.Error("ran in a bad project")
+	}
+}

@@ -112,18 +112,33 @@ func (s *server) chatEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// maxSendBody fits a message's attachments, base64 in JSON, and its text
+// with room for escaping.
+const maxSendBody = chat.MaxAttachTotal/3*4 + 2<<20
+
 func (s *server) chatSend(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Text string `json:"text"`
+	// Decoding a message with attachments takes several times its size in
+	// memory, so only a few are decoded at once.
+	if r.ContentLength < 0 || r.ContentLength > 1<<20 {
+		select {
+		case s.uploads <- struct{}{}:
+			defer func() { <-s.uploads }()
+		case <-r.Context().Done():
+			return
+		}
 	}
-	if !decode(w, r, &in) {
+	var in struct {
+		Text  string      `json:"text"`
+		Files []chat.File `json:"files"`
+	}
+	if !decodeUpTo(w, r, &in, maxSendBody) {
 		return
 	}
-	if strings.TrimSpace(in.Text) == "" {
+	if strings.TrimSpace(in.Text) == "" && len(in.Files) == 0 {
 		webutil.Error(w, http.StatusBadRequest, "empty message")
 		return
 	}
-	if err := s.Backend.ChatSend(r.Context(), r.PathValue("id"), in.Text); err != nil {
+	if err := s.Backend.ChatSend(r.Context(), r.PathValue("id"), in.Text, in.Files...); err != nil {
 		chatFail(w, err)
 		return
 	}
@@ -141,7 +156,11 @@ func chatFail(w http.ResponseWriter, err error) {
 		webutil.WriteJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "terminal": true})
 		return
 	}
-	if strings.Contains(err.Error(), "not found") {
+	if errors.Is(err, store.ErrNotFound) {
+		webutil.Error(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if errors.Is(err, app.ErrNotFound) {
 		fail(w, err)
 		return
 	}
@@ -363,15 +382,19 @@ func (s *server) pushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	webutil.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// shownTypes are the only types a shown file is served as, by the kept
-// copy's extension: its type was checked from its bytes when it was shown.
-var shownTypes = map[string]string{
-	".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
-	".txt": "text/plain; charset=utf-8",
-}
+// shownTypes are the only types a kept file is served as, by its
+// extension: an image's type was checked from its bytes when it was kept.
+// Any other file a user attached is .bin, served only as a download.
+var shownTypes = func() map[string]string {
+	t := map[string]string{".txt": "text/plain; charset=utf-8", ".bin": "application/octet-stream"}
+	for mime, ext := range chat.ImageExt {
+		t[ext] = mime
+	}
+	return t
+}()
 
-// chatShown serves the kept copy of a file an agent showed. It comes from
-// a sandbox, so it's served as inert content in a sandbox of its own: even
+// chatShown serves the kept copy of a file an agent showed or the user
+// attached. It's served as inert content in a sandbox of its own: even
 // opened directly, it can't run script with the UI's origin.
 func (s *server) chatShown(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
@@ -388,7 +411,11 @@ func (s *server) chatShown(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Type", ctype)
 	h.Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox")
-	h.Set("Content-Disposition", "inline")
+	if path.Ext(name) == ".bin" {
+		h.Set("Content-Disposition", "attachment")
+	} else {
+		h.Set("Content-Disposition", "inline")
+	}
 	h.Set("Cache-Control", "private, max-age=31536000, immutable")
 	w.Write(b)
 }

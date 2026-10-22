@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/netip"
 	"os"
@@ -13,14 +14,17 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/zaneGittins/skybreaker/internal/names"
 )
 
 // Runner runs a command and returns its stdout. Errors carry the trimmed
-// stderr so docker's message reaches the caller.
+// stderr so docker's message reaches the caller. RunInput also feeds the
+// command's stdin, and reads at most maxOutput bytes of its stdout.
 type Runner interface {
 	Run(ctx context.Context, name string, args ...string) ([]byte, error)
+	RunInput(ctx context.Context, stdin io.Reader, maxOutput int64, name string, args ...string) ([]byte, error)
 }
 
 // ExecRunner runs commands with os/exec. What a sandbox command prints is
@@ -65,7 +69,11 @@ func (c *capped) Write(p []byte) (int, error) {
 }
 
 func (r ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	limit := r.MaxOutput
+	return r.RunInput(ctx, nil, r.MaxOutput, name, args...)
+}
+
+func (r ExecRunner) RunInput(ctx context.Context, stdin io.Reader, maxOutput int64, name string, args ...string) ([]byte, error) {
+	limit := maxOutput
 	if limit <= 0 {
 		limit = DefaultMaxOutput
 	}
@@ -74,7 +82,9 @@ func (r ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byt
 	stdout := &capped{max: limit, fail: true, over: cancel}
 	stderr := &capped{max: maxStderr, over: func() {}}
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdout, cmd.Stderr = stdout, stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
+	// A child left holding the pipes can't keep the command from ending.
+	cmd.WaitDelay = 5 * time.Second
 	err := cmd.Run()
 	if stdout.hit {
 		return stdout.buf.Bytes(), fmt.Errorf("%s %s: %w (%d bytes)", name, firstArg(args), ErrOutputLimit, limit)
@@ -292,6 +302,15 @@ func (m *Manager) Exec(ctx context.Context, project string, args ...string) ([]b
 		return nil, fmt.Errorf("invalid project name %q", project)
 	}
 	return m.run(ctx, append([]string{"exec", ContainerName(project)}, args...)...)
+}
+
+// ExecInput runs a command in a project's sandbox, input on its stdin,
+// reading at most maxOutput bytes of what it prints.
+func (m *Manager) ExecInput(ctx context.Context, project string, input []byte, maxOutput int64, args ...string) ([]byte, error) {
+	if !names.Project(project) {
+		return nil, fmt.Errorf("invalid project name %q", project)
+	}
+	return m.R.RunInput(ctx, bytes.NewReader(input), maxOutput, m.docker(), append([]string{"exec", "-i", ContainerName(project)}, args...)...)
 }
 
 // ExecArgv is the full command line for an interactive exec under a PTY,

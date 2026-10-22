@@ -379,9 +379,12 @@ function foldChat(c, e) {
   };
   const auto = () => 'e' + (e.seq || c.items.length) + ':' + c.items.length;
   switch (e.kind) {
-    case 'user':
-      c.lastUser = e.text;
-      return add({ type: 'user', id: e.id || auto(), text: e.text, time: e.time });
+    case 'user': {
+      const attach = Array.isArray(e.attach) ? e.attach.filter(a => a && typeof a.kept === 'string') : [];
+      // Try again resends text alone, so it's offered only without files.
+      c.lastUser = attach.length ? '' : e.text;
+      return add({ type: 'user', id: e.id || auto(), text: e.text || '', attach, time: e.time });
+    }
     case 'delta': {
       const it = c.byId.get(e.id);
       if (it) { it.text += e.text; return { changed: it } }
@@ -597,6 +600,52 @@ function fmtTokens(n) {
   return short(n / 1e6, 'M');
 }
 
+// ATTACH is how much a message can carry, as the server allows. Images
+// over imageSide or imageBytes are scaled down so every model takes them;
+// one is read only if under imageRead.
+const ATTACH = { files: 10, file: 10 << 20, total: 25 << 20, imageSide: 2000, imageBytes: (5 << 20) / 4 * 3, imageRead: 64 << 20 };
+
+// scalable is an image type the browser can draw smaller. GIFs aren't, so
+// they keep their animation.
+const scalable = type => /^image\/(png|jpeg|webp|avif|heic|heif|bmp)$/.test(type || '');
+
+// attachProblem says why files can't join those already attached, or ''.
+// Files still being read have no size yet and count toward the number.
+function attachProblem(have, add) {
+  if (have.length + add.length > ATTACH.files) return `Attach at most ${ATTACH.files} files to a message.`;
+  const empty = add.find(f => !f.size);
+  if (empty) return `${empty.name} is empty.`;
+  const big = add.find(f => f.size > ATTACH.file);
+  if (big) return `${big.name} is over ${ATTACH.file >> 20} MB.`;
+  if ([...have, ...add].reduce((n, f) => n + (f.size || 0), 0) > ATTACH.total) return `Attachments come to over ${ATTACH.total >> 20} MB.`;
+  return '';
+}
+
+// readProblem is attachProblem before files are read, so a huge one isn't:
+// an image that will be scaled down may start larger.
+function readProblem(have, files) {
+  if (have.length + files.length > ATTACH.files) return `Attach at most ${ATTACH.files} files to a message.`;
+  const empty = files.find(f => !f.size);
+  if (empty) return `${empty.name || 'That file'} is empty.`;
+  const big = files.find(f => f.size > (scalable(f.type) ? ATTACH.imageRead : ATTACH.file));
+  if (big) return `${big.name || 'That file'} is over ${(scalable(big.type) ? ATTACH.imageRead : ATTACH.file) >> 20} MB.`;
+  return '';
+}
+
+// fitSize scales w×h down to fit max on its longer side.
+function fitSize(w, h, max) {
+  const k = Math.min(1, max / Math.max(w, h));
+  return { w: Math.max(1, Math.round(w * k)), h: Math.max(1, Math.round(h * k)) };
+}
+
+function fmtSize(n) {
+  if (n < 1000) return n + ' B';
+  const kb = n / 1024;
+  if (kb < 1000) return (kb < 10 ? kb.toFixed(1) : Math.round(kb)) + ' KB';
+  const mb = kb / 1024;
+  return (mb < 10 ? mb.toFixed(1) : Math.round(mb)) + ' MB';
+}
+
 // activityLabel says what a working agent is doing right now, for the line
 // under the conversation: its newest running tool (a subagent's step
 // included), else whether it is writing or thinking.
@@ -652,4 +701,4 @@ function agentActivity(it) {
   return it.children?.length ? 'Thinking' : 'Starting';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, fitSize, fmtSize };

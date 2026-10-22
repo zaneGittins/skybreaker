@@ -63,7 +63,10 @@ func answer(f *fakeClaude, m map[string]any) {
 	if m["type"] != "user" {
 		return
 	}
-	text := m["message"].(map[string]any)["content"].(string)
+	text, _ := m["message"].(map[string]any)["content"].(string)
+	if blocks, ok := m["message"].(map[string]any)["content"].([]any); ok {
+		text = blocks[0].(map[string]any)["text"].(string)
+	}
 	f.say(`{"type":"system","subtype":"init","session_id":"conv-1","model":"claude-test","permissionMode":"default"}`)
 	b, _ := json.Marshal("echo: " + text)
 	f.say(`{"type":"assistant","message":{"id":"m-` + text + `","content":[{"type":"text","text":` + string(b) + `}]},"parent_tool_use_id":null}`)

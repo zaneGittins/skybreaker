@@ -57,7 +57,7 @@ type Backend interface {
 	Subscribe() (<-chan app.Event, func())
 
 	NewChat(ctx context.Context, project, harness string, opts app.NewOptions) (store.Session, error)
-	ChatSend(ctx context.Context, id, text string) error
+	ChatSend(ctx context.Context, id, text string, files ...chat.File) error
 	ChatAnswer(ctx context.Context, id, ask string, a chat.Answer) error
 	ChatInterrupt(ctx context.Context, id string) error
 	ChatMode(ctx context.Context, id, mode string) error
@@ -149,13 +149,15 @@ type server struct {
 	ssh   relays
 	gh    ghStates
 	chart chartCache
+	// uploads holds a place for each message with attachments being decoded.
+	uploads chan struct{}
 }
 
 func New(d Deps) (http.Handler, error) {
 	if d.Config == nil || d.Backend == nil || d.Approvals == nil || d.Network == nil || d.Board == nil || d.Runs == nil || d.Store == nil || d.Identifier == nil || d.Static == nil {
 		return nil, errors.New("api: missing dependency")
 	}
-	s := &server{Deps: d, tints: map[string]int{}}
+	s := &server{Deps: d, tints: map[string]int{}, uploads: make(chan struct{}, 2)}
 	for i, name := range slices.Sorted(maps.Keys(d.Config.Projects)) {
 		s.tints[name] = i % 8
 	}
@@ -232,7 +234,11 @@ func fail(w http.ResponseWriter, err error) {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(v); err != nil {
+	return decodeUpTo(w, r, v, 64<<10)
+}
+
+func decodeUpTo(w http.ResponseWriter, r *http.Request, v any, max int64) bool {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, max)).Decode(v); err != nil {
 		webutil.Error(w, http.StatusBadRequest, "bad JSON body")
 		return false
 	}

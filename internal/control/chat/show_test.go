@@ -18,7 +18,7 @@ func TestLogKeepsShownFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !shownName.MatchString(name) || !strings.HasSuffix(name, ".txt") {
+		if !keptPattern.MatchString(name) || !strings.HasSuffix(name, ".txt") {
 			t.Errorf("name = %q", name)
 		}
 		got, err := l.Kept("s1", name)
@@ -48,7 +48,7 @@ func TestLogKeepsShownFiles(t *testing.T) {
 
 func TestLogShownQuota(t *testing.T) {
 	l, _ := OpenLog(t.TempDir())
-	big := bytes.Repeat([]byte("x"), maxShownBytes/2+1)
+	big := bytes.Repeat([]byte("x"), int(shownShelf.maxBytes/2+1))
 	if _, err := l.Keep("s1", big, ".txt"); err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestManagerShow(t *testing.T) {
 		t.Fatal(err)
 	}
 	ev := find(h.events(s.ID), KindShow)
-	if len(ev) != 1 || ev[0].Show == nil || ev[0].Show.Path != "shot.png" || !shownName.MatchString(ev[0].ID) {
+	if len(ev) != 1 || ev[0].Show == nil || ev[0].Show.Path != "shot.png" || !keptPattern.MatchString(ev[0].ID) {
 		t.Fatalf("show events = %+v", ev)
 	}
 	if got, err := h.m.Shown(s.ID, ev[0].ID); err != nil || string(got) != "\x89PNG" {

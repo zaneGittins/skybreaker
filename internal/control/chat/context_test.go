@@ -256,7 +256,8 @@ func TestManagerStartsAFork(t *testing.T) {
 
 func TestLogCopy(t *testing.T) {
 	l, _ := OpenLog(t.TempDir())
-	l.Append("from", Event{Kind: KindUser, Text: "hi"})
+	att, _ := l.Keep("from", []byte("a log"), ".bin")
+	l.Append("from", Event{Kind: KindUser, Text: "hi", Attach: []Attachment{{Name: "x.log", Kind: AttachFile, Kept: att}}})
 	name, err := l.Keep("from", []byte("png bytes"), ".png")
 	if err != nil {
 		t.Fatal(err)
@@ -272,6 +273,9 @@ func TestLogCopy(t *testing.T) {
 	}
 	if b, err := l.Kept("to", name); err != nil || string(b) != "png bytes" {
 		t.Errorf("the shown file didn't come along: %q, %v", b, err)
+	}
+	if b, err := l.Kept("to", att); err != nil || string(b) != "a log" {
+		t.Errorf("the attachment didn't come along: %q, %v", b, err)
 	}
 	// The copy is its own: appending to one doesn't touch the other.
 	l.Append("to", Event{Kind: KindText, Text: "fork only"})

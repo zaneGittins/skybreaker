@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -116,14 +117,23 @@ func (c *claude) Open(Options) [][]byte {
 	return [][]byte{c.control(map[string]any{"subtype": "initialize", "hooks": nil})}
 }
 
-func (c *claude) Send(text string) ([][]byte, error) {
+func (c *claude) Send(text string, images ...Image) ([][]byte, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, errors.New("empty message")
 	}
 	c.interrupted = false
 	c.inTurn = true
+	var content any = text
+	if len(images) > 0 {
+		blocks := []any{map[string]any{"type": "text", "text": text}}
+		for _, im := range images {
+			blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{
+				"type": "base64", "media_type": im.Mime, "data": base64.StdEncoding.EncodeToString(im.Data)}})
+		}
+		content = blocks
+	}
 	return [][]byte{line(map[string]any{
-		"type": "user", "message": map[string]any{"role": "user", "content": text}, "parent_tool_use_id": nil,
+		"type": "user", "message": map[string]any{"role": "user", "content": content}, "parent_tool_use_id": nil,
 	})}, nil
 }
 

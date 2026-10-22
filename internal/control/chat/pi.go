@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -78,14 +79,22 @@ func (p *pi) Open(o Options) [][]byte {
 
 // Send always says to steer: pi reads it only during a run, which may have
 // started without our having read so yet.
-func (p *pi) Send(text string) ([][]byte, error) {
+func (p *pi) Send(text string, images ...Image) ([][]byte, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, errors.New("empty message")
 	}
 	if !p.inTurn {
 		p.begin()
 	}
-	return [][]byte{line(map[string]string{"type": "prompt", "message": text, "streamingBehavior": "steer"})}, nil
+	m := map[string]any{"type": "prompt", "message": text, "streamingBehavior": "steer"}
+	if len(images) > 0 {
+		var imgs []any
+		for _, im := range images {
+			imgs = append(imgs, map[string]string{"type": "image", "mimeType": im.Mime, "data": base64.StdEncoding.EncodeToString(im.Data)})
+		}
+		m["images"] = imgs
+	}
+	return [][]byte{line(m)}, nil
 }
 
 func (p *pi) begin() {

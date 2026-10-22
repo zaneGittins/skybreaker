@@ -94,6 +94,10 @@ func devRequests(b *broker.Broker) {
 // devDocker answers the docker CLI like a host with running sandboxes.
 type devDocker struct{ fakeDocker }
 
+func (d *devDocker) RunInput(ctx context.Context, _ io.Reader, _ int64, name string, args ...string) ([]byte, error) {
+	return d.Run(ctx, name, args...)
+}
+
 func (d *devDocker) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	line := strings.Join(args, " ")
 	switch {
