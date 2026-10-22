@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -290,6 +291,10 @@ type fakeRunner struct {
 type reply struct {
 	out string
 	err error
+}
+
+func (f *fakeRunner) RunInput(ctx context.Context, _ io.Reader, _ int64, name string, args ...string) ([]byte, error) {
+	return f.Run(ctx, name, args...)
 }
 
 func (f *fakeRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -642,6 +647,10 @@ func TestExecPipeArgv(t *testing.T) {
 }
 
 type imageRunner struct{ container, image string }
+
+func (r imageRunner) RunInput(ctx context.Context, _ io.Reader, _ int64, name string, args ...string) ([]byte, error) {
+	return r.Run(ctx, name, args...)
+}
 
 func (r imageRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	switch {

@@ -56,7 +56,8 @@ type Driver interface {
 	Env() map[string]string
 	// Open is what to write once the process starts.
 	Open(o Options) [][]byte
-	Send(text string) ([][]byte, error)
+	// Send gives the harness a message, with any images as image input.
+	Send(text string, images ...Image) ([][]byte, error)
 	Answer(askID string, a Answer) ([][]byte, error)
 	Interrupt() [][]byte
 	SetMode(mode string) ([][]byte, error)
@@ -70,6 +71,13 @@ type Driver interface {
 	Read(line []byte) Out
 	// Modes lists the permission modes this harness has, safest first.
 	Modes() []string
+}
+
+// An Image goes to the model with a message. Mime is image/png,
+// image/jpeg, image/gif or image/webp.
+type Image struct {
+	Mime string
+	Data []byte
 }
 
 // ErrTerminalLogin: the harness can only sign in in its terminal UI.

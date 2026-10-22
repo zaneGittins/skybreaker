@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
@@ -56,8 +58,18 @@ func (b *fakeBackend) NewChat(_ context.Context, p, h string, o app.NewOptions) 
 	b.chat.call("new " + p + " " + h + optsCall(o))
 	return store.Session{ID: "c1", Project: p, Harness: h, Mode: store.ModeChat, Status: store.StatusRunning}, nil
 }
-func (b *fakeBackend) ChatSend(_ context.Context, id, text string) error {
-	b.chat.call("send " + id + " " + text)
+func (b *fakeBackend) ChatSend(_ context.Context, id, text string, files ...chat.File) error {
+	call := "send " + id + " " + text
+	for _, f := range files {
+		call += fmt.Sprintf(" [%s:%s]", f.Name, f.Data)
+	}
+	b.chat.call(call)
+	switch text {
+	case "named":
+		return errors.New("not found.txt is empty")
+	case "gone":
+		return fmt.Errorf("session %q: %w", id, store.ErrNotFound)
+	}
 	return known(id)
 }
 func (b *fakeBackend) ChatAnswer(_ context.Context, id, ask string, a chat.Answer) error {
@@ -78,6 +90,9 @@ func (b *fakeBackend) ChatMode(_ context.Context, id, mode string) error {
 func (b *fakeBackend) ChatShown(id, name string) ([]byte, error) {
 	if id == "c1" && name == "0123456789abcdef0123456789abcdef.png" {
 		return []byte("\x89PNG"), nil
+	}
+	if id == "c1" && name == "0123456789abcdef0123456789abcdef.bin" {
+		return []byte("<html>a log</html>"), nil
 	}
 	if id == "c1" && name == "0123456789abcdef0123456789abcdef.txt" {
 		return []byte("<script>alert(1)</script>"), nil
@@ -218,6 +233,10 @@ func TestChatActions(t *testing.T) {
 		{"/api/sessions/c1/messages", `{"text":"hello"}`, 200},
 		{"/api/sessions/c1/messages", `{"text":""}`, 400},
 		{"/api/sessions/nope/messages", `{"text":"x"}`, 404},
+		{"/api/sessions/c1/messages", `{"text":"","files":[{"name":"a.log","data":"Ym9vbQ=="}]}`, 200},
+		{"/api/sessions/c1/messages", `{"text":"named"}`, 400},
+		{"/api/sessions/c1/messages", `{"text":"gone"}`, 404},
+		{"/api/sessions/c1/messages", `{"text":"x","files":[{"name":"a.log","data":"not base64!"}]}`, 400},
 		{"/api/sessions/c1/answer", `{"ask":"r1","allow":true,"always":true,"answers":{"q0":["SQLite"]}}`, 200},
 		{"/api/sessions/c1/answer", `{"allow":true}`, 400},
 		{"/api/sessions/c1/interrupt", `{}`, 200},
@@ -234,7 +253,7 @@ func TestChatActions(t *testing.T) {
 		}
 	}
 	got := f.backend.chat.got()
-	for _, want := range []string{"send c1 hello", "answer c1 r1", "interrupt c1", "mode c1 edits", "model c1 sonnet", "seen c1", "login c1", "compact c1"} {
+	for _, want := range []string{"send c1 hello", "send c1  [a.log:boom]", "answer c1 r1", "interrupt c1", "mode c1 edits", "model c1 sonnet", "seen c1", "login c1", "compact c1"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("calls %q lack %q", got, want)
 		}
@@ -437,6 +456,7 @@ func TestChatShownIsInert(t *testing.T) {
 	for name, want := range map[string]string{
 		"0123456789abcdef0123456789abcdef.png": "image/png",
 		"0123456789abcdef0123456789abcdef.txt": "text/plain; charset=utf-8",
+		"0123456789abcdef0123456789abcdef.bin": "application/octet-stream",
 	} {
 		resp, err := http.Get(f.ts.URL + "/api/sessions/c1/shown/" + name)
 		if err != nil {
@@ -446,6 +466,9 @@ func TestChatShownIsInert(t *testing.T) {
 		h := resp.Header
 		if resp.StatusCode != 200 || h.Get("Content-Type") != want {
 			t.Errorf("%s: %d %q", name, resp.StatusCode, h.Get("Content-Type"))
+		}
+		if wantDisp := map[bool]string{true: "attachment", false: "inline"}[strings.HasSuffix(name, ".bin")]; h.Get("Content-Disposition") != wantDisp {
+			t.Errorf("%s disposition = %q", name, h.Get("Content-Disposition"))
 		}
 		if csp := h.Get("Content-Security-Policy"); !strings.Contains(csp, "sandbox") || !strings.Contains(csp, "default-src 'none'") {
 			t.Errorf("%s CSP = %q", name, csp)
@@ -477,5 +500,42 @@ func TestEditSessionAPI(t *testing.T) {
 	}
 	if code, _ := f.do(t, "PATCH", "/api/sessions/s1", `{"title":"x","status":"killed"}`, nil); code != http.StatusBadRequest {
 		t.Fatalf("other fields: %d", code)
+	}
+}
+
+// Only so many messages with attachments are decoded at once; one waits
+// for a place until its request ends, while text goes straight through.
+func TestChatSendLimitsUploads(t *testing.T) {
+	b := &fakeBackend{chat: newFakeChat()}
+	s := &server{Deps: Deps{Backend: b}, uploads: make(chan struct{}, 1)}
+	s.uploads <- struct{}{} // another upload holds the only place
+	send := func(ctx context.Context, body string, length int64) int {
+		r := httptest.NewRequestWithContext(ctx, "POST", "/api/sessions/c1/messages", strings.NewReader(body))
+		r.ContentLength = length
+		r.SetPathValue("id", "c1")
+		w := httptest.NewRecorder()
+		s.chatSend(w, r)
+		return w.Code
+	}
+	big := `{"text":"","files":[{"name":"a.log","data":"Ym9vbQ=="}]}`
+
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	send(ended, big, 2<<20)
+	if got := b.chat.got(); len(got) != 0 {
+		t.Fatalf("decoded without a place: %q", got)
+	}
+	if code := send(context.Background(), `{"text":"hi"}`, 13); code != 200 {
+		t.Errorf("text waited behind an upload: %d", code)
+	}
+	<-s.uploads
+	if code := send(context.Background(), big, 2<<20); code != 200 {
+		t.Errorf("upload with a place: %d", code)
+	}
+	if len(s.uploads) != 0 {
+		t.Error("the upload kept its place")
+	}
+	if got := b.chat.got(); len(got) != 2 {
+		t.Errorf("calls = %q", got)
 	}
 }

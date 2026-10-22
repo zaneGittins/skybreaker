@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -21,8 +22,8 @@ type codex struct {
 	sent    map[int]string // our request ID → its method
 	thread  string
 	turn    string
-	queue   []string // messages sent before the thread exists
-	held    []string // messages sent while a turn starts, steered into it once codex names it
+	queue   [][]any // inputs sent before the thread exists
+	held    [][]any // inputs sent while a turn starts, steered into it once codex names it
 	asks    map[string]codexAsk
 	items   map[string]*Tool  // item ID → its card
 	agents  map[string]*Tool  // a subagent's card ID → its card, running until its thread's turn ends
@@ -106,33 +107,39 @@ func (c *codex) startThread() []byte {
 	return c.request("thread/start", c.threadParams())
 }
 
-func input(text string) []any {
-	return []any{map[string]any{"type": "text", "text": text}}
+// input is a message as codex takes it, its images as data URLs.
+func input(text string, images ...Image) []any {
+	in := []any{map[string]any{"type": "text", "text": text}}
+	for _, im := range images {
+		in = append(in, map[string]any{"type": "image", "url": "data:" + im.Mime + ";base64," + base64.StdEncoding.EncodeToString(im.Data)})
+	}
+	return in
 }
 
-func (c *codex) Send(text string) ([][]byte, error) {
+func (c *codex) Send(text string, images ...Image) ([][]byte, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, errors.New("empty message")
 	}
+	in := input(text, images...)
 	switch {
 	case c.thread == "":
-		c.queue = append(c.queue, text)
+		c.queue = append(c.queue, in)
 		return nil, nil
 	case c.turn == "pending":
 		// codex steers only the turn it names; until it has, wait.
-		c.held = append(c.held, text)
+		c.held = append(c.held, in)
 		return nil, nil
 	case c.turn != "":
-		return [][]byte{c.request("turn/steer", map[string]any{"threadId": c.thread, "expectedTurnId": c.turn, "input": input(text)})}, nil
+		return [][]byte{c.request("turn/steer", map[string]any{"threadId": c.thread, "expectedTurnId": c.turn, "input": in})}, nil
 	}
-	return [][]byte{c.startTurn(text)}, nil
+	return [][]byte{c.startTurn(in)}, nil
 }
 
-func (c *codex) startTurn(text string) []byte {
+func (c *codex) startTurn(in []any) []byte {
 	// A placeholder, so a second message before turn/started steers rather
 	// than starting a turn alongside.
 	c.turn = "pending"
-	p := map[string]any{"threadId": c.thread, "input": input(text), "approvalPolicy": codexPolicies[c.mode]}
+	p := map[string]any{"threadId": c.thread, "input": in, "approvalPolicy": codexPolicies[c.mode]}
 	if c.model != "" {
 		p["model"] = c.model
 	}
@@ -233,8 +240,8 @@ func (c *codex) Read(b []byte) Out {
 	out := c.read(b)
 	// Once codex has named the turn, what waited for it steers it.
 	if c.turn != "" && c.turn != "pending" {
-		for _, text := range c.held {
-			out.Write = append(out.Write, c.request("turn/steer", map[string]any{"threadId": c.thread, "expectedTurnId": c.turn, "input": input(text)}))
+		for _, in := range c.held {
+			out.Write = append(out.Write, c.request("turn/steer", map[string]any{"threadId": c.thread, "expectedTurnId": c.turn, "input": in}))
 		}
 		c.held = nil
 	}

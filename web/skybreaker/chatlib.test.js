@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, contextUse, fmtTokens } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, fitSize, fmtSize } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -437,4 +437,54 @@ test('foldChat: a tool waits on its approval, then carries on', () => {
   assert.equal(c.byId.get('t1').waiting, undefined);
   // An ask for no known tool changes nothing else.
   assert.equal(foldChat(c, { seq: 4, kind: 'ask', id: 'a2', ask: { kind: 'question', title: 'A question for you' } }).changed, undefined);
+});
+
+test('foldChat: a message keeps its attachments, and Try again skips it', () => {
+  const c = newChat();
+  const att = { name: 'shot.png', kind: 'image', size: 10, kept: 'ab.png', path: '/tmp/attachments/s/ab-shot.png' };
+  foldChat(c, { seq: 1, kind: 'user', id: 'u1', text: '', attach: [att, null, { name: 'no kept copy' }] });
+  assert.deepEqual(c.items[0].attach, [att]);
+  assert.equal(c.items[0].text, '');
+  assert.equal(c.lastUser, '');
+  foldChat(c, { seq: 2, kind: 'user', id: 'u2', text: 'plain' });
+  assert.deepEqual(c.items[1].attach, []);
+  assert.equal(c.lastUser, 'plain');
+});
+
+test('attachProblem: count, size and total limits', () => {
+  const f = (name, size) => ({ name, size });
+  assert.equal(attachProblem([], [f('a', 1)]), '');
+  assert.match(attachProblem(Array(ATTACH.files).fill(f('a', 1)), [f('b', 1)]), /at most 10/);
+  assert.match(attachProblem([], [f('big.zip', ATTACH.file + 1)]), /big\.zip is over 10 MB/);
+  assert.match(attachProblem([], [f('none.txt', 0)]), /none\.txt is empty/);
+  assert.match(attachProblem([f('a', 9 << 20), f('b', 9 << 20)], [f('c', 9 << 20)]), /over 25 MB/);
+  // A file still being read counts toward the number, not the size.
+  assert.match(attachProblem([{ name: 'reading', busy: true }, f('a', 20 << 20)], [f('b', 9 << 20)]), /over 25 MB/);
+});
+
+test('readProblem: refuses before reading, letting large images be scaled', () => {
+  const f = (name, size, type = '') => ({ name, size, type });
+  assert.equal(readProblem([], [f('photo.heic', 30 << 20, 'image/heic')]), '');
+  assert.match(readProblem([], [f('movie.mp4', 1 << 30, 'video/mp4')]), /movie\.mp4 is over 10 MB/);
+  assert.match(readProblem([], [f('huge.png', 100 << 20, 'image/png')]), /over 64 MB/);
+  assert.match(readProblem([], [f('anim.gif', 11 << 20, 'image/gif')]), /over 10 MB/);
+  assert.match(readProblem(Array(9).fill(f('a', 1)), [f('b', 1), f('c', 1)]), /at most 10/);
+  assert.match(readProblem([], [f('', 0)]), /That file is empty/);
+});
+
+test('scalable: raster images only', () => {
+  for (const t of ['image/png', 'image/jpeg', 'image/webp', 'image/heic']) assert.equal(scalable(t), true, t);
+  for (const t of ['image/gif', 'image/svg+xml', 'text/plain', '', undefined]) assert.equal(scalable(t), false, String(t));
+});
+
+test('fitSize and fmtSize', () => {
+  assert.deepEqual(fitSize(4032, 3024, 2000), { w: 2000, h: 1500 });
+  assert.deepEqual(fitSize(1170, 2532, 2000), { w: 924, h: 2000 });
+  assert.deepEqual(fitSize(800, 600, 2000), { w: 800, h: 600 });
+  assert.deepEqual(fitSize(10000, 1, 2000), { w: 2000, h: 1 });
+  assert.equal(fmtSize(512), '512 B');
+  assert.equal(fmtSize(1536), '1.5 KB');
+  assert.equal(fmtSize(250 * 1024), '250 KB');
+  assert.equal(fmtSize(3.4 * 1024 * 1024), '3.4 MB');
+  assert.equal(ATTACH.imageBytes, 3932160); // the server's maxImageInput
 });

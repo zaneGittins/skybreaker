@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -34,11 +35,24 @@ type fakeDocker struct {
 	execOut  func(args []string) (string, error)
 	blockRun func(container string) bool // docker run for these waits on release
 	release  chan struct{}
-	imageID  string // what `docker image inspect` reports; containers run "sha256:old"
+	imageID  string   // what `docker image inspect` reports; containers run "sha256:old"
+	inputs   [][]byte // what each command run with input was given
 }
 
 func newFakeDocker() *fakeDocker {
 	return &fakeDocker{running: map[string]bool{}, networks: map[string]string{}, tmux: map[string]string{}, sessions: map[string]map[string]bool{}}
+}
+
+func (f *fakeDocker) RunInput(ctx context.Context, stdin io.Reader, _ int64, name string, args ...string) ([]byte, error) {
+	b, _ := io.ReadAll(stdin)
+	f.mu.Lock()
+	f.inputs = append(f.inputs, b)
+	f.mu.Unlock()
+	// docker exec -i reads like docker exec.
+	if len(args) > 1 && args[0] == "exec" && args[1] == "-i" {
+		args = append([]string{"exec"}, args[2:]...)
+	}
+	return f.Run(ctx, name, args...)
 }
 
 func (f *fakeDocker) Run(ctx context.Context, name string, args ...string) ([]byte, error) {

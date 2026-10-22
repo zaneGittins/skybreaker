@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 )
 
@@ -22,7 +23,7 @@ type Log struct {
 
 	mu       sync.Mutex
 	sessions map[string]*sessionLog
-	shown    map[string]map[string][]byte // in memory only, when dir is empty
+	kept     map[string]map[string][]byte // by session and shelf, in memory only when dir is empty
 }
 
 type sessionLog struct {
@@ -43,7 +44,7 @@ func OpenLog(dir string) (*Log, error) {
 			return nil, err
 		}
 	}
-	return &Log{dir: dir, sessions: map[string]*sessionLog{}, shown: map[string]map[string][]byte{}}, nil
+	return &Log{dir: dir, sessions: map[string]*sessionLog{}, kept: map[string]map[string][]byte{}}, nil
 }
 
 func (l *Log) path(id string) string { return filepath.Join(l.dir, id+".jsonl") }
@@ -142,12 +143,23 @@ func (l *Log) Copy(from, to string) error {
 	if err != nil {
 		return err
 	}
+	copyKept := func(name string, keep func(string, []byte, string) (string, error)) error {
+		b, err := l.Kept(from, name)
+		if err != nil {
+			return nil
+		}
+		_, err = keep(to, b, filepath.Ext(name))
+		return err
+	}
 	for _, e := range events {
 		if e.Kind == KindShow {
-			if b, err := l.Kept(from, e.ID); err == nil {
-				if _, err := l.Keep(to, b, filepath.Ext(e.ID)); err != nil {
-					return err
-				}
+			if err := copyKept(e.ID, l.Keep); err != nil {
+				return err
+			}
+		}
+		for _, a := range e.Attach {
+			if err := copyKept(a.Kept, l.KeepAttached); err != nil {
+				return err
 			}
 		}
 		e.Seq = 0
@@ -163,12 +175,16 @@ func (l *Log) Delete(id string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.sessions, id)
-	delete(l.shown, id)
+	for _, sh := range []shelf{shownShelf, attachedShelf} {
+		delete(l.kept, id+sh.suffix)
+	}
 	if l.dir == "" || !logName.MatchString(id) {
 		return nil
 	}
-	if err := os.RemoveAll(l.shownDir(id)); err != nil {
-		return err
+	for _, sh := range []shelf{shownShelf, attachedShelf} {
+		if err := os.RemoveAll(l.shelfDir(id, sh)); err != nil {
+			return err
+		}
 	}
 	if err := os.Remove(l.path(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -176,69 +192,137 @@ func (l *Log) Delete(id string) error {
 	return nil
 }
 
-// Kept copies of files shown to the user live beside the session's log,
-// named by their content. Each session has a quota, so an agent can't fill
-// the disk by showing things.
-const (
-	maxShownBytes = 64 << 20
-	maxShownFiles = 500
+// Kept copies of files live beside the session's log, named by their
+// content, on one shelf for files agents show and another for files the
+// user attaches. Each shelf has its own quota, so neither can crowd out
+// the other, and an agent can't fill the disk by showing things.
+type shelf struct {
+	suffix   string
+	what     string
+	maxBytes int64
+	maxFiles int
+}
+
+var (
+	shownShelf    = shelf{".shown", "shown files", 64 << 20, 500}
+	attachedShelf = shelf{".attached", "attachments", 256 << 20, 500}
 )
 
 var (
-	shownName = regexp.MustCompile(`^[0-9a-f]{32}\.(png|jpg|gif|webp|txt)$`)
-	shownExt  = map[string]bool{".png": true, ".jpg": true, ".gif": true, ".webp": true, ".txt": true}
+	keptPattern = regexp.MustCompile(`^[0-9a-f]{32}\.(png|jpg|gif|webp|txt|bin)$`)
+	keptExt     = map[string]bool{".png": true, ".jpg": true, ".gif": true, ".webp": true, ".txt": true, ".bin": true}
 )
 
-func (l *Log) shownDir(id string) string { return filepath.Join(l.dir, id+".shown") }
+// keptName is the name data is kept under.
+func keptName(data []byte, ext string) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:16]) + ext
+}
+
+func (l *Log) shelfDir(id string, sh shelf) string { return filepath.Join(l.dir, id+sh.suffix) }
 
 // Keep stores a copy of a shown file for session id and returns its name.
 func (l *Log) Keep(id string, data []byte, ext string) (string, error) {
+	return l.keep(id, shownShelf, data, ext)
+}
+
+// KeepAttached stores a copy of a file the user attached.
+func (l *Log) KeepAttached(id string, data []byte, ext string) (string, error) {
+	return l.keep(id, attachedShelf, data, ext)
+}
+
+// AttachRoom reports whether files fit on session id's attachment shelf.
+func (l *Log) AttachRoom(id string, files [][]byte) error {
 	if !logName.MatchString(id) {
-		return "", errors.New("chat: bad session id")
+		return errors.New("chat: bad session id")
 	}
-	if !shownExt[ext] {
-		return "", fmt.Errorf("chat: can't keep a %q file", ext)
-	}
-	sum := sha256.Sum256(data)
-	name := hex.EncodeToString(sum[:16]) + ext
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	has, used, n, err := l.shelfUse(id, attachedShelf)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, f := range files {
+		name := keptName(f, "")
+		if has(name) || seen[name] {
+			continue
+		}
+		seen[name] = true
+		used += int64(len(f))
+		n++
+	}
+	if n > attachedShelf.maxFiles || used > attachedShelf.maxBytes {
+		return attachedShelf.full()
+	}
+	return nil
+}
+
+func (sh shelf) full() error {
+	return fmt.Errorf("this chat has kept its limit of %s (%d MB or %d files)", sh.what, sh.maxBytes>>20, sh.maxFiles)
+}
+
+// shelfUse is what's on a session's shelf: whether a file with the given
+// content name (without extension) is there, and the bytes and files used.
+// Callers hold mu.
+func (l *Log) shelfUse(id string, sh shelf) (has func(string) bool, used int64, n int, err error) {
+	names := map[string]bool{}
+	has = func(name string) bool { return names[name] }
 	if l.dir == "" {
-		files := l.shown[id]
-		if _, ok := files[name]; ok {
-			return name, nil
-		}
-		var used int64
-		for _, b := range files {
+		for name, b := range l.kept[id+sh.suffix] {
+			names[strings.TrimSuffix(name, filepath.Ext(name))] = true
 			used += int64(len(b))
+			n++
 		}
-		if err := shownRoom(used, len(files), len(data)); err != nil {
-			return "", err
-		}
-		if files == nil {
-			files = map[string][]byte{}
-			l.shown[id] = files
-		}
-		files[name] = append([]byte(nil), data...)
-		return name, nil
+		return has, used, n, nil
 	}
-	dir := l.shownDir(id)
-	if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-		return name, nil
-	}
-	var used int64
-	n := 0
-	entries, err := os.ReadDir(dir)
+	entries, err := os.ReadDir(l.shelfDir(id, sh))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", err
+		return nil, 0, 0, err
 	}
 	for _, e := range entries {
+		if !keptPattern.MatchString(e.Name()) {
+			continue
+		}
 		if info, err := e.Info(); err == nil {
+			names[strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))] = true
 			used += info.Size()
 			n++
 		}
 	}
-	if err := shownRoom(used, n, len(data)); err != nil {
+	return has, used, n, nil
+}
+
+func (l *Log) keep(id string, sh shelf, data []byte, ext string) (string, error) {
+	if !logName.MatchString(id) {
+		return "", errors.New("chat: bad session id")
+	}
+	if !keptExt[ext] {
+		return "", fmt.Errorf("chat: can't keep a %q file", ext)
+	}
+	name := keptName(data, ext)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.dir == "" {
+		files := l.kept[id+sh.suffix]
+		if _, ok := files[name]; ok {
+			return name, nil
+		}
+		if err := l.room(id, sh, len(data)); err != nil {
+			return "", err
+		}
+		if files == nil {
+			files = map[string][]byte{}
+			l.kept[id+sh.suffix] = files
+		}
+		files[name] = append([]byte(nil), data...)
+		return name, nil
+	}
+	dir := l.shelfDir(id, sh)
+	if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+		return name, nil
+	}
+	if err := l.room(id, sh, len(data)); err != nil {
 		return "", err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -262,32 +346,42 @@ func (l *Log) Keep(id string, data []byte, ext string) (string, error) {
 	return name, nil
 }
 
-func shownRoom(used int64, files, more int) error {
-	if files >= maxShownFiles || used+int64(more) > maxShownBytes {
-		return fmt.Errorf("this chat has shown its limit of files (%d MB or %d files)", maxShownBytes>>20, maxShownFiles)
+// room reports whether one more file of size bytes fits. Callers hold mu.
+func (l *Log) room(id string, sh shelf, size int) error {
+	_, used, n, err := l.shelfUse(id, sh)
+	if err != nil {
+		return err
+	}
+	if n >= sh.maxFiles || used+int64(size) > sh.maxBytes {
+		return sh.full()
 	}
 	return nil
 }
 
-// Kept returns a kept file. Anything but a well-formed name of this
-// session's is fs.ErrNotExist.
+// Kept returns a kept file from either shelf. Anything but a well-formed
+// name of this session's is fs.ErrNotExist.
 func (l *Log) Kept(id, name string) ([]byte, error) {
-	if !logName.MatchString(id) || !shownName.MatchString(name) {
+	if !logName.MatchString(id) || !keptPattern.MatchString(name) {
 		return nil, fs.ErrNotExist
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.dir == "" {
-		b, ok := l.shown[id][name]
-		if !ok {
-			return nil, fs.ErrNotExist
+	for _, sh := range []shelf{shownShelf, attachedShelf} {
+		if l.dir == "" {
+			if b, ok := l.kept[id+sh.suffix][name]; ok {
+				return b, nil
+			}
+			continue
 		}
-		return b, nil
+		root, err := os.OpenRoot(l.shelfDir(id, sh))
+		if err != nil {
+			continue
+		}
+		b, err := root.ReadFile(name)
+		root.Close()
+		if err == nil {
+			return b, nil
+		}
 	}
-	root, err := os.OpenRoot(l.shownDir(id))
-	if err != nil {
-		return nil, fs.ErrNotExist
-	}
-	defer root.Close()
-	return root.ReadFile(name)
+	return nil, fs.ErrNotExist
 }

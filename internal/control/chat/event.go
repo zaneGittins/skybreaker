@@ -50,6 +50,8 @@ type Event struct {
 	Login   *Login    `json:"login,omitempty"`
 	Show    *Show     `json:"show,omitempty"`
 	Preview *Preview  `json:"preview,omitempty"`
+	// Attach is what the user sent with a message.
+	Attach []Attachment `json:"attach,omitempty"`
 }
 
 // Tool kinds, for the card's icon and its one-line summary.

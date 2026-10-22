@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zaneGittins/skybreaker/internal/control/store"
@@ -40,6 +41,8 @@ type Config struct {
 	Log      *Log
 	Sessions Sessions
 	Start    Starter
+	// Attach writes a message's attachments into the sandbox.
+	Attach Attacher
 	// Options gives a session's start options (cwd, MCP); the manager adds
 	// the mode and the conversation to resume.
 	Options func(s store.Session) Options
@@ -80,7 +83,8 @@ type run struct {
 	mu       sync.Mutex
 	drv      Driver
 	proc     *Proc
-	in       chan []byte // lines for the process's writer
+	in       chan []byte   // lines for the process's writer
+	queued   *atomic.Int64 // bytes in, not yet written
 	gen      int
 	exited   chan struct{}
 	stopping bool
@@ -121,7 +125,7 @@ var errNotChat = errors.New("not a chat session")
 func (m *Manager) chat(id string) (store.Session, error) {
 	s, ok := m.c.Sessions.Session(id)
 	if !ok {
-		return s, fmt.Errorf("session %q: not found", id)
+		return s, fmt.Errorf("session %q: %w", id, store.ErrNotFound)
 	}
 	if s.Mode != store.ModeChat {
 		return s, errNotChat
@@ -181,33 +185,47 @@ func (m *Manager) enqueue(r *run, job func()) {
 }
 
 // Send records a message and delivers it, starting (or resuming) the
-// harness first if it isn't running. It returns once the message is
+// harness first if it isn't running. Files go into the sandbox first, and
+// images among them to the model too. It returns once the message is
 // recorded; delivery failures show in the conversation.
-func (m *Manager) Send(ctx context.Context, id, text string) error {
+func (m *Manager) Send(ctx context.Context, id, text string, files ...File) error {
 	s, err := m.chat(id)
 	if err != nil {
 		return err
 	}
 	text = strings.TrimRight(text, " \t\r\n")
 	if strings.TrimSpace(text) == "" {
-		return errors.New("empty message")
+		text = ""
+		if len(files) == 0 {
+			return errors.New("empty message")
+		}
 	}
 	if len(text) > 200<<10 {
 		return errors.New("message too long")
 	}
+	atts, note, images, err := m.attach(ctx, s, files)
+	if err != nil {
+		return err
+	}
 	r := m.run(id)
 	r.mu.Lock()
 	r.used = time.Now()
-	m.emit(r, Event{Kind: KindUser, ID: "u" + strconv.FormatInt(time.Now().UnixNano(), 36), Text: text})
+	m.emit(r, Event{Kind: KindUser, ID: "u" + strconv.FormatInt(time.Now().UnixNano(), 36), Text: text, Attach: atts})
 	m.emit(r, Event{Kind: KindTurn, Turn: &Turn{State: TurnWorking}})
 	r.mu.Unlock()
 	if s.Title == "" {
 		title := firstLine(text)
+		if title == "" {
+			title = atts[0].Name
+		}
 		title = strings.TrimSuffix(title, " …")
 		if len(title) > 80 {
 			title = strings.TrimSpace(clip(title, 77)[:77]) + "…"
 		}
 		m.c.Sessions.UpdateSession(id, func(x *store.Session) { x.Title = title })
+	}
+	if note != "" {
+		text = strings.TrimPrefix(text+"\n\n"+note, "\n\n")
 	}
 	m.enqueue(r, func() {
 		if err := m.ensure(r); err != nil {
@@ -218,7 +236,7 @@ func (m *Manager) Send(ctx context.Context, id, text string) error {
 		}
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		lines, err := r.drv.Send(text)
+		lines, err := r.drv.Send(text, images...)
 		if err != nil {
 			m.failTurn(r, err.Error())
 			return
@@ -286,7 +304,8 @@ func (m *Manager) ensure(r *run) error {
 	// Writes go through their own goroutine: a harness may answer before it
 	// reads all it was sent, and the reader must keep reading meanwhile.
 	r.in = make(chan []byte, 4096)
-	go writer(p, r.in)
+	r.queued = new(atomic.Int64)
+	go writer(p, r.in, r.queued)
 	go m.read(r, r.gen, p, r.exited)
 	m.write(r, drv.Open(opts))
 	return nil
@@ -294,16 +313,23 @@ func (m *Manager) ensure(r *run) error {
 
 // writer copies lines to the process's stdin until in closes, then closes
 // stdin, which ends both harnesses cleanly.
-func writer(p *Proc, in <-chan []byte) {
+func writer(p *Proc, in <-chan []byte, queued *atomic.Int64) {
 	defer p.Stdin.Close()
 	for l := range in {
-		if _, err := p.Stdin.Write(l); err != nil {
-			for range in {
+		_, err := p.Stdin.Write(l)
+		queued.Add(-int64(len(l)))
+		if err != nil {
+			for l := range in {
+				queued.Add(-int64(len(l)))
 			}
 			return
 		}
 	}
 }
+
+// maxQueued bounds what waits for a harness to read it: images make
+// messages large, and a harness that stops reading would hold them all.
+const maxQueued = 64 << 20
 
 // write queues lines for the harness, never waiting: callers hold r.mu,
 // and a harness that has stopped reading its input would hold it, and
@@ -314,6 +340,12 @@ func (m *Manager) write(r *run, lines [][]byte) {
 		if r.in == nil {
 			return
 		}
+		if r.queued.Load()+int64(len(l)) > maxQueued {
+			log.Printf("skybreaker: chat %s: the harness isn't reading its input; closing it", r.id)
+			r.closeInput()
+			return
+		}
+		r.queued.Add(int64(len(l)) + 1)
 		select {
 		case r.in <- append(l, '\n'):
 		default:

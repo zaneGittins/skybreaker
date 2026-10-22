@@ -22,6 +22,10 @@ type fakeDocker struct {
 	up    bool
 }
 
+func (f *fakeDocker) RunInput(ctx context.Context, _ io.Reader, _ int64, name string, args ...string) ([]byte, error) {
+	return f.Run(ctx, name, args...)
+}
+
 func (f *fakeDocker) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -189,6 +193,10 @@ func TestRefusesWithoutGVisor(t *testing.T) {
 }
 
 type runcOnly struct{}
+
+func (r runcOnly) RunInput(ctx context.Context, _ io.Reader, _ int64, name string, args ...string) ([]byte, error) {
+	return r.Run(ctx, name, args...)
+}
 
 func (runcOnly) Run(context.Context, string, ...string) ([]byte, error) {
 	return []byte(`{"runc":{"path":"runc"}}`), nil
