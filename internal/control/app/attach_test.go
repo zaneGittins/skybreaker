@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,9 +16,9 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 )
 
-func runWrite(t *testing.T, p, root, content string, size int) error {
+func runWrite(t *testing.T, p, content string, size int) error {
 	t.Helper()
-	cmd := exec.Command("sh", "-c", writeScript, "sh", p, strconv.Itoa(size), root)
+	cmd := exec.Command("sh", "-c", writeScript, "sh", p, strconv.Itoa(size))
 	cmd.Stdin = strings.NewReader(content)
 	return cmd.Run()
 }
@@ -26,7 +27,7 @@ func TestWriteScript(t *testing.T) {
 	root := t.TempDir()
 	p := filepath.Join(root, "c1", "ab12-x.log")
 	for _, content := range []string{"first", "second"} {
-		if err := runWrite(t, p, root, content, len(content)); err != nil {
+		if err := runWrite(t, p, content, len(content)); err != nil {
 			t.Fatalf("script: %v", err)
 		}
 		if b, err := os.ReadFile(p); err != nil || string(b) != content {
@@ -38,7 +39,7 @@ func TestWriteScript(t *testing.T) {
 	}
 
 	// Input cut short, as when the write is cancelled, replaces nothing.
-	if err := runWrite(t, p, root, "thi", 5); err == nil {
+	if err := runWrite(t, p, "thi", 5); err == nil {
 		t.Error("a short write succeeded")
 	}
 	if b, _ := os.ReadFile(p); string(b) != "second" {
@@ -47,21 +48,59 @@ func TestWriteScript(t *testing.T) {
 	if left, _ := filepath.Glob(p + ".part"); len(left) != 0 {
 		t.Errorf("left behind %q", left)
 	}
+}
 
-	// Attachments over a month old are tidied away.
-	old := filepath.Join(root, "c0", "ffff-old.png")
-	os.MkdirAll(filepath.Dir(old), 0o700)
-	os.WriteFile(old, []byte("x"), 0o600)
+func TestTidyAndMissingScripts(t *testing.T) {
+	root := t.TempDir()
+	old, recent := filepath.Join(root, "c0", "ffff-old.png"), filepath.Join(root, "c1", "eeee-new.png")
+	for _, p := range []string{old, recent} {
+		os.MkdirAll(filepath.Dir(p), 0o700)
+		os.WriteFile(p, []byte("x"), 0o600)
+	}
 	month := time.Now().Add(-40 * 24 * time.Hour)
 	os.Chtimes(old, month, month)
-	if err := runWrite(t, p, root, "third", 5); err != nil {
+	if out, err := exec.Command("sh", "-c", tidyScript, "sh", root).CombinedOutput(); err != nil {
+		t.Fatalf("tidy: %v %s", err, out)
+	}
+	out, err := exec.Command("sh", "-c", missingScript, "sh", old, recent, filepath.Join(root, "none")).Output()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(old); err == nil {
-		t.Error("an old attachment stayed")
+	if want := old + "\x00" + filepath.Join(root, "none") + "\x00"; string(out) != want {
+		t.Errorf("missing = %q, want %q", out, want)
 	}
-	if _, err := os.Stat(p); err != nil {
-		t.Errorf("the new attachment went: %v", err)
+}
+
+// A chat's attachments the sandbox no longer has are put back from the
+// chat's copies; a path the sandbox makes up is ignored.
+func TestRestoreAttachments(t *testing.T) {
+	f := newFixture(t)
+	f.docker.set(func() { f.docker.running["skybreaker-orbit"] = true })
+	s := store.Session{ID: "c1", Project: "orbit", Harness: "claude", Mode: store.ModeChat, Status: store.StatusRunning}
+	f.app.store.CreateSession(s)
+	if err := f.app.ChatSend(context.Background(), "c1", "log", chat.File{Name: "x.log", Data: []byte("boom")}); err != nil {
+		t.Fatal(err)
+	}
+	ev, _ := f.app.ChatEvents("c1", 0)
+	p := ev[0].Attach[0].Path
+	f.docker.set(func() {
+		f.docker.inputs = nil
+		f.docker.execOut = func(args []string) (string, error) {
+			if len(args) > 2 && args[2] == missingScript {
+				return p + "\x00/etc/passwd\x00", nil
+			}
+			return "", nil
+		}
+	})
+	f.app.restoreAttachments(context.Background(), s)
+	var wrote []string
+	for _, c := range f.docker.find(func(c []string) bool { return slices.Contains(c, writeScript) }) {
+		wrote = append(wrote, c[len(c)-2])
+	}
+	f.docker.mu.Lock()
+	defer f.docker.mu.Unlock()
+	if !slices.Equal(wrote, []string{p, p}) || len(f.docker.inputs) != 1 || string(f.docker.inputs[0]) != "boom" {
+		t.Errorf("wrote %q with %q", wrote, f.docker.inputs)
 	}
 }
 
@@ -79,7 +118,7 @@ func TestChatSendAttachesInTheSandbox(t *testing.T) {
 	p := ev[0].Attach[0].Path
 	f.docker.mu.Lock()
 	defer f.docker.mu.Unlock()
-	want := "docker exec skybreaker-orbit sh -c " + writeScript + " sh " + p + " 4 " + chat.AttachDir
+	want := "docker exec skybreaker-orbit sh -c " + writeScript + " sh " + p + " 4"
 	var wrote bool
 	for _, c := range f.docker.calls {
 		if strings.Join(c, " ") == want {

@@ -16,7 +16,7 @@ Each project runs in its own gVisor (`runsc`) sandbox with the repo, toolchains,
 - **gVisor.** An escape needs a gVisor bug and then a host-kernel bug. Skybreaker refuses to start without `runsc`.
 - **Network.** Sandboxes have no DNS. nftables lets them reach only the broker and the hook listener on their bridge gateway; nothing is forwarded. Inner containers follow the same rules.
 - **SSH.** sshd in each sandbox accepts public keys only, and is reachable only through Skybreaker's relay for listed users. Removing a key cuts every open relay. The client forwards no agent or X11.
-- **Attachments.** Files you attach to a chat go into the project's sandbox, where every agent in that project can read them, so attach only what the project's agents may see.
+- **Attachments.** Files you attach to a chat go into the project's sandbox, where every agent in that project can read them, so attach only what the project's agents may see. An image's preview in the chat is a thumbnail your browser made; the agent gets the image itself.
 - **Your terminal.** The terminal client strips escape strings (OSC, DCS, APC, PM, SOS, C1) from sandbox output, so an agent can't write your clipboard or plant links.
 
 ## The broker

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"mime"
 	"net/http"
 	"path"
 	"slices"
@@ -112,26 +113,16 @@ func (s *server) chatEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// maxSendBody fits a message's attachments, base64 in JSON, and its text
-// with room for escaping.
-const maxSendBody = chat.MaxAttachTotal/3*4 + 2<<20
+// maxSendBody fits a message's attachments, base64 in JSON, with their
+// thumbnails, and its text with room for escaping.
+const maxSendBody = chat.MaxAttachTotal/3*4 + 4<<20
 
 func (s *server) chatSend(w http.ResponseWriter, r *http.Request) {
-	// Decoding a message with attachments takes several times its size in
-	// memory, so only a few are decoded at once.
-	if r.ContentLength < 0 || r.ContentLength > 1<<20 {
-		select {
-		case s.uploads <- struct{}{}:
-			defer func() { <-s.uploads }()
-		case <-r.Context().Done():
-			return
-		}
-	}
 	var in struct {
 		Text  string      `json:"text"`
 		Files []chat.File `json:"files"`
 	}
-	if !decodeUpTo(w, r, &in, maxSendBody) {
+	if !s.decodeSend(w, r, &in) {
 		return
 	}
 	if strings.TrimSpace(in.Text) == "" && len(in.Files) == 0 {
@@ -143,6 +134,22 @@ func (s *server) chatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webutil.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// decodeSend decodes a message. One with attachments takes several times
+// its size in memory to decode, so only a few are decoded at once; the
+// place is held for the decoding only, not for the sending after.
+func (s *server) decodeSend(w http.ResponseWriter, r *http.Request, v any) bool {
+	if r.ContentLength >= 0 && r.ContentLength <= 1<<20 {
+		return decodeUpTo(w, r, v, maxSendBody)
+	}
+	select {
+	case s.uploads <- struct{}{}:
+		defer func() { <-s.uploads }()
+	case <-r.Context().Done():
+		return false
+	}
+	return decodeUpTo(w, r, v, maxSendBody)
 }
 
 // chatFail maps a chat error: unknown sessions are 404, anything else the
@@ -387,7 +394,7 @@ func (s *server) pushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 // Any other file a user attached is .bin, served only as a download.
 var shownTypes = func() map[string]string {
 	t := map[string]string{".txt": "text/plain; charset=utf-8", ".bin": "application/octet-stream"}
-	for mime, ext := range chat.ImageExt {
+	for mime, ext := range chat.ImageTypes() {
 		t[ext] = mime
 	}
 	return t
@@ -412,7 +419,12 @@ func (s *server) chatShown(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Type", ctype)
 	h.Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox")
 	if path.Ext(name) == ".bin" {
-		h.Set("Content-Disposition", "attachment")
+		// Its own name, if the link gave one, so it downloads as itself.
+		disp := mime.FormatMediaType("attachment", map[string]string{"filename": r.URL.Query().Get("name")})
+		if disp == "" || r.URL.Query().Get("name") == "" {
+			disp = "attachment"
+		}
+		h.Set("Content-Disposition", disp)
 	} else {
 		h.Set("Content-Disposition", "inline")
 	}

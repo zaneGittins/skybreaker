@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -161,6 +162,9 @@ func (l *Log) Copy(from, to string) error {
 			if err := copyKept(a.Kept, l.KeepAttached); err != nil {
 				return err
 			}
+			if err := copyKept(a.Thumb, l.KeepThumb); err != nil {
+				return err
+			}
 		}
 		e.Seq = 0
 		if _, err := l.Append(to, e); err != nil {
@@ -175,14 +179,14 @@ func (l *Log) Delete(id string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.sessions, id)
-	for _, sh := range []shelf{shownShelf, attachedShelf} {
+	for _, sh := range shelves {
 		delete(l.kept, id+sh.suffix)
 	}
 	if l.dir == "" || !logName.MatchString(id) {
 		return nil
 	}
-	for _, sh := range []shelf{shownShelf, attachedShelf} {
-		if err := os.RemoveAll(l.shelfDir(id, sh)); err != nil {
+	for _, sh := range shelves {
+		if err := os.RemoveAll(l.shelfDir(id, *sh)); err != nil {
 			return err
 		}
 	}
@@ -206,7 +210,16 @@ type shelf struct {
 var (
 	shownShelf    = shelf{".shown", "shown files", 64 << 20, 500}
 	attachedShelf = shelf{".attached", "attachments", 256 << 20, 500}
+	thumbShelf    = shelf{".thumbs", "thumbnails", 32 << 20, 1000}
+	shelves       = []*shelf{&shownShelf, &attachedShelf, &thumbShelf}
 )
+
+// keptFailed logs why a kept file couldn't be read or written, which names
+// paths on the host, and says only that.
+func keptFailed(err error) error {
+	log.Printf("skybreaker: kept files: %v", err)
+	return errors.New("chat: couldn't keep the file")
+}
 
 var (
 	keptPattern = regexp.MustCompile(`^[0-9a-f]{32}\.(png|jpg|gif|webp|txt|bin)$`)
@@ -229,6 +242,11 @@ func (l *Log) Keep(id string, data []byte, ext string) (string, error) {
 // KeepAttached stores a copy of a file the user attached.
 func (l *Log) KeepAttached(id string, data []byte, ext string) (string, error) {
 	return l.keep(id, attachedShelf, data, ext)
+}
+
+// KeepThumb stores the thumbnail of an image the user attached.
+func (l *Log) KeepThumb(id string, data []byte, ext string) (string, error) {
+	return l.keep(id, thumbShelf, data, ext)
 }
 
 // AttachRoom reports whether files fit on session id's attachment shelf.
@@ -278,7 +296,7 @@ func (l *Log) shelfUse(id string, sh shelf) (has func(string) bool, used int64, 
 	}
 	entries, err := os.ReadDir(l.shelfDir(id, sh))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, 0, 0, err
+		return nil, 0, 0, keptFailed(err)
 	}
 	for _, e := range entries {
 		if !keptPattern.MatchString(e.Name()) {
@@ -326,11 +344,11 @@ func (l *Log) keep(id string, sh shelf, data []byte, ext string) (string, error)
 		return "", err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
+		return "", keptFailed(err)
 	}
 	tmp, err := os.CreateTemp(dir, ".keep-*")
 	if err != nil {
-		return "", err
+		return "", keptFailed(err)
 	}
 	_, err = tmp.Write(data)
 	if cerr := tmp.Close(); err == nil {
@@ -341,7 +359,7 @@ func (l *Log) keep(id string, sh shelf, data []byte, ext string) (string, error)
 	}
 	if err != nil {
 		os.Remove(tmp.Name())
-		return "", err
+		return "", keptFailed(err)
 	}
 	return name, nil
 }
@@ -366,14 +384,14 @@ func (l *Log) Kept(id, name string) ([]byte, error) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for _, sh := range []shelf{shownShelf, attachedShelf} {
+	for _, sh := range shelves {
 		if l.dir == "" {
 			if b, ok := l.kept[id+sh.suffix][name]; ok {
 				return b, nil
 			}
 			continue
 		}
-		root, err := os.OpenRoot(l.shelfDir(id, sh))
+		root, err := os.OpenRoot(l.shelfDir(id, *sh))
 		if err != nil {
 			continue
 		}

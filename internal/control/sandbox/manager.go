@@ -83,8 +83,10 @@ func (r ExecRunner) RunInput(ctx context.Context, stdin io.Reader, maxOutput int
 	stderr := &capped{max: maxStderr, over: func() {}}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	// A child left holding the pipes can't keep the command from ending.
-	cmd.WaitDelay = 5 * time.Second
+	if stdin != nil {
+		// A command that stops reading its input can't hold the copy open.
+		cmd.WaitDelay = 5 * time.Second
+	}
 	err := cmd.Run()
 	if stdout.hit {
 		return stdout.buf.Bytes(), fmt.Errorf("%s %s: %w (%d bytes)", name, firstArg(args), ErrOutputLimit, limit)

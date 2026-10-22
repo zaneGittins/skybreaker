@@ -40,8 +40,6 @@ const (
 	maxPath     = 4096
 )
 
-// images are the types shown as images, by their sniffed type. SVG isn't
-// one: it can carry script, so it's shown as source.
 // Tools is the tool set for a caller: show_file and show_image inside a
 // running chat, nothing elsewhere (scheduled runs, terminals, the UI mount).
 func Tools(b Backend) func(mcp.Caller) []mcp.Tool {
@@ -121,7 +119,7 @@ func showImage(ctx context.Context, b Backend, c mcp.Caller, raw json.RawMessage
 	if size > maxImage || len(data) > maxImage {
 		return "", fmt.Errorf("%s is %.1f MB; images up to %d MB can be shown", chat.Rel(resolved), float64(size)/(1<<20), maxImage>>20)
 	}
-	ext, ok := chat.ImageExt[http.DetectContentType(data)]
+	ext, ok := chat.ImageType(http.DetectContentType(data))
 	if !ok {
 		return "", fmt.Errorf("%s isn't a PNG, JPEG, GIF or WebP image; use show_file for text, including SVG source", chat.Rel(resolved))
 	}
@@ -154,7 +152,7 @@ func showFile(ctx context.Context, b Backend, c mcp.Caller, raw json.RawMessage)
 		return "", err
 	}
 	name := chat.Rel(resolved)
-	if _, ok := chat.ImageExt[http.DetectContentType(data)]; ok {
+	if _, ok := chat.ImageType(http.DetectContentType(data)); ok {
 		return "", fmt.Errorf("%s is an image; use show_image", name)
 	}
 	cut := size > int64(len(data))
