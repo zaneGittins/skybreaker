@@ -42,7 +42,6 @@ jobs:
         with:
           script: |
             const PHRASE = 'I have read the CLA Document and I hereby sign the CLA';
-            const ALLOW = new Set(['dependabot[bot]', 'renovate[bot]', 'github-actions[bot]']);
             const BRANCH = 'cla-signatures';
             const FILE = 'signatures/cla.json';
             const MARK = '<!-- skybreaker-cla -->';
@@ -61,15 +60,23 @@ jobs:
               return;
             }
 
-            // Everyone with a commit here, by GitHub account. A commit whose
-            // author has no account can't be signed for.
-            const people = new Map([[pr.user.id, pr.user.login]]);
+            // Everyone with a commit here, by GitHub account, and whoever
+            // opened it. A commit whose author has no account can't be signed
+            // for. App accounts can't sign: one that opened the pull request
+            // is installed on this repository (Dependabot, the sandboxes' own
+            // App), so it needs no signature and its own commits count as its
+            // contribution. Anyone can put an app's email on a commit, so an
+            // app's commits in a pull request it didn't open are refused.
+            const opener = pr.user.type === 'Bot' ? pr.user.id : null;
+            const people = new Map(opener === null ? [[pr.user.id, pr.user.login]] : []);
             const unlinked = new Set();
+            const foreign = new Set();
             const commits = await github.paginate(github.rest.pulls.listCommits,
               { owner, repo, pull_number: pr.number, per_page: 100 });
             for (const c of commits) {
-              if (c.author) people.set(c.author.id, c.author.login);
-              else unlinked.add(c.commit.author.name || 'unknown');
+              if (!c.author) unlinked.add(c.commit.author.name || 'unknown');
+              else if (c.author.type !== 'Bot') people.set(c.author.id, c.author.login);
+              else if (c.author.id !== opener) foreign.add(c.author.login);
             }
 
             const { data: file } = await github.rest.repos.getContent({ owner, repo, path: FILE, ref: BRANCH });
@@ -94,8 +101,8 @@ jobs:
               signed.add(comment.user.id);
             }
 
-            const missing = [...people].filter(([id, login]) => !signed.has(id) && !ALLOW.has(login)).map(([, login]) => login);
-            const ok = missing.length === 0 && unlinked.size === 0;
+            const missing = [...people].filter(([id]) => !signed.has(id)).map(([, login]) => login);
+            const ok = missing.length === 0 && unlinked.size === 0 && foreign.size === 0;
 
             let body = null;
             if (!ok) {
@@ -103,6 +110,8 @@ jobs:
               if (missing.length) lines.push('', 'Still to sign: ' + missing.map((l) => '@' + l).join(', ') + '. To sign, comment exactly:', '', '> ' + PHRASE);
               if (unlinked.size) lines.push('', 'Some commits have an author with no GitHub account: ' + [...unlinked].map(code).join(', ') +
                 '. Add that commit email to your account (Settings → Emails), or recommit with one that is, then comment `recheck`.');
+              if (foreign.size) lines.push('', 'Some commits are authored by an app that didn\'t open this pull request: ' + [...foreign].map(code).join(', ') +
+                '. Recommit them under your own account, then comment `recheck`.');
               body = lines.join('\n');
             }
             const comments = await github.paginate(github.rest.issues.listComments,
