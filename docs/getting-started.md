@@ -157,8 +157,7 @@ The app saves in the data directory, in `settings/` (`projects.json`, `access.js
 
 ```sh
 sudo skybreaker-setup upgrade     # install the latest release
-sudo skybreaker-setup rollback    # return to the previous version
-sudo skybreaker-setup status
+sudo systemctl start skybreaker-sandbox-update   # rebuild the sandbox image now, not on Sunday
 ```
 
-`upgrade` checks your config against the new version before changing anything, and restores the previous version if the new one doesn't stay up. Restarting stops running chats, so it asks first.
+[Upgrading](upgrading.md) goes through it step by step, with rolling back.

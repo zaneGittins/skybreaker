@@ -60,7 +60,7 @@ You need a Linux host (on Debian and Ubuntu the installer adds Docker), a Tailsc
 curl -fsSL https://github.com/zaneGittins/skybreaker/releases/latest/download/install.sh | sh
 ```
 
-`skybreaker-setup` installs Docker and gVisor if they're missing, asks for your tailnet login and your first repo, starts Skybreaker and gives you a link to approve it on your tailnet. Or paste [deploy/cloud-init.yaml](deploy/cloud-init.yaml) into a new server's user data to install it as the server boots. `sudo skybreaker-setup upgrade` updates it later. See [getting started](docs/getting-started.md) for details, or [install by hand](docs/manual-install.md).
+`skybreaker-setup` installs Docker and gVisor if they're missing, asks for your tailnet login and your first repo, starts Skybreaker and gives you a link to approve it on your tailnet. Or paste [deploy/cloud-init.yaml](deploy/cloud-init.yaml) into a new server's user data to install it as the server boots. `sudo skybreaker-setup upgrade` updates it later ([upgrading](docs/upgrading.md)). See [getting started](docs/getting-started.md) for details, or [install by hand](docs/manual-install.md).
 
 On your laptop (Linux or macOS), the terminal client installs without sudo and finds your Skybreaker through Tailscale:
 
