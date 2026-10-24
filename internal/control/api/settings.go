@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +61,11 @@ type Settings interface {
 	// SetPrompts replaces them and records by in the audit log; chats
 	// pick them up at once.
 	SetPrompts(by string, prompts []config.Prompt) error
+	// ChatModes are the permission modes new chats start in, as saved.
+	ChatModes() (config.ChatModes, error)
+	// ChangeChatModes applies change to them, saves them and records
+	// "by: what" in the audit log; new chats start in them at once.
+	ChangeChatModes(by, what string, change func(*config.ChatModes) error) (config.ChatModes, error)
 }
 
 // Applied is what a change did.
@@ -102,6 +108,9 @@ func (s *server) settingsRoutes(m *http.ServeMux) {
 	m.HandleFunc("PUT /api/instructions", s.saveInstructions)
 	m.HandleFunc("GET /api/prompts", s.prompts)
 	m.HandleFunc("PUT /api/prompts", s.savePrompts)
+	m.HandleFunc("GET /api/chat-modes", s.chatModes)
+	m.HandleFunc("PUT /api/chat-modes/default", s.saveChatMode)
+	m.HandleFunc("PUT /api/chat-modes/projects/{p}", s.saveChatMode)
 	m.HandleFunc("PUT /api/content-rules", s.saveContentRules)
 }
 
@@ -358,6 +367,84 @@ func (s *server) savePrompts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webutil.WriteJSON(w, http.StatusOK, map[string]any{"prompts": ps})
+}
+
+// chatModes are everyone's to read.
+func (s *server) chatModes(w http.ResponseWriter, r *http.Request) {
+	if s.Settings == nil {
+		webutil.Error(w, http.StatusNotFound, "settings can't be changed here")
+		return
+	}
+	m, err := s.Settings.ChatModes()
+	if err != nil {
+		webutil.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.writeChatModes(w, r, m)
+}
+
+func (s *server) writeChatModes(w http.ResponseWriter, r *http.Request, m config.ChatModes) {
+	if m.Projects == nil {
+		m.Projects = map[string]string{}
+	}
+	p, _ := tsauth.FromContext(r.Context())
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"default": m.Default, "projects": m.Projects,
+		"editable": s.Config.Admin(p.Login) && s.Config.SettingsInApp()})
+}
+
+// saveChatMode sets the default mode, or one project's ("" for the
+// default), and drops the modes of projects that are gone.
+func (s *server) saveChatMode(w http.ResponseWriter, r *http.Request) {
+	by, ok := s.editor(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Mode string `json:"mode"`
+	}
+	if !decodeStrict(w, r, &in) {
+		return
+	}
+	if in.Mode != "" && !config.ChatMode(in.Mode) {
+		webutil.Error(w, http.StatusBadRequest, "mode "+strconv.Quote(in.Mode)+" is not a chat mode")
+		return
+	}
+	saved, _, err := s.Settings.Saved()
+	if err != nil {
+		webutil.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	project := r.PathValue("p")
+	if _, ok := saved.Projects[project]; project != "" && !ok {
+		webutil.Error(w, http.StatusBadRequest, "there's no project called "+project)
+		return
+	}
+	what, to := "set new chats", "start in "+in.Mode
+	if project != "" {
+		what += " in " + project
+	}
+	if in.Mode == "" {
+		to = "start in the default"
+	}
+	m, err := s.Settings.ChangeChatModes(by, what+" to "+to, func(m *config.ChatModes) error {
+		if project == "" {
+			m.Default = in.Mode
+		} else if in.Mode == "" {
+			delete(m.Projects, project)
+		} else {
+			if m.Projects == nil {
+				m.Projects = map[string]string{}
+			}
+			m.Projects[project] = in.Mode
+		}
+		maps.DeleteFunc(m.Projects, func(p, _ string) bool { return saved.Projects[p] == nil })
+		return nil
+	})
+	if err != nil {
+		webutil.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.writeChatModes(w, r, m)
 }
 
 // secretUsers names, for each secret, the bundles and projects that send it.

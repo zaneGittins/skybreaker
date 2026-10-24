@@ -35,7 +35,7 @@ function duration(from, to) {
 
 const PROJECT = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const NAME = /^[A-Za-z0-9_][A-Za-z0-9_-]{0,63}$/;
-const SETTINGS_SECTIONS = ['instructions', 'prompts', 'rules', 'github', 'secrets', 'bundles', 'access'];
+const SETTINGS_SECTIONS = ['instructions', 'prompts', 'rules', 'modes', 'github', 'secrets', 'bundles', 'access'];
 
 // route maps a URL path to a view. Names are validated here so a crafted URL
 // never reaches an API path.

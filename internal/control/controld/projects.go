@@ -28,6 +28,7 @@ type settings struct {
 	secrets      string // the secrets file
 	instructions string // every agent's instructions
 	prompts      string // the canned prompts
+	chatModes    string // the modes new chats start in
 	app          *app.App
 	broker       *broker.Broker
 	boards       *board.Store
@@ -131,6 +132,19 @@ func (d *settings) SetPrompts(by string, ps []config.Prompt) error {
 	}
 	d.broker.LogConfig(by, "changed the prompts")
 	return nil
+}
+
+func (d *settings) ChatModes() (config.ChatModes, error) {
+	return config.ReadChatModes(d.chatModes)
+}
+
+func (d *settings) ChangeChatModes(by, what string, change func(*config.ChatModes) error) (config.ChatModes, error) {
+	m, err := config.EditChatModes(d.chatModes, change)
+	if err != nil {
+		return config.ChatModes{}, err
+	}
+	d.broker.LogConfig(by, what)
+	return m, nil
 }
 
 func (d *settings) ConvertGitHubApp(ctx context.Context, code string) (githubapp.Created, error) {
