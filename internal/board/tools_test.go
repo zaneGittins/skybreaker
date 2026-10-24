@@ -112,6 +112,28 @@ func TestAgentLimits(t *testing.T) {
 	}
 }
 
+func TestClaimFollowsTheWork(t *testing.T) {
+	// A chat restarted, or cleared onto the same branch, connects afresh
+	// with a new MCP session but keeps working its own item.
+	s := boards(t)
+	before := mcp.Caller{Project: "skybreaker", Client: "claude-code", MCP: "m1", Work: "worktree:/w/s1"}
+	after := before
+	after.MCP = "m2"
+	if out, ok := call(t, s, before, "claim_item", `{"ref":"SKY-1"}`); !ok {
+		t.Fatalf("claim: %s", out)
+	}
+	if out, ok := call(t, s, after, "update_item", `{"ref":"SKY-1","status":"review"}`); !ok {
+		t.Errorf("same work, new MCP session: %s", out)
+	}
+	s.UpdateItem("SKY-1", ItemPatch{Status: ptr("todo")}, "")
+	call(t, s, before, "claim_item", `{"ref":"SKY-1"}`)
+	other := before
+	other.Work = "worktree:/w/s2"
+	if out, ok := call(t, s, other, "update_item", `{"ref":"SKY-1","status":"review"}`); ok {
+		t.Errorf("another chat's work moved a claimed item: %s", out)
+	}
+}
+
 func TestUserWorksEveryBoard(t *testing.T) {
 	s := boards(t)
 	you := mcp.Caller{User: "zane@example.com", Client: "claude-code", MCP: "u1"}

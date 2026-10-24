@@ -983,12 +983,18 @@ func (a *App) MCPCaller(r *http.Request) (mcp.Caller, error) {
 	if from, ok := a.cfg.ProjectOf(ap.Addr()); !ok || from != project || !a.CheckHookToken(project, token) {
 		return mcp.Caller{}, errors.New("mcp: not this project's sandbox")
 	}
+	c := mcp.Caller{Project: project, Session: session}
 	if session != "-" {
-		if s, ok := a.store.Session(session); !ok || s.Project != project {
+		s, ok := a.store.Session(session)
+		if !ok || s.Project != project {
 			return mcp.Caller{}, errors.New("mcp: not this project's session")
 		}
+		c.Work = "chat:" + s.ID
+		if s.Worktree != "" {
+			c.Work = "worktree:" + s.Worktree
+		}
 	}
-	return mcp.Caller{Project: project, Session: session}, nil
+	return c, nil
 }
 
 // ChatColors are the colours a chat can be given, to tell sessions apart.

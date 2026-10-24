@@ -30,6 +30,7 @@ type Caller struct {
 	User    string // the tailnet login, on the UI mount only
 	Client  string // the MCP client's own name, such as "claude-code"
 	MCP     string // the MCP session ID
+	Work    string // what an agent's board claims belong to: its chat's branch, else its chat
 }
 
 // Tool is one tool. Call returns the text shown to the model; an error is
