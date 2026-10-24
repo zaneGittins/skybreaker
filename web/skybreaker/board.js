@@ -19,35 +19,109 @@ const itemPath = ref => '/api/items/' + encodeURIComponent(ref);
 
 // --- the board ---------------------------------------------------------------
 
-// boardView is a project's board tab.
-function boardView(name, d) {
-  const by = Object.fromEntries(COLUMNS.map(([k]) => [k, []]));
-  for (const it of d.items) by[it.status]?.push(it);
-
-  // On a phone one column shows at a time; the tabs pick it.
-  let current = prefs.get('boardCol') || 'todo';
-  const tabs = COLUMNS.map(([k, label]) => el('button.col-tab.st-' + k, {
-    type: 'button', 'data-col': k, 'aria-pressed': 'false',
-    onclick: () => { current = k; prefs.set('boardCol', k); show() },
-  }, el('span.cdot'), el('span', null, label), el('span.n', null, String(by[k].length))));
-  const cols = COLUMNS.map(([k, label]) => column(k, label, by[k], name));
-  const show = () => {
-    tabs.forEach(t => { const on = t.dataset.col === current; t.classList.toggle('on', on); t.setAttribute('aria-pressed', String(on)) });
-    cols.forEach(c => c.classList.toggle('on', c.dataset.col === current));
-  };
-  show();
-  return el('div.board-view', null,
-    el('div.col-tabs', { role: 'group', 'aria-label': 'Column' }, tabs),
-    el('div.board-cols', null, cols));
+// boardState is how the board tab is being viewed: the filter, how many
+// done items to load, and the long columns opened in full. It lasts until
+// you leave the page, through live redraws; draw is the board on screen.
+function boardState(name) {
+  if (state.board?.project !== name) state.board = { project: name, q: '', done: 20, open: new Set(), focus: false, draw: null };
+  return state.board;
 }
 
-function column(status, label, items, project) {
-  const list = el('div.col-list', { 'data-status': status }, items.map(it => itemCard(it)));
-  if (!items.length) list.append(el('div.col-empty', null, status === 'todo' ? 'Nothing ready. Move items here from Backlog.' : 'Empty'));
-  dropTarget(list, status);
+function boardURL(name) {
+  const bs = boardState(name);
+  const qs = new URLSearchParams({ done: bs.done });
+  if (bs.q.trim()) qs.set('q', bs.q.trim());
+  return `/api/projects/${encodeURIComponent(name)}/board?${qs}`;
+}
+
+// boardView is a project's board tab, from d as fetched from url.
+function boardView(name, d, url) {
+  const bs = boardState(name);
+  // On a phone one column shows at a time; the tabs pick it.
+  let current = prefs.get('boardCol') || 'todo';
+  const tabs = el('div.col-tabs', { role: 'group', 'aria-label': 'Column' });
+  const cols = el('div.board-cols');
+  const status = el('span.sr-only', { role: 'status' });
+  const show = () => {
+    tabs.querySelectorAll('.col-tab').forEach(t => { const on = t.dataset.col === current; t.classList.toggle('on', on); t.setAttribute('aria-pressed', String(on)) });
+    cols.querySelectorAll('.col').forEach(c => c.classList.toggle('on', c.dataset.col === current));
+  };
+  // A response lands only if the board still wants it, so a slow one for an
+  // older filter never covers a newer one. reveal is [column, card] to focus.
+  const load = async reveal => {
+    const want = boardURL(name);
+    try {
+      const next = await api('GET', want);
+      if (state.board === bs && want === boardURL(name)) bs.draw(next, reveal);
+    } catch (e) { toast(e.message, 'error') }
+  };
+  const draw = (data, reveal) => {
+    d = data;
+    const by = Object.fromEntries(COLUMNS.map(([k]) => [k, []]));
+    for (const it of d.items) by[it.status]?.push(it);
+    const total = k => k === 'done' ? d.done_total : by[k].length;
+    tabs.replaceChildren(...COLUMNS.map(([k, label]) => el('button.col-tab.st-' + k, {
+      type: 'button', 'data-col': k, 'aria-pressed': 'false',
+      onclick: () => { current = k; prefs.set('boardCol', k); show() },
+    }, el('span.cdot'), el('span', null, label), el('span.n', null, String(total(k))))));
+    cols.replaceChildren(...COLUMNS.map(([k, label]) => column(bs, k, label, by[k], total(k), name, shown => {
+      if (k === 'done') { bs.done = by.done.length + 50; load([k, shown]) } else { bs.open.add(k); draw(d, [k, shown]) }
+    })));
+    status.textContent = bs.q.trim() ? `${COLUMNS.reduce((n, [k]) => n + total(k), 0)} matching` : '';
+    show();
+    // After "Show more", carry on from the first card it brought.
+    if (reveal) cols.querySelector(`.col[data-col="${reveal[0]}"]`)?.querySelectorAll('.card')[reveal[1]]?.focus();
+  };
+  bs.draw = draw;
+  draw(d);
+  // The filter changed while this page was loading.
+  if (url !== boardURL(name)) load();
+  return el('div.board-view', null, el('div.board-bar', null, boardFilter(bs, load), tabs, status), cols);
+}
+
+// boardFilter narrows every column to items whose title, description or
+// labels match, or the item a ref names; / jumps to it. On a phone it's a
+// chip until it's used.
+function boardFilter(bs, load) {
+  const box = el('label.board-filter');
+  const input = el('input', { type: 'search', placeholder: 'Filter', 'aria-label': 'Filter items', autocomplete: 'off', enterkeyhint: 'search', spellcheck: 'false' });
+  input.value = bs.q;
+  const sync = () => box.classList.toggle('on', !!input.value || document.activeElement === input);
+  const run = debounce(() => load(), 150);
+  const set = v => { input.value = bs.q = v; sync(); run() };
+  input.addEventListener('input', () => set(input.value));
+  input.addEventListener('focus', () => { bs.focus = true; sync() });
+  input.addEventListener('blur', () => { bs.focus = false; sync() });
+  input.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    input.value ? set('') : input.blur();
+  });
+  const clear = el('button.bf-clear', { type: 'button', 'aria-label': 'Clear filter', title: 'Clear filter', onclick: e => { e.preventDefault(); set(''); input.focus() } }, svg(ICON.x));
+  box.append(svg(ICON.search), input, el('kbd.bf-key', { 'aria-hidden': 'true' }, '/'), clear);
+  sync();
+  if (bs.focus) requestAnimationFrame(() => { input.focus(); sync() });
+  return box;
+}
+
+addEventListener('keydown', e => {
+  if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable || sheetOpen()) return;
+  const input = $('.board-filter input');
+  if (input) { e.preventDefault(); input.focus() }
+});
+
+// column is one column of the board: up to 20 cards of total until it's
+// opened in full, and expand(shown) for the rest.
+function column(bs, status, label, items, total, project, expand) {
+  const page = columnPage(status, items, total, bs.open.has(status));
+  const list = el('div.col-list', { 'data-status': status }, page.shown.map(it => itemCard(it)));
+  if (!items.length) list.append(el('div.col-empty', null, bs.q.trim() ? 'No matches' : status === 'todo' ? 'Nothing ready. Move items here from Backlog.' : 'Empty'));
+  dropTarget(list, status, page.below);
   return el('section.col.st-' + status, { 'data-col': status },
-    el('div.col-head', null, el('span.cdot'), el('h2', null, label), el('span.n', null, String(items.length))),
-    list, status === 'done' ? null : columnAdd(project, status, label));
+    el('div.col-head', null, el('span.cdot'), el('h2', null, label), el('span.n', null, String(total))),
+    list,
+    page.more ? el('button.col-more', { type: 'button', onclick: () => expand(page.shown.length) }, page.more) : null,
+    status === 'done' ? null : columnAdd(project, status, label));
 }
 
 // addItem adds an item from one line in the quick syntax, such as
@@ -62,7 +136,8 @@ const QUICK_HINT = 'bug:, feat: or chore: sets the type, #word adds a label, ! o
 
 // columnAdd is a column's add box on a desktop: a button at its foot that
 // opens a card to type into. It stays open to add several, through the
-// redraw each add brings.
+// redraw each add brings, keeping what's typed and taking focus back only
+// if it had it.
 function columnAdd(project, status, label) {
   const input = el('textarea.col-add-input', { rows: 2, placeholder: 'bug: crash on save #ui !', title: QUICK_HINT, 'aria-label': 'New item in ' + label, enterkeyhint: 'send' });
   let adding = false;
@@ -70,15 +145,24 @@ function columnAdd(project, status, label) {
     const text = input.value.trim();
     if (!text || adding) return;
     adding = true;
-    try { await addItem(project, text, status); input.value = ''; refresh() } catch (err) { toast(err.message, 'error') }
+    try {
+      await addItem(project, text, status);
+      input.value = '';
+      if (mine()) mine().text = '';
+      refresh();
+    } catch (err) { toast(err.message, 'error') }
     adding = false;
   };
-  const show = on => {
-    state.boardAdd = on ? status : null;
+  const show = (on, focus = true) => {
+    state.boardAdd = on ? { status, text: input.value, focus } : null;
     form.hidden = !on;
     open.hidden = on;
-    if (on) input.focus();
+    if (on && focus) input.focus();
   };
+  const mine = () => state.boardAdd?.status === status ? state.boardAdd : null;
+  input.addEventListener('input', () => { if (mine()) mine().text = input.value });
+  input.addEventListener('focus', () => { if (mine()) mine().focus = true });
+  input.addEventListener('blur', () => { if (mine()) mine().focus = false });
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit() }
     if (e.key === 'Escape') { e.stopPropagation(); input.value = ''; show(false) }
@@ -88,7 +172,11 @@ function columnAdd(project, status, label) {
       el('button.btn.primary.sm', { type: 'submit' }, 'Add'),
       el('button.btn.ghost.sm', { type: 'button', onclick: () => { input.value = ''; show(false) } }, 'Cancel')));
   const open = el('button.col-add-btn', { type: 'button', onclick: () => show(true) }, svg(ICON.plus), 'Add item');
-  if (state.boardAdd === status) requestAnimationFrame(() => show(true));
+  if (mine()) {
+    const { text, focus } = mine();
+    input.value = text;
+    requestAnimationFrame(() => show(true, focus));
+  }
   return el('div.col-add', null, open, form);
 }
 
@@ -142,8 +230,9 @@ function itemCard(it) {
 }
 
 // dropTarget lets cards be dragged into a column, between two others; the
-// new position is the midpoint of the neighbours'.
-function dropTarget(list, status) {
+// new position is the midpoint of the neighbours'. below is the position of
+// the first card the column hides, if any.
+function dropTarget(list, status, below) {
   const marker = el('div.drop-marker');
   const after = y => [...list.querySelectorAll('.card:not(.dragging)')].find(c => {
     const r = c.getBoundingClientRect();
@@ -162,7 +251,7 @@ function dropTarget(list, status) {
     const i = cards.indexOf(marker);
     marker.remove();
     if (!ref) return;
-    const pos = i < 0 ? undefined : dropPosition(posOf(cards[i - 1]), posOf(cards[i + 1]));
+    const pos = i < 0 ? undefined : dropPosition(posOf(cards[i - 1]), cards[i + 1] ? posOf(cards[i + 1]) : below);
     try {
       await api('PATCH', itemPath(ref), pos === undefined ? { status } : { status, position: pos });
       refresh();

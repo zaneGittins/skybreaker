@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -82,6 +83,56 @@ func TestBoardFromTheUI(t *testing.T) {
 	}
 	if code, _ := f.do(t, "GET", "/api/items/ORB-2", "", nil); code != 404 {
 		t.Errorf("deleted item: %d", code)
+	}
+}
+
+// A board sends its newest done items, as many as asked for, and how many
+// there are; a query narrows every column, done ones long gone included.
+func TestBoardDoneIsPagedAndFiltered(t *testing.T) {
+	f := newFixture(t, you)
+	for i := 1; i <= 30; i++ {
+		f.boards.CreateItem("orbit", board.ItemInput{Title: fmt.Sprintf("old %d", i), Status: "done"}, "")
+	}
+	f.boards.CreateItem("orbit", board.ItemInput{Title: "open crash"}, "")
+	f.boards.CreateItem("orbit", board.ItemInput{Title: "calm"}, "")
+	get := func(query string) (refs []string, total int) {
+		t.Helper()
+		code, body := f.do(t, "GET", "/api/projects/orbit/board"+query, "", nil)
+		var b struct {
+			Items     []board.Item `json:"items"`
+			DoneTotal int          `json:"done_total"`
+		}
+		if err := json.Unmarshal([]byte(body), &b); code != 200 || err != nil {
+			t.Fatalf("board%s: %d %s", query, code, body)
+		}
+		for _, it := range b.Items {
+			refs = append(refs, it.Ref)
+		}
+		return refs, b.DoneTotal
+	}
+	refs, total := get("")
+	if len(refs) != 22 || total != 30 || refs[2] != "ORB-30" {
+		t.Fatalf("default: %d items, %d done, %v", len(refs), total, refs)
+	}
+	if refs, _ := get("?done=25"); len(refs) != 27 {
+		t.Fatalf("done=25: %d items", len(refs))
+	}
+	if refs, total := get("?q=old+1"); total != 11 || len(refs) != 11 || slices.Contains(refs, "ORB-31") {
+		t.Fatalf("q: %d done, %v", total, refs)
+	}
+	if refs, _ := get("?q=crash"); !slices.Equal(refs, []string{"ORB-31"}) {
+		t.Fatalf("q open: %v", refs)
+	}
+	if refs, total := get("?q=old&done=5"); total != 30 || len(refs) != 5 {
+		t.Fatalf("q past done: %d done, %v", total, refs)
+	}
+	if refs, total := get("?q=nothing"); total != 0 || len(refs) != 0 {
+		t.Fatalf("no match: %d done, %v", total, refs)
+	}
+	for _, bad := range []string{"x", "0", "-1"} {
+		if code, _ := f.do(t, "GET", "/api/projects/orbit/board?done="+bad, "", nil); code != 400 {
+			t.Fatalf("done=%s: %d", bad, code)
+		}
 	}
 }
 

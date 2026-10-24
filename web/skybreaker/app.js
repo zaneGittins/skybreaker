@@ -39,7 +39,7 @@ const depth = r => !r ? 0 : r.name === 'home' ? 0 : r.name === 'session' || r.na
 // left, the old page holding until the new one is drawn; elsewhere, and
 // between pages at one depth, the new page fades in.
 function moveTo() {
-  state.boardAdd = null;
+  state.boardAdd = state.board = null;
   const from = depth(state.route), to = depth(route(location.pathname));
   const dir = to > from ? 'forward' : to < from ? 'back' : '';
   const slide = dir && document.startViewTransition && matchMedia('(max-width: 1023px)').matches && !matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -558,7 +558,8 @@ function auditItem(e, tints) {
 
 async function renderProject(seq, name, tab = 'chats') {
   const enc = encodeURIComponent(name);
-  const [d, b] = await Promise.all([api('GET', '/api/projects/' + enc), api('GET', `/api/projects/${enc}/board`)]);
+  const boardAt = tab === 'board' ? boardURL(name) : `/api/projects/${enc}/board`;
+  const [d, b] = await Promise.all([api('GET', '/api/projects/' + enc), api('GET', boardAt)]);
   if (seq !== state.seq) return;
   const p = d.project;
   crumb(p);
@@ -567,7 +568,7 @@ async function renderProject(seq, name, tab = 'chats') {
   const live = d.sessions.filter(s => s.status === 'running' && !s.parent);
   const shown = live.filter(s => !resting(s, now, waiting));
   const ended = d.sessions.filter(s => !s.parent && (s.status !== 'running' || resting(s, now, waiting))).sort((x, y) => when(y) - when(x));
-  const open = b.items.filter(i => i.status !== 'done').length;
+  const open = COLUMNS.reduce((n, [k]) => n + (k === 'done' ? 0 : b.board.counts?.[k] || 0), 0);
   const tabs = [['chats', 'Chats', shown.length], ['board', 'Board', open], ['runs', 'Runs', null]];
 
   const head = el('header.p-head.tint-' + p.tint, null,
@@ -585,7 +586,7 @@ async function renderProject(seq, name, tab = 'chats') {
   const tabBar = el('nav.p-tabs', { 'aria-label': 'Project' }, tabs.map(([k, label, n]) =>
     el('a.p-tab' + (k === tab ? '.on' : ''), { href: projectPath(p.name, k), 'data-link': true, 'aria-current': k === tab ? 'page' : null },
       el('span', null, label), n ? el('span.n', null, String(n)) : null)));
-  const body = tab === 'board' ? boardView(p.name, b) : tab === 'runs' ? runsView(d) : chatsView(p, d, b, shown, ended);
+  const body = tab === 'board' ? boardView(p.name, b, boardAt) : tab === 'runs' ? runsView(d) : chatsView(p, d, b, shown, ended);
   const page = el('div.page.project.tab-' + tab, null, head, tabBar, body);
   // On a phone the + adds an item on the board and starts a chat elsewhere;
   // a desktop board adds in each column.

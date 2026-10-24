@@ -1,6 +1,6 @@
 /* The board: five columns on a wide screen, one at a time with tabs on a
-   phone, and the add box pinned to the bottom. Column and type colours are
-   the theme's --col-*, --ink-*, --dot-* and --t-* tokens. */
+   phone, long ones cut short with a button for the rest. Column and type
+   colours are the theme's --col-*, --ink-*, --dot-* and --t-* tokens. */
 
 .st-backlog { --c-bg: var(--col-backlog); --c-ink: var(--ink-backlog); --c-dot: var(--dot-backlog); }
 .st-todo { --c-bg: var(--col-todo); --c-ink: var(--ink-todo); --c-dot: var(--dot-todo); }
@@ -18,6 +18,38 @@
 .col-list { display: flex; flex-direction: column; gap: 8px; min-height: 60px; }
 .col-empty { padding: 14px 8px; text-align: center; font-size: 13px; color: var(--c-ink); opacity: .7; }
 .drop-marker { height: 3px; border-radius: 3px; background: var(--c-dot); }
+.col-more {
+  height: 34px; margin-top: -2px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--c-ink) 8%, transparent);
+  color: var(--c-ink); font: 700 13px var(--font); cursor: pointer;
+}
+.col-more:hover { background: color-mix(in srgb, var(--c-ink) 14%, transparent); }
+
+/* The filter: in the tab row on a desktop, above the columns elsewhere. */
+.board-bar { display: flex; align-items: center; gap: 8px; }
+.board-filter {
+  display: flex; align-items: center; gap: 8px; width: 240px; height: 34px; padding: 0 6px 0 11px;
+  border: 1px solid var(--border); border-radius: 10px; color: var(--muted); cursor: text;
+  transition: width .15s ease, border-color .15s;
+}
+.board-filter:hover { border-color: var(--border-strong); }
+.board-filter.on { width: 300px; border-color: var(--border-strong); color: var(--text-2); }
+.board-filter:focus-within { border-color: var(--text-2); }
+.board-filter > svg { width: 15px; height: 15px; flex-shrink: 0; }
+.board-filter input { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: none; background: none; color: var(--text); font: 550 13.5px var(--font); }
+.board-filter input::placeholder { color: var(--muted); }
+.board-filter input::-webkit-search-cancel-button { display: none; }
+.bf-key { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--border); border-radius: 5px; font: 600 11px var(--mono); color: var(--muted); }
+.bf-clear { display: none; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; }
+.bf-clear:hover { background: var(--surface-2); color: var(--text); }
+.bf-clear svg { width: 14px; height: 14px; }
+.board-filter.on .bf-key { display: none; }
+.board-filter:has(input:not(:placeholder-shown)) .bf-clear { display: grid; }
+@media (pointer: coarse) { .bf-key { display: none; } }
+@media (min-width: 1024px) {
+  /* Level with the project's tabs: 44px tall, 22px above the columns. */
+  .board-view { position: relative; }
+  .board-bar { position: absolute; top: -66px; right: 0; height: 44px; }
+}
 
 .card {
   display: grid; gap: 6px; width: 100%; padding: 12px 13px; text-align: left; cursor: pointer;
@@ -93,7 +125,17 @@
 .item-row-btn .mono { font-family: var(--mono); font-size: 11.5px; }
 
 @media (max-width: 760px) {
-  .col-tabs { display: flex; gap: 6px; overflow-x: auto; margin: 0 -16px; padding: 0 16px 2px; scrollbar-width: none; }
+  .board-bar { flex-wrap: wrap; }
+  .col-tabs { flex: 1; min-width: 0; display: flex; gap: 6px; overflow-x: auto; margin-right: -16px; padding: 0 16px 2px 0; scrollbar-width: none; }
+  /* A chip until it's used, then a field above the tabs. */
+  .board-filter { width: 38px; height: 38px; padding: 0; justify-content: center; gap: 0; border-radius: 999px; transition: none; }
+  .board-filter > svg { width: 17px; height: 17px; }
+  .board-filter input { flex: 0; width: 0; opacity: 0; font-size: 16px; }
+  .board-filter.on { flex: 1 0 100%; width: auto; height: 42px; padding: 0 6px 0 14px; justify-content: flex-start; gap: 10px; border-radius: 12px; background: var(--surface); }
+  .board-filter.on input { flex: 1; width: auto; opacity: 1; }
+  .bf-key { display: none; }
+  .bf-clear { width: 32px; height: 32px; }
+  .bf-clear svg { width: 16px; height: 16px; }
   .col-tabs::-webkit-scrollbar { display: none; }
   .col-tab {
     flex-shrink: 0; display: inline-flex; align-items: center; gap: 7px; height: 38px; padding: 0 13px;

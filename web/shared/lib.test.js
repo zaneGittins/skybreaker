@@ -149,6 +149,25 @@ test('dropPosition', () => {
   assert.equal(dropPosition(-1, -1), -1);        // equal neighbours: the server respaces
 });
 
+test('columnPage', () => {
+  const { columnPage } = require('./lib.js');
+  const items = Array.from({ length: 30 }, (_, i) => ({ ref: 'A-' + i, position: i }));
+  let p = columnPage('backlog', items, 30, false);
+  assert.equal(p.shown.length, 20);
+  assert.equal(p.more, 'Show 10 more');
+  assert.equal(p.below, 20); // a drop at the foot lands above the first hidden card
+  p = columnPage('backlog', items, 30, true);
+  assert.equal(p.shown.length, 30);
+  assert.equal(p.more, null);
+  assert.equal(p.below, undefined);
+  // Done shows what was loaded and offers older ones, fifty at a time.
+  p = columnPage('done', items.slice(0, 20), 140, false);
+  assert.equal(p.shown.length, 20);
+  assert.equal(p.more, 'Show 50 older');
+  assert.equal(columnPage('done', items.slice(0, 20), 32, false).more, 'Show 12 older');
+  assert.equal(columnPage('todo', items.slice(0, 3), 3, false).more, null);
+});
+
 test('hosts from text', () => {
   const { hostsFromText } = require('./lib.js');
   assert.deepEqual(hostsFromText(' api.openai.com,  eu.api.openai.com\nx.example '), ['api.openai.com', 'eu.api.openai.com', 'x.example']);

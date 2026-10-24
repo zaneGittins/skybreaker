@@ -69,24 +69,39 @@ func (s *server) item(w http.ResponseWriter, ref string) (board.Item, bool) {
 	return it, true
 }
 
-// getBoard is a project's whole board: every open item in column order, the
-// newest done ones, and its history for the project page's chart.
+// getBoard is a project's board: every open item in column order, the newest
+// done ones ("done" of them, 20 by default) and how many there are, and its
+// history for the project page's chart. "q" narrows both to matches.
 func (s *server) getBoard(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("p")
 	if !s.known(w, name) {
 		return
 	}
+	limit := 20
+	if v := r.URL.Query().Get("done"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			webutil.Error(w, http.StatusBadRequest, "done must be a positive number")
+			return
+		}
+		limit = n
+	}
+	q := r.URL.Query().Get("q")
 	p, err := s.Board.GetProject(name)
 	if err != nil {
 		boardFail(w, err)
 		return
 	}
-	open, err := s.Board.ListItems(board.Filter{Project: name})
+	open, err := s.Board.ListItems(board.Filter{Project: name, Query: q})
 	if err != nil {
 		boardFail(w, err)
 		return
 	}
-	done, _ := s.Board.ListItems(board.Filter{Project: name, Statuses: []string{"done"}, Limit: 50})
+	done, total, err := s.Board.ListPage(board.Filter{Project: name, Statuses: []string{"done"}, Query: q, Limit: limit})
+	if err != nil {
+		boardFail(w, err)
+		return
+	}
 	// Fifteen days, so the page can chart its last fourteen in its own time
 	// zone.
 	history, err := s.Board.History(name, time.Now().Add(-15*24*time.Hour))
@@ -94,7 +109,7 @@ func (s *server) getBoard(w http.ResponseWriter, r *http.Request) {
 		boardFail(w, err)
 		return
 	}
-	webutil.WriteJSONGzip(w, r, http.StatusOK, map[string]any{"board": p, "items": append(open, done...), "history": history, "tint": s.tints[name], "chat": s.chatHarnesses(name)})
+	webutil.WriteJSONGzip(w, r, http.StatusOK, map[string]any{"board": p, "items": append(open, done...), "done_total": total, "history": history, "tint": s.tints[name], "chat": s.chatHarnesses(name)})
 }
 
 // createItem files an item. "text" is the quick-capture line ("bug: crash
