@@ -363,6 +363,19 @@ func Run(ctx context.Context, o Options) error {
 		}
 	}()
 	go func() {
+		// Fetches from GitHub, so on its own and not every minute.
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				within(ctx, 4*time.Minute, a.EndMerged)
+			}
+		}
+	}()
+	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
 		for {

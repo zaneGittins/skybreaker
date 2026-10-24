@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -179,12 +179,37 @@ test('sessionTone and inboxGroups', () => {
   assert.equal(sessionTone(s[3]).tone, 'idle');
   assert.equal(sessionTone(s[4]).tone, 'live');
   assert.equal(sessionTone(s[5]).tone, 'ended');
-  const g = inboxGroups(s, [{ session: 'e' }]);
+  const g = inboxGroups(s, [{ session: 'e' }], Date.parse(t1));
   // Waiting on you comes first, then problems, then finished work; newest first within each.
   assert.deepEqual(g.forYou.map(x => x.id), ['a', 'e', 'g', 'c']);
   assert.deepEqual(g.working.map(x => x.id), ['b']);
   assert.deepEqual(g.recent.map(x => x.id), ['d']);
   assert.deepEqual(g.ended.map(x => x.id), ['f']);
+  // A day on, the idle chat you've seen rests with the ended ones; the rest stay.
+  const later = inboxGroups(s, [{ session: 'e' }], Date.parse(t0) + 25 * 3600e3);
+  assert.deepEqual(later.recent.map(x => x.id), []);
+  assert.deepEqual(later.ended.map(x => x.id), ['f', 'd']);
+  assert.deepEqual(later.forYou.map(x => x.id), ['a', 'e', 'g', 'c']);
+});
+
+test('resting and closable', () => {
+  const day = 24 * 3600e3, t0 = '2026-10-18T10:00:00Z', now = Date.parse(t0) + day + 1;
+  const idle = { mode: 'chat', status: 'running', state: 'idle', updated: t0, seen: t0 };
+  assert.equal(resting(idle, now), true);
+  assert.equal(resting(idle, now - 2), false);
+  assert.equal(resting({ ...idle, seen: '2026-10-18T09:00:00Z' }, now), false, 'unseen finished work');
+  assert.equal(resting({ status: 'running', created: t0 }, now), false, 'a terminal');
+  assert.equal(resting({ ...idle, status: 'killed' }, now), false);
+  assert.equal(resting(idle, now, new Set(['c'])), true);
+  assert.equal(resting({ ...idle, id: 'c' }, now, new Set(['c'])), false, 'an approval waits on it');
+  const ss = [idle, { ...idle, updated: '2026-10-19T10:00:00Z' }, { ...idle, project: 'b' }, { ...idle, status: 'killed' }].map(x => ({ project: 'a', ...x }));
+  ss[2].project = 'b';
+  assert.equal(openCount(ss, 'a', now), 1, 'the resting and the ended aren\'t counted');
+  assert.equal(openCount(ss, 'b', now - 2), 1);
+  for (const st of ['idle', 'failed']) assert.equal(closable({ ...idle, state: st }), true, st);
+  for (const st of ['working', 'waiting', 'login']) assert.equal(closable({ ...idle, state: st }), false, st);
+  assert.equal(closable({ ...idle, status: 'killed' }), false);
+  assert.equal(closable({ status: 'running', created: t0 }), false, 'a terminal');
 });
 
 test('currentModel: chosen, then reported, then the default', () => {

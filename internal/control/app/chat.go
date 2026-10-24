@@ -190,12 +190,8 @@ func (a *App) placeSession(ctx context.Context, s *store.Session, opts NewOption
 // first message, or in the background now, so that message is quick. Its
 // own worktree, if it has one, is made on that first start.
 func (a *App) NewChat(ctx context.Context, project, harnessName string, opts NewOptions) (store.Session, error) {
-	p, err := a.project(project)
-	if err != nil {
+	if err := a.enabled(project, harnessName); err != nil {
 		return store.Session{}, err
-	}
-	if !slices.Contains(p.Harnesses, harnessName) {
-		return store.Session{}, fmt.Errorf("harness %q is not enabled for %s", harnessName, project)
 	}
 	m, ok := a.cfg.Harnesses.Get(harnessName)
 	if !ok {
@@ -241,12 +237,8 @@ func (a *App) ChatFork(ctx context.Context, id string) (store.Session, error) {
 	if s.Status == store.StatusRunning && (s.State == store.ChatWorking || s.State == store.ChatWaiting) {
 		return store.Session{}, ErrBusy
 	}
-	p, err := a.project(s.Project)
-	if err != nil {
+	if err := a.enabled(s.Project, s.Harness); err != nil {
 		return store.Session{}, err
-	}
-	if !slices.Contains(p.Harnesses, s.Harness) {
-		return store.Session{}, fmt.Errorf("harness %q is not enabled for %s", s.Harness, s.Project)
 	}
 	now := time.Now().UTC()
 	f := store.Session{ID: newSessionID(), Project: s.Project, Harness: s.Harness, Created: now, Status: store.StatusRunning,
@@ -282,6 +274,59 @@ func (a *App) ChatFork(ctx context.Context, id string) (store.Session, error) {
 	return f, nil
 }
 
+// enabled refuses a harness the project doesn't enable (any more).
+func (a *App) enabled(project, harnessName string) error {
+	p, err := a.project(project)
+	if err != nil {
+		return err
+	}
+	if !slices.Contains(p.Harnesses, harnessName) {
+		return fmt.Errorf("harness %q is not enabled for %s", harnessName, project)
+	}
+	return nil
+}
+
+// busyErr is ErrBusy in words of its own.
+type busyErr string
+
+func (e busyErr) Error() string      { return string(e) }
+func (busyErr) Is(target error) bool { return target == ErrBusy }
+
+// ReopenChat carries an ended chat on, as it was: its harness resumes the
+// conversation, and its worktree comes back, on the next message.
+func (a *App) ReopenChat(ctx context.Context, id string) (store.Session, error) {
+	if _, err := a.chatSession(id); err != nil {
+		return store.Session{}, err
+	}
+	defer a.lockSession(id)()
+	return a.reopen(id)
+}
+
+// reopen is ReopenChat for a caller holding the chat's lock.
+func (a *App) reopen(id string) (store.Session, error) {
+	s, err := a.chatSession(id)
+	if err != nil || s.Status == store.StatusRunning {
+		return s, err
+	}
+	if err := a.enabled(s.Project, s.Harness); err != nil {
+		return store.Session{}, err
+	}
+	if s.Worktree != "" {
+		// Waits out a tidy under way, so it can't take the worktree from
+		// under the chat once it's live.
+		defer a.lockProject(s.Project + "/worktrees")()
+		for _, x := range a.store.ListSessions(s.Project) {
+			if x.ID != s.ID && x.Worktree == s.Worktree && x.Status == store.StatusRunning {
+				return store.Session{}, busyErr("another chat carries on in this one's branch: fork this one to pick it up")
+			}
+		}
+	}
+	a.store.UpdateSession(id, func(x *store.Session) { x.Status, x.Ended, x.Exit = store.StatusRunning, nil, nil })
+	s, _ = a.store.Session(id)
+	a.Publish(Event{Type: "session", Project: s.Project, Session: id, Data: "started"})
+	return s, nil
+}
+
 // ChatCompact has a chat's harness summarise its conversation, to free
 // its context window.
 func (a *App) ChatCompact(ctx context.Context, id string) error {
@@ -303,8 +348,13 @@ func (a *App) chatSession(id string) (store.Session, error) {
 	return s, nil
 }
 
+// ChatSend sends a chat a message, carrying it on first if it had ended.
 func (a *App) ChatSend(ctx context.Context, id, text string, files ...chat.File) error {
 	if _, err := a.chatSession(id); err != nil {
+		return err
+	}
+	defer a.lockSession(id)()
+	if _, err := a.reopen(id); err != nil {
 		return err
 	}
 	a.store.UpdateSession(id, func(x *store.Session) { x.Seen = time.Now().UTC() })
@@ -477,6 +527,13 @@ func (a *App) killChat(ctx context.Context, s store.Session) {
 			x.State = store.ChatIdle
 		}
 	})
+}
+
+// endChat ends chat s and tidies after it. Callers hold its lock.
+func (a *App) endChat(ctx context.Context, s store.Session) {
+	a.killChat(ctx, s)
+	a.Publish(Event{Type: "session", Project: s.Project, Session: s.ID, Data: "killed"})
+	a.sessionEnded(s)
 }
 
 // chatUsage counts what a chat's harness reports using, under the

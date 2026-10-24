@@ -261,6 +261,26 @@ body.term-mode { overflow: hidden; }
 a.srow { color: var(--text); padding-right: 12px; }
 a.srow:hover { background: var(--surface-2); }
 .srow .chev { width: 16px; height: 16px; color: var(--muted); flex-shrink: 0; }
+/* A chat that's done: its chevron turns into a check on hover; a finger swipes it away. */
+.srow-wrap { position: relative; border-bottom: 1px solid var(--border); touch-action: pan-y; }
+.srow-wrap:last-child { border-bottom: 0; }
+.srow-wrap > .srow { border-bottom: 0; background: var(--surface); position: relative; z-index: 1; transition: transform .2s ease; }
+.srow-wrap:hover > a.srow { background: var(--surface-2); }
+.srow-wrap.swiping > .srow { transition: none; }
+.srow-done { position: absolute; z-index: 2; right: 6px; top: 50%; transform: translateY(-50%); width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: var(--text-2); opacity: 0; pointer-events: none; transition: opacity .12s, background .12s, color .12s; }
+.srow-done svg { width: 18px; height: 18px; }
+.srow-wrap:hover .srow-done, .srow-done:focus-visible { opacity: 1; pointer-events: auto; }
+.srow-wrap:hover .srow .chev, .srow-wrap:has(.srow-done:focus-visible) .chev { opacity: 0; }
+.srow-done:hover { background: var(--live-bg); color: var(--live); }
+.srow-wrap.swiping, .srow-wrap.armed { background: var(--surface-3); }
+.srow-wrap.swiping .srow-done, .srow-wrap.armed .srow-done { z-index: 0; right: 18px; opacity: 1; }
+.srow-wrap.armed { background: var(--live-bg); }
+.srow-wrap.armed .srow-done { color: var(--live); }
+/* On touch the swipe ends a chat, and a screen reader uses the chat's menu. */
+@media (pointer: coarse) {
+  .srow-wrap:not(.swiping):not(.armed) .srow-done { display: none; }
+  .srow-wrap:hover .srow .chev { opacity: 1; }
+}
 .srow .meta .sep { color: var(--border-strong); }
 .srow .meta .proj { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); font-weight: 600; }
 .srow .meta .proj .pdot { width: 7px; height: 7px; }
@@ -564,7 +584,7 @@ pre.dc-detail { padding: 10px 12px; font: 500 12.5px/1.5 var(--mono); white-spac
   background: var(--surface); border: 1px solid var(--border-strong); box-shadow: 0 6px 24px rgba(0, 0, 0, .16);
 }
 .composer:focus-within { border-color: var(--text-2); }
-.composer[hidden], .ended-bar[hidden] { display: none; }
+.composer[hidden] { display: none; }
 .composer-input {
   flex: 1; min-width: 0; min-height: 40px; max-height: 180px; resize: none; padding: 9px 4px; border: 0; outline: none;
   background: transparent; color: var(--text); font-size: 16px; line-height: 1.4;
@@ -584,7 +604,6 @@ pre.dc-detail { padding: 10px 12px; font: 500 12.5px/1.5 var(--mono); white-spac
 .send-btn svg { width: 19px; height: 19px; stroke-width: 2.6; }
 .send-btn.stop { background: var(--text); color: var(--on-text); }
 .send-btn.stop svg { width: 14px; height: 14px; fill: currentColor; }
-.ended-bar { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 12px; border-radius: 22px; background: var(--surface); border: 1px solid var(--border); color: var(--text-2); font-size: 14px; }
 
 /* Menus */
 .menu-shade { position: fixed; inset: 0; z-index: 60; }

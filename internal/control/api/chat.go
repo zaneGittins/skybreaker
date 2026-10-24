@@ -292,6 +292,15 @@ func (s *server) chatFork(w http.ResponseWriter, r *http.Request) {
 	webutil.WriteJSON(w, http.StatusOK, f)
 }
 
+func (s *server) chatReopen(w http.ResponseWriter, r *http.Request) {
+	x, err := s.Backend.ReopenChat(r.Context(), r.PathValue("id"))
+	if err != nil {
+		chatFail(w, err)
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, x)
+}
+
 func (s *server) seen(w http.ResponseWriter, r *http.Request) {
 	if err := s.Backend.MarkSeen(r.PathValue("id")); err != nil {
 		fail(w, err)

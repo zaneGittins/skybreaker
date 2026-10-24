@@ -226,6 +226,10 @@ func (a *App) lockProject(project string) (unlock func()) {
 	return m.Unlock
 }
 
+// lockSession serialises what starts and ends a chat, so one can't be
+// ended between being carried on and taking its message.
+func (a *App) lockSession(id string) (unlock func()) { return a.lockProject("session/" + id) }
+
 // StartSandbox makes sure the project's sandbox runs. A new container gets a
 // fresh broker token, the broker CA, the hook settings and the MCP
 // config; a token held for an earlier container is revoked first.
@@ -655,9 +659,9 @@ func (a *App) KillSession(ctx context.Context, id string) error {
 		return err
 	}
 	if s.Mode == store.ModeChat {
-		a.killChat(ctx, s)
-		a.Publish(Event{Type: "session", Project: s.Project, Session: id, Data: "killed"})
-		a.sessionEnded(s)
+		defer a.lockSession(id)()
+		s, _ = a.store.Session(id)
+		a.endChat(ctx, s)
 		return nil
 	}
 	if _, err := a.sandbox.Exec(ctx, s.Project, tmux.Kill(id)...); err != nil && !strings.Contains(err.Error(), "can't find session") && !noTmuxServer(err) {
