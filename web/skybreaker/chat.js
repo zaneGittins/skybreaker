@@ -1235,8 +1235,9 @@ async function renderChat(seq, d) {
   };
 
   // --- the start: who this is, and the board's next work to begin on ---
+  // An assistant's chat opens on its mark above; there's nothing to add.
   const drawStart = async () => {
-    if (v.closed || chat.items.length || session.status !== 'running') return;
+    if (asst || v.closed || chat.items.length || session.status !== 'running') return;
     let next = [];
     try {
       const b = await api('GET', `/api/projects/${encodeURIComponent(project.name)}/board`);
