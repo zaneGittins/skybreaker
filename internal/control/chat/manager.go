@@ -3,6 +3,7 @@ package chat
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -91,6 +92,7 @@ type run struct {
 	working  bool
 	login    bool
 	models   []string          // the models the harness last listed
+	listed   map[string]Model  // the same, by ID and by what they resolve to
 	asks     map[string]string // open ask → its title
 	tools    map[string]Tool   // tool cards still running, by ID; subagents among them can outlast the turn
 	used     time.Time
@@ -296,7 +298,7 @@ func (m *Manager) ensure(r *run) error {
 		return fmt.Errorf("harness %s has no chat driver", s.Harness)
 	}
 	opts := m.c.Options(s)
-	opts.Mode, opts.Resume, opts.Model, opts.Fork = s.PermMode, s.Resume, s.ChosenModel, s.Fork
+	opts.Mode, opts.Resume, opts.Model, opts.Effort, opts.Fork = s.PermMode, s.Resume, s.ChosenModel, s.ChosenEffort, s.Fork
 	if opts.Mode == "" {
 		opts.Mode = ModeAsk
 	}
@@ -565,8 +567,16 @@ func (m *Manager) emit(r *run, e Event) {
 	case KindInfo:
 		if len(e.Info.Models) > 0 {
 			r.models = r.models[:0]
+			r.listed = map[string]Model{}
 			for _, md := range e.Info.Models {
 				r.models = append(r.models, md.ID)
+				r.listed[md.ID] = md
+			}
+			// An alias's target finds the first model resolving to it.
+			for _, md := range e.Info.Models {
+				if _, ok := r.listed[md.Resolved]; md.Resolved != "" && !ok {
+					r.listed[md.Resolved] = md
+				}
 			}
 		}
 		m.setState(r, "", "", func(x *store.Session) {
@@ -737,35 +747,17 @@ func (m *Manager) Interrupt(id string) error {
 	return nil
 }
 
-// SetMode changes how much the agent asks before acting.
-func (m *Manager) SetMode(ctx context.Context, id, mode string) error {
-	s, err := m.chat(id)
-	if err != nil {
-		return err
-	}
-	d := m.c.Driver(s)
-	if d == nil {
-		return errNotChat
-	}
-	if err := validMode(d, mode); err != nil {
+// change makes a setting change to a chat: f checks it against the
+// session, tells a running harness, and says what to save. The session is
+// read under the run's lock, so changes one after another build on each
+// other.
+func (m *Manager) change(id string, f func(r *run, s store.Session) (func(*store.Session), error)) error {
+	if _, err := m.chat(id); err != nil {
 		return err
 	}
 	r := m.run(id)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.proc != nil {
-		lines, err := r.drv.SetMode(mode)
-		if err != nil {
-			return err
-		}
-		m.write(r, lines)
-	}
-	return m.c.Sessions.UpdateSession(id, func(x *store.Session) { x.PermMode = mode })
-}
-
-// SetModel switches the session to one of the models its harness listed.
-// Before the harness has listed any, the choice waits for its next start.
-func (m *Manager) SetModel(ctx context.Context, id, model string) error {
 	s, err := m.chat(id)
 	if err != nil {
 		return err
@@ -773,23 +765,95 @@ func (m *Manager) SetModel(ctx context.Context, id, model string) error {
 	if m.c.Driver(s) == nil {
 		return errNotChat
 	}
+	save, err := f(r, s)
+	if err != nil {
+		return err
+	}
+	return m.c.Sessions.UpdateSession(id, save)
+}
+
+// tell writes lines to a running harness; a stopped one gets the change
+// from the session when it next starts.
+func (m *Manager) tell(r *run, lines func() ([][]byte, error)) error {
+	if r.proc == nil {
+		return nil
+	}
+	l, err := lines()
+	if err != nil {
+		return err
+	}
+	m.write(r, l)
+	return nil
+}
+
+// SetMode changes how much the agent asks before acting.
+func (m *Manager) SetMode(ctx context.Context, id, mode string) error {
+	return m.change(id, func(r *run, s store.Session) (func(*store.Session), error) {
+		if err := validMode(m.c.Driver(s), mode); err != nil {
+			return nil, err
+		}
+		if err := m.tell(r, func() ([][]byte, error) { return r.drv.SetMode(mode) }); err != nil {
+			return nil, err
+		}
+		return func(x *store.Session) { x.PermMode = mode }, nil
+	})
+}
+
+// SetModel switches the session to one of the models its harness listed.
+// Before the harness has listed any, the choice waits for its next start.
+// The effort level goes with it, fitted to the new model, since some
+// harnesses (pi) reset it on a switch.
+func (m *Manager) SetModel(ctx context.Context, id, model string) error {
 	if err := validModel(model); err != nil {
 		return err
 	}
-	r := m.run(id)
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.models != nil && !slices.Contains(r.models, model) {
-		return fmt.Errorf("model %q is not one %s offers", model, s.Harness)
-	}
-	if r.proc != nil {
-		lines, err := r.drv.SetModel(model)
-		if err != nil {
-			return err
+	return m.change(id, func(r *run, s store.Session) (func(*store.Session), error) {
+		if r.models != nil && !slices.Contains(r.models, model) {
+			return nil, fmt.Errorf("model %q is not one %s offers", model, s.Harness)
 		}
-		m.write(r, lines)
+		effort := fitEffort(r.listed[model], s.ChosenEffort)
+		err := m.tell(r, func() ([][]byte, error) {
+			lines, err := r.drv.SetModel(model)
+			if err != nil || effort == "" {
+				return lines, err
+			}
+			more, err := r.drv.SetEffort(effort)
+			return append(lines, more...), err
+		})
+		if err != nil {
+			return nil, err
+		}
+		return func(x *store.Session) { x.ChosenModel, x.ChosenEffort = model, effort }, nil
+	})
+}
+
+// fitEffort is the level to run a model at, given the one chosen: kept if
+// the model has it or hasn't said, else the model's default, else kept for
+// the harness to fit to the model as it does (Claude).
+func fitEffort(md Model, chosen string) string {
+	if chosen == "" || !md.EffortsKnown || slices.Contains(md.Efforts, chosen) || md.DefaultEffort == "" {
+		return chosen
 	}
-	return m.c.Sessions.UpdateSession(id, func(x *store.Session) { x.ChosenModel = model })
+	return md.DefaultEffort
+}
+
+// SetEffort switches the session to one of the effort levels its model
+// listed. Before the harness has listed them, the choice waits for its
+// next start.
+func (m *Manager) SetEffort(ctx context.Context, id, effort string) error {
+	if err := validEffort(effort); err != nil {
+		return err
+	}
+	return m.change(id, func(r *run, s store.Session) (func(*store.Session), error) {
+		model := cmp.Or(s.ChosenModel, s.Model)
+		if md := r.listed[model]; md.EffortsKnown && !slices.Contains(md.Efforts, effort) {
+			return nil, fmt.Errorf("%s doesn't offer %q effort", cmp.Or(md.Name, model), effort)
+		}
+		if err := m.tell(r, func() ([][]byte, error) { return r.drv.SetEffort(effort) }); err != nil {
+			return nil, err
+		}
+		return func(x *store.Session) { x.ChosenEffort = effort }, nil
+	})
 }
 
 // Show puts a file in front of the user in a chat: it keeps a copy and adds

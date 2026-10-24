@@ -52,6 +52,9 @@ type Session struct {
 	// ChosenModel is one the user picked from the harness's list; empty
 	// leaves the choice to the harness.
 	ChosenModel string `json:"chosen_model,omitempty"`
+	// ChosenEffort is an effort level the user picked from the model's;
+	// empty for the harness's own.
+	ChosenEffort string `json:"chosen_effort,omitempty"`
 	// Fork: the next start continues a copy of Resume's conversation, not
 	// Resume itself. It clears once the copy has its own ID.
 	Fork bool `json:"fork,omitempty"`

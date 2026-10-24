@@ -28,7 +28,10 @@ type pi struct {
 	asks       map[string]piAsk
 	failed     string // the run's last assistant error, if its last message failed
 	window     int64
-	resume     bool // continuing a conversation, which pi starts afresh if it can't find it
+	resume     bool                // continuing a conversation, which pi starts afresh if it can't find it
+	current    string              // the model pi runs, provider/id
+	models     []Model             // the models pi listed
+	levels     map[string][]string // a model's thinking levels, for those pi has run
 }
 
 type piAsk struct {
@@ -55,6 +58,9 @@ func (p *pi) Argv(o Options) []string {
 	if o.Model != "" {
 		argv = append(argv, "--model", o.Model)
 	}
+	if o.Effort != "" {
+		argv = append(argv, "--thinking", o.Effort)
+	}
 	switch {
 	case o.Resume != "" && o.Fork:
 		argv = append(argv, "--fork", o.Resume)
@@ -74,7 +80,7 @@ func (p *pi) Env() map[string]string {
 func (p *pi) Open(o Options) [][]byte {
 	p.resume = o.Resume != "" && !o.Fork
 	return [][]byte{line(map[string]string{"type": "get_state"}), line(map[string]string{"type": "get_available_models"}),
-		line(map[string]string{"type": "get_commands"})}
+		line(map[string]string{"type": "get_available_thinking_levels"}), line(map[string]string{"type": "get_commands"})}
 }
 
 // Send always says to steer: pi reads it only during a run, which may have
@@ -124,6 +130,25 @@ func (p *pi) SetModel(model string) ([][]byte, error) {
 	return [][]byte{line(map[string]string{"type": "set_model", "provider": provider, "modelId": id})}, nil
 }
 
+// SetEffort sets pi's thinking level, which pi fits to the model and
+// reports.
+func (p *pi) SetEffort(effort string) ([][]byte, error) {
+	if err := validEffort(effort); err != nil {
+		return nil, err
+	}
+	return [][]byte{line(map[string]string{"type": "set_thinking_level", "level": effort})}, nil
+}
+
+// modelsInfo lists pi's models, each with its levels if pi has said them.
+// pi says them only for the model it runs.
+func (p *pi) modelsInfo() *Info {
+	ms := slices.Clone(p.models)
+	for i := range ms {
+		ms[i].Efforts, ms[i].EffortsKnown = p.levels[ms[i].ID]
+	}
+	return &Info{Models: ms}
+}
+
 // Compact runs as a turn of its own, which pi's response ends.
 func (p *pi) Compact() ([][]byte, error) {
 	p.begin()
@@ -165,6 +190,7 @@ type piLine struct {
 		Content  string      `json:"content"`
 		ToolCall *piToolCall `json:"toolCall"`
 	} `json:"assistantMessageEvent"`
+	Level      string          `json:"level"` // thinking_level_changed
 	ToolCallID string          `json:"toolCallId"`
 	ToolName   string          `json:"toolName"`
 	Args       json.RawMessage `json:"args"`
@@ -274,6 +300,10 @@ func (p *pi) read(b []byte, now time.Time) Out {
 		}
 	case "agent_settled":
 		return p.settled(l, now)
+	case "thinking_level_changed":
+		if validEffort(l.Level) == nil {
+			out.Events = append(out.Events, ev(Event{Kind: KindInfo, Info: &Info{Effort: l.Level}}))
+		}
 	case "message_start", "message_end":
 		var m piMessage
 		if json.Unmarshal(l.Message, &m) != nil || m.Role != "assistant" {
@@ -332,6 +362,7 @@ func (p *pi) response(l piLine, now time.Time) Out {
 			Model     *piModel `json:"model"`
 			SessionID string   `json:"sessionId"`
 			Messages  int      `json:"messageCount"`
+			Thinking  string   `json:"thinkingLevel"`
 		}
 		if json.Unmarshal(l.Data, &s) != nil {
 			return out
@@ -344,14 +375,38 @@ func (p *pi) response(l piLine, now time.Time) Out {
 		info := &Info{Mode: ModeAuto}
 		// With none configured, pi reports a placeholder with no window.
 		if m := s.Model; m != nil && m.Window > 0 && validModel(m.ref()) == nil {
-			p.window, info.Model = m.Window, m.ref()
+			p.window, info.Model, p.current = m.Window, m.ref(), m.ref()
+		}
+		if validEffort(s.Thinking) == nil {
+			info.Effort = s.Thinking
 		}
 		ev(Event{Kind: KindInfo, Info: info})
 	case "set_model":
 		var m piModel
 		if json.Unmarshal(l.Data, &m) == nil && m.ID != "" && validModel(m.ref()) == nil {
-			p.window = m.Window
+			p.window, p.current = m.Window, m.ref()
 			ev(Event{Kind: KindInfo, Info: &Info{Model: m.ref()}})
+			out.Write = append(out.Write, line(map[string]string{"type": "get_available_thinking_levels"}))
+		}
+	case "get_available_thinking_levels":
+		var r struct {
+			Levels []string `json:"levels"`
+		}
+		if json.Unmarshal(l.Data, &r) != nil || p.current == "" {
+			return out
+		}
+		var levels []string
+		for _, lv := range r.Levels {
+			if validEffort(lv) == nil {
+				levels = append(levels, lv)
+			}
+		}
+		if p.levels == nil {
+			p.levels = map[string][]string{}
+		}
+		p.levels[p.current] = levels
+		if len(p.models) > 0 {
+			ev(Event{Kind: KindInfo, Info: p.modelsInfo()})
 		}
 	case "get_available_models":
 		var r struct {
@@ -365,7 +420,8 @@ func (p *pi) response(l piLine, now time.Time) Out {
 			}
 		}
 		if len(models) > 0 {
-			ev(Event{Kind: KindInfo, Info: &Info{Models: models}})
+			p.models = models
+			ev(Event{Kind: KindInfo, Info: p.modelsInfo()})
 		}
 	case "get_commands":
 		var r struct {

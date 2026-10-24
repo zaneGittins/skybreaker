@@ -32,6 +32,7 @@ type codex struct {
 	compact bool    // a compaction asked for before the thread exists
 	signing bool    // a sign-in is under way
 	model   string  // the model the user chose; empty leaves it to codex
+	effort  string  // the effort level the user chose; empty leaves it to codex
 	models  []Model // model/list pages so far
 	pages   int
 	counted int64            // the thread's total tokens as last counted
@@ -72,7 +73,7 @@ func (c *codex) request(method string, params any) []byte {
 }
 
 func (c *codex) Open(o Options) [][]byte {
-	c.opts, c.mode, c.model = o, o.Mode, o.Model
+	c.opts, c.mode, c.model, c.effort = o, o.Mode, o.Model, o.Effort
 	if codexPolicies[c.mode] == "" {
 		c.mode = ModeAsk
 	}
@@ -143,6 +144,9 @@ func (c *codex) startTurn(in []any) []byte {
 	if c.model != "" {
 		p["model"] = c.model
 	}
+	if c.effort != "" {
+		p["effort"] = c.effort
+	}
 	return c.request("turn/start", p)
 }
 
@@ -179,6 +183,15 @@ func (c *codex) SetModel(model string) ([][]byte, error) {
 		return nil, err
 	}
 	c.model = model
+	return nil, nil
+}
+
+// SetEffort takes effect from the next turn, which carries it.
+func (c *codex) SetEffort(effort string) ([][]byte, error) {
+	if err := validEffort(effort); err != nil {
+		return nil, err
+	}
+	c.effort = effort
 	return nil, nil
 }
 
@@ -337,6 +350,10 @@ func (c *codex) response(l codexLine, now time.Time) Out {
 				Description string `json:"description"`
 				Hidden      bool   `json:"hidden"`
 				IsDefault   bool   `json:"isDefault"`
+				Efforts     []struct {
+					Effort string `json:"reasoningEffort"`
+				} `json:"supportedReasoningEfforts"`
+				DefaultEffort string `json:"defaultReasoningEffort"`
 			} `json:"data"`
 			NextCursor *string `json:"nextCursor"`
 		}
@@ -344,9 +361,19 @@ func (c *codex) response(l codexLine, now time.Time) Out {
 			return out
 		}
 		for _, m := range r.Data {
-			if !m.Hidden && validModel(m.Model) == nil {
-				c.models = append(c.models, Model{ID: m.Model, Name: m.DisplayName, Description: m.Description, Default: m.IsDefault})
+			if m.Hidden || validModel(m.Model) != nil {
+				continue
 			}
+			md := Model{ID: m.Model, Name: m.DisplayName, Description: m.Description, Default: m.IsDefault, EffortsKnown: true}
+			for _, e := range m.Efforts {
+				if validEffort(e.Effort) == nil {
+					md.Efforts = append(md.Efforts, e.Effort)
+				}
+			}
+			if validEffort(m.DefaultEffort) == nil {
+				md.DefaultEffort = m.DefaultEffort
+			}
+			c.models = append(c.models, md)
 		}
 		// The catalog is short; the page cap only stops a cursor that never ends.
 		if c.pages++; r.NextCursor != nil && *r.NextCursor != "" && c.pages < 10 {
@@ -362,13 +389,18 @@ func (c *codex) response(l codexLine, now time.Time) Out {
 			Thread struct {
 				ID string `json:"id"`
 			} `json:"thread"`
-			Model string `json:"model"`
+			Model  string `json:"model"`
+			Effort string `json:"reasoningEffort"`
 		}
 		if json.Unmarshal(l.Result, &r) != nil || r.Thread.ID == "" {
 			return out
 		}
 		c.thread, out.Resume = r.Thread.ID, r.Thread.ID
-		out.Events = append(out.Events, Event{Time: now, Kind: KindInfo, Info: &Info{Model: r.Model, Mode: c.mode}})
+		info := &Info{Model: r.Model, Mode: c.mode}
+		if validEffort(r.Effort) == nil {
+			info.Effort = r.Effort
+		}
+		out.Events = append(out.Events, Event{Time: now, Kind: KindInfo, Info: info})
 		if c.compact {
 			c.compact = false
 			out.Write = append(out.Write, c.request("thread/compact/start", map[string]any{"threadId": c.thread}))

@@ -102,9 +102,13 @@ func (b *fakeBackend) ChatShown(id, name string) ([]byte, error) {
 	}
 	return nil, os.ErrNotExist
 }
-func (b *fakeBackend) ChatModel(_ context.Context, id, model string) error {
+func (b *fakeBackend) ChatModel(_ context.Context, id, model string) (store.Session, error) {
 	b.chat.call("model " + id + " " + model)
-	return known(id)
+	return store.Session{ID: id, ChosenModel: model, ChosenEffort: "medium"}, known(id)
+}
+func (b *fakeBackend) ChatEffort(_ context.Context, id, effort string) (store.Session, error) {
+	b.chat.call("effort " + id + " " + effort)
+	return store.Session{ID: id, ChosenEffort: effort}, known(id)
 }
 func (b *fakeBackend) ChatLogin(_ context.Context, id string) error {
 	b.chat.call("login " + id)
@@ -227,6 +231,21 @@ func TestNewSessionOnItsOwnBranch(t *testing.T) {
 	}
 }
 
+// A model or effort change answers with the session as saved, which may
+// have moved the effort to suit the model.
+func TestChatSettingsReturnTheSession(t *testing.T) {
+	f := newFixture(t, you)
+	for path, body := range map[string]string{"/api/sessions/c1/model": `{"model":"sonnet"}`, "/api/sessions/c1/effort": `{"effort":"medium"}`} {
+		code, out := f.do(t, "POST", path, body, nil)
+		var r struct {
+			Session store.Session `json:"session"`
+		}
+		if code != 200 || json.Unmarshal([]byte(out), &r) != nil || r.Session.ID != "c1" || r.Session.ChosenEffort != "medium" {
+			t.Errorf("%s: %d %s", path, code, out)
+		}
+	}
+}
+
 func TestChatActions(t *testing.T) {
 	f := newFixture(t, you)
 	for _, c := range []struct {
@@ -246,6 +265,8 @@ func TestChatActions(t *testing.T) {
 		{"/api/sessions/c1/mode", `{"mode":"edits"}`, 200},
 		{"/api/sessions/c1/model", `{"model":"sonnet"}`, 200},
 		{"/api/sessions/c1/model", `{"model":""}`, 400},
+		{"/api/sessions/c1/effort", `{"effort":"high"}`, 200},
+		{"/api/sessions/c1/effort", `{"effort":""}`, 400},
 		{"/api/sessions/c1/seen", `{}`, 200},
 		{"/api/sessions/c1/login", `{}`, 200},
 		{"/api/sessions/c1/compact", `{}`, 200},
@@ -256,7 +277,7 @@ func TestChatActions(t *testing.T) {
 		}
 	}
 	got := f.backend.chat.got()
-	for _, want := range []string{"send c1 hello", "send c1  [a.log:boom]", "answer c1 r1", "interrupt c1", "mode c1 edits", "model c1 sonnet", "seen c1", "login c1", "compact c1"} {
+	for _, want := range []string{"send c1 hello", "send c1  [a.log:boom]", "answer c1 r1", "interrupt c1", "mode c1 edits", "model c1 sonnet", "effort c1 high", "seen c1", "login c1", "compact c1"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("calls %q lack %q", got, want)
 		}

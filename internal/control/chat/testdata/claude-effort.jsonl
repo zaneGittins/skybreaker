@@ -1,0 +1,3 @@
+{"type":"control_response","response":{"subtype":"success","request_id":"skybreaker-2","response":{"effective":{},"sources":[],"applied":{"model":"claude-sonnet-5-5","effort":"low","advisor":null,"ultracode":false,"ultracodeRequested":false,"ultracodeAvailable":true}}}}
+{"type":"control_response","response":{"subtype":"success","request_id":"skybreaker-3"}}
+{"type":"control_response","response":{"subtype":"success","request_id":"skybreaker-4","response":{"effective":{},"sources":[],"applied":{"model":"claude-sonnet-5-5","effort":"max","advisor":null,"ultracode":false,"ultracodeRequested":false,"ultracodeAvailable":true}}}}

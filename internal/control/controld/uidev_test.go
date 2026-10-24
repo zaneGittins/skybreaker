@@ -2,6 +2,7 @@ package controld
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -190,6 +191,9 @@ func devSpawn(_ context.Context, argv []string) (*chat.Proc, error) {
 
 var devTurn = 0
 
+// devEffort is the effort level the scripted Claude runs at.
+var devEffort atomic.Value
+
 func devClaude(m map[string]any, say func(any), raw func(string)) {
 	pause := func() { time.Sleep(60 * time.Millisecond) }
 	switch m["type"] {
@@ -198,9 +202,24 @@ func devClaude(m map[string]any, say func(any), raw func(string)) {
 		if r["subtype"] == "initialize" {
 			say(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": m["request_id"], "response": map[string]any{"models": []any{
 				// As the real CLI lists them: the default names its model first.
-				map[string]any{"value": "default", "resolvedModel": "claude-opus-5-5", "displayName": "Default (recommended)", "description": "Opus 5.5 · Best for everyday, complex tasks"},
-				map[string]any{"value": "sonnet", "resolvedModel": "claude-sonnet-5-5", "displayName": "Sonnet", "description": "Sonnet 5.5 · Quicker answers"},
+				map[string]any{"value": "default", "resolvedModel": "claude-opus-5-5", "displayName": "Default (recommended)", "description": "Opus 5.5 · Best for everyday, complex tasks",
+					"supportsEffort": true, "supportedEffortLevels": []string{"low", "medium", "high", "xhigh", "max"}},
+				map[string]any{"value": "sonnet", "resolvedModel": "claude-sonnet-5-5", "displayName": "Sonnet", "description": "Sonnet 5.5 · Quicker answers",
+					"supportsEffort": true, "supportedEffortLevels": []string{"low", "medium", "high", "max"}},
+				map[string]any{"value": "claude-haiku-4-5", "resolvedModel": "claude-haiku-4-5", "displayName": "Haiku 4.5", "description": "Fastest, no effort levels"},
 			}}}})
+		}
+		if r["subtype"] == "apply_flag_settings" {
+			if set, _ := r["settings"].(map[string]any); set != nil {
+				e, _ := set["effortLevel"].(string)
+				devEffort.Store(e)
+			}
+			say(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": m["request_id"]}})
+		}
+		if r["subtype"] == "get_settings" {
+			e, _ := devEffort.Load().(string)
+			say(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": m["request_id"],
+				"response": map[string]any{"applied": map[string]any{"effort": cmp.Or(e, "high")}}}})
 		}
 		if r["subtype"] == "set_model" {
 			say(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": m["request_id"]}})

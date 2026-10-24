@@ -23,6 +23,7 @@ type Options struct {
 	Cwd    string
 	Mode   string
 	Model  string // a model the user chose from the harness's list
+	Effort string // an effort level the user chose from the model's
 	Resume string // the harness's conversation to continue
 	NewID  string // an ID for a new conversation, for harnesses that take one
 	Fork   bool   // with Resume: continue a copy of that conversation, under a new ID
@@ -63,6 +64,8 @@ type Driver interface {
 	SetMode(mode string) ([][]byte, error)
 	// SetModel switches to one of the models the harness listed.
 	SetModel(model string) ([][]byte, error)
+	// SetEffort switches to one of the effort levels the model listed.
+	SetEffort(effort string) ([][]byte, error)
 	// Compact summarises the conversation so far to free its context.
 	Compact() ([][]byte, error)
 	// Login starts a sign-in, or reports that this harness signs in only
@@ -118,6 +121,20 @@ func validModel(m string) error {
 		ok := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._:/@[]-", r)
 		if !ok {
 			return fmt.Errorf("model %q is not a model name", m)
+		}
+	}
+	return nil
+}
+
+// validEffort accepts what a harness could call an effort level: a short
+// lowercase word.
+func validEffort(e string) error {
+	if e == "" || len(e) > 16 {
+		return fmt.Errorf("effort %q is not an effort level", e)
+	}
+	for _, r := range e {
+		if r < 'a' || r > 'z' {
+			return fmt.Errorf("effort %q is not an effort level", e)
 		}
 	}
 	return nil

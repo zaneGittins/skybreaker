@@ -85,7 +85,7 @@ func TestPiModesAndLogin(t *testing.T) {
 	if _, err := d.Login(); err != ErrTerminalLogin {
 		t.Errorf("login = %v", err)
 	}
-	if got := commands(t, newPi().Open(Options{})); !slices.Equal(got, []string{"get_state", "get_available_models", "get_commands"}) {
+	if got := commands(t, newPi().Open(Options{})); !slices.Equal(got, []string{"get_state", "get_available_models", "get_available_thinking_levels", "get_commands"}) {
 		t.Errorf("open = %q", got)
 	}
 }

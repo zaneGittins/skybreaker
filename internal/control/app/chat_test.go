@@ -581,7 +581,7 @@ func TestChatFork(t *testing.T) {
 		return x.Resume == "conv-1" && x.State == store.ChatIdle
 	})
 	f.app.store.UpdateSession(s.ID, func(x *store.Session) {
-		x.Title, x.Color, x.Goal, x.PermMode, x.ChosenModel = "Login", "blue", "Ship it", chat.ModeEdits, "sonnet"
+		x.Title, x.Color, x.Goal, x.PermMode, x.ChosenModel, x.ChosenEffort = "Login", "blue", "Ship it", chat.ModeEdits, "sonnet", "high"
 	})
 
 	fork, err := f.app.ChatFork(ctx, s.ID)
@@ -590,7 +590,7 @@ func TestChatFork(t *testing.T) {
 	}
 	if fork.ID == s.ID || fork.Project != "orbit" || fork.Harness != "claude" || fork.Mode != store.ModeChat || fork.Status != store.StatusRunning ||
 		fork.Resume != "conv-1" || !fork.Fork || fork.Title != "Login (fork)" || fork.Color != "blue" || fork.Goal != "Ship it" ||
-		fork.PermMode != chat.ModeEdits || fork.ChosenModel != "sonnet" || fork.State != store.ChatIdle {
+		fork.PermMode != chat.ModeEdits || fork.ChosenModel != "sonnet" || fork.ChosenEffort != "high" || fork.State != store.ChatIdle {
 		t.Errorf("fork = %+v", fork)
 	}
 	// It starts with the conversation so far, and says where it came from.

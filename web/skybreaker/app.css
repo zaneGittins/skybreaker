@@ -603,6 +603,13 @@ pre.dc-detail { padding: 10px 12px; font: 500 12.5px/1.5 var(--mono); white-spac
 .menu-note { display: grid; gap: 2px; padding: 8px 12px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); }
 .menu-note b { font-size: 13.5px; font-weight: 700; }
 .menu-note span { font-size: 12.5px; color: var(--muted); }
+.menu-effort { display: grid; gap: 8px; padding: 10px 12px 8px; margin-top: 4px; border-top: 1px solid var(--border); }
+.effort-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.effort-top b { font-size: 13.5px; font-weight: 700; }
+.effort-top span { font-size: 12.5px; color: var(--muted); }
+.menu-effort .seg { width: auto; flex-wrap: nowrap; gap: 2px; padding: 3px; border-radius: 12px; }
+.menu-effort .seg button { flex: 1; min-width: 0; height: 30px; padding: 0 2px; font-size: 12.5px; white-space: nowrap; }
+.effort-note { margin: 0; font-size: 12.5px; line-height: 1.35; color: var(--muted); }
 
 /* Diffs */
 /* ---- files an agent showed ---- */

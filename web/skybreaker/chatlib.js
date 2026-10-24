@@ -163,19 +163,23 @@ const COMMANDS = [
   { cmd: 'fork', usage: '/fork', desc: 'Copy this conversation into a new chat' },
   { cmd: 'compact', usage: '/compact', desc: 'Summarise the conversation to free up context' },
   { cmd: 'prompt', usage: '/prompt <name>', desc: 'Send one of the prompts saved in Settings' },
+  { cmd: 'effort', usage: '/effort <level>', desc: 'How hard the model thinks' },
 ];
 
 // parseCommand reads Skybreaker's own chat commands. Anything else starting
 // with a slash (the harness's own commands) is left for the agent.
 function parseCommand(text) {
-  const m = /^\/(rename|color|goal|clear|fork|compact|prompt)(?:\s+([\s\S]*))?$/.exec(String(text ?? '').trim());
+  const m = /^\/(rename|color|goal|clear|fork|compact|prompt|effort)(?:\s+([\s\S]*))?$/.exec(String(text ?? '').trim());
   return m ? { cmd: m[1], arg: (m[2] || '').trim() } : null;
 }
 
 // commandHints is what to suggest while you type a command, with the
-// prompts saved in Settings for /prompt.
-function commandHints(text, prompts = []) {
+// prompts saved in Settings for /prompt and the model's effort levels,
+// and the one it runs at, for /effort.
+function commandHints(text, prompts = [], levels = { list: [], on: '' }) {
   const s = String(text ?? '');
+  const effort = /^\/effort\s+(\S*)$/.exec(s);
+  if (effort) return levels.list.filter(l => l.startsWith(effort[1])).map(l => ({ cmd: 'effort', effort: l, on: l === levels.on }));
   const color = /^\/color\s+(\S*)$/.exec(s);
   if (color) return CHAT_COLORS.filter(c => c.startsWith(color[1])).map(c => ({ cmd: 'color', color: c }));
   const prompt = /^\/prompt\s+(\S*)$/.exec(s);
@@ -184,7 +188,7 @@ function commandHints(text, prompts = []) {
       .map(p => ({ cmd: 'prompt', prompt: p.name, desc: clipLabel(firstLine(p.text)) }));
   }
   const m = /^\/([a-z]*)$/.exec(s);
-  return m ? COMMANDS.filter(c => c.cmd.startsWith(m[1])) : [];
+  return m ? COMMANDS.filter(c => c.cmd.startsWith(m[1]) && (c.cmd !== 'effort' || levels.list.length)) : [];
 }
 
 // promptText is what /prompt <name> [more] sends: the saved prompt, with
@@ -538,6 +542,38 @@ function currentModel(models = [], chosen = '', reported = '') {
   return models.find(m => m.default) || null;
 }
 
+// currentEffort is the effort level a chat's model runs at, from the
+// model's own levels: the one the user chose, else the one the harness
+// reports, else the model's default. A model with fewer than two levels
+// has none to choose.
+function currentEffort(model, chosen = '', reported = '') {
+  const levels = model?.efforts || [];
+  if (levels.length < 2) return '';
+  return [chosen, reported, model.default_effort].find(l => l && levels.includes(l)) || '';
+}
+
+// effortChoice is what a chat offers for effort: the levels of its model
+// while it runs, if there are two or more, and the one it runs at, if
+// known. The picker, the hints and /effort all go by it.
+function effortChoice(model, running, chosen = '', reported = '') {
+  const list = running && model?.efforts?.length >= 2 ? model.efforts : [];
+  return { list, on: list.length ? currentEffort(model, chosen, reported) : '' };
+}
+
+// effortName says an effort level for people, short to fit the picker.
+const EFFORT_NAMES = new Map([['xhigh', ['Extra high', 'XHigh']], ['medium', ['Medium', 'Med']], ['minimal', ['Minimal', 'Min']]]);
+function effortName(level = '', short = false) {
+  const n = EFFORT_NAMES.get(level);
+  if (n) return n[short ? 1 : 0];
+  return level ? level[0].toUpperCase() + level.slice(1) : '';
+}
+
+// modelLine names a chat's model, and its effort level if it has one.
+function modelLine(model, effort) {
+  const name = modelLabel(model);
+  return name && effort ? name + ' · ' + effortName(effort) : name;
+}
+
 // modelName writes a model ID the way people say it: claude-opus-5-5 is
 // Opus 5.5 and gpt-6-sol GPT-6 Sol. A name already written for people
 // stays as it is.
@@ -716,4 +752,4 @@ function agentActivity(it) {
   return it.children?.length ? 'Thinking' : 'Starting';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction };

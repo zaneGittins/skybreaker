@@ -77,6 +77,9 @@ func (c *claude) Argv(o Options) []string {
 	if o.Model != "" {
 		argv = append(argv, "--model="+o.Model)
 	}
+	if o.Effort != "" {
+		argv = append(argv, "--effort="+o.Effort)
+	}
 	switch {
 	case o.Resume != "":
 		argv = append(argv, "--resume", o.Resume)
@@ -109,6 +112,8 @@ func (c *claude) control(req map[string]any) []byte {
 	case "set_permission_mode":
 		c.sent[id] = "set_mode " + req["skybreaker_mode"].(string)
 		delete(req, "skybreaker_mode")
+	case "get_settings":
+		c.sent[id] = "get_settings"
 	}
 	return line(map[string]any{"type": "control_request", "request_id": id, "request": req})
 }
@@ -158,6 +163,18 @@ func (c *claude) SetModel(model string) ([][]byte, error) {
 		return nil, err
 	}
 	return [][]byte{c.control(map[string]any{"subtype": "set_model", "model": model})}, nil
+}
+
+// SetEffort applies the level as a flag would. Claude takes any level
+// without complaint, so what it then runs at is asked for.
+func (c *claude) SetEffort(effort string) ([][]byte, error) {
+	if err := validEffort(effort); err != nil {
+		return nil, err
+	}
+	return [][]byte{
+		c.control(map[string]any{"subtype": "apply_flag_settings", "settings": map[string]any{"effortLevel": effort}}),
+		c.control(map[string]any{"subtype": "get_settings"}),
+	}, nil
 }
 
 func (c *claude) Login() ([][]byte, error) { return nil, ErrTerminalLogin }
@@ -339,33 +356,39 @@ func (c *claude) Read(b []byte) Out {
 		out.Events = append(out.Events, e...)
 		out.Write = append(out.Write, w...)
 	case "control_response":
-		out.Events = append(out.Events, c.response(l, now)...)
+		events, w := c.response(l, now)
+		out.Events = append(out.Events, events...)
+		out.Write = append(out.Write, w...)
 	}
 	return out
 }
 
 // response answers one of our control requests: initialize lists the
-// models, set_model takes or refuses one.
-func (c *claude) response(l claudeLine, now time.Time) []Event {
+// models, set_model takes or refuses one, get_settings says the effort.
+func (c *claude) response(l claudeLine, now time.Time) ([]Event, [][]byte) {
 	var r struct {
 		Subtype   string `json:"subtype"`
 		RequestID string `json:"request_id"`
 		Error     string `json:"error"`
 		Response  struct {
 			Models []struct {
-				Value       string `json:"value"`
-				Resolved    string `json:"resolvedModel"`
-				DisplayName string `json:"displayName"`
-				Description string `json:"description"`
+				Value       string   `json:"value"`
+				Resolved    string   `json:"resolvedModel"`
+				DisplayName string   `json:"displayName"`
+				Description string   `json:"description"`
+				Efforts     []string `json:"supportedEffortLevels"`
 			} `json:"models"`
+			Applied struct {
+				Effort string `json:"effort"`
+			} `json:"applied"`
 		} `json:"response"`
 	}
 	if json.Unmarshal(l.Response, &r) != nil {
-		return nil
+		return nil, nil
 	}
 	sent, ok := c.sent[r.RequestID]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	delete(c.sent, r.RequestID)
 	if mode, ok := strings.CutPrefix(sent, "set_mode "); ok {
@@ -374,31 +397,41 @@ func (c *claude) response(l claudeLine, now time.Time) []Event {
 			return []Event{
 				{Time: now, Kind: KindNotice, Text: clip("Couldn't switch to "+modeNames[mode]+": "+r.Error, 4096)},
 				{Time: now, Kind: KindInfo, Info: &Info{Mode: c.mode}},
-			}
+			}, nil
 		}
 		c.mode = mode
-		return []Event{{Time: now, Kind: KindInfo, Info: &Info{Mode: mode}}}
+		return []Event{{Time: now, Kind: KindInfo, Info: &Info{Mode: mode}}}, nil
 	}
 	model, isSet := strings.CutPrefix(sent, "set_model ")
 	switch {
 	case isSet && r.Subtype == "success":
 		c.model = model
-		return []Event{{Time: now, Kind: KindInfo, Info: &Info{Model: model}}}
+		return []Event{{Time: now, Kind: KindInfo, Info: &Info{Model: model}}}, [][]byte{c.control(map[string]any{"subtype": "get_settings"})}
 	case isSet:
-		return []Event{{Time: now, Kind: KindNotice, Text: clip("Couldn't switch to "+model+": "+r.Error, 4096)}}
+		return []Event{{Time: now, Kind: KindNotice, Text: clip("Couldn't switch to "+model+": "+r.Error, 4096)}}, nil
+	case sent == "get_settings" && r.Subtype == "success" && validEffort(r.Response.Applied.Effort) == nil:
+		return []Event{{Time: now, Kind: KindInfo, Info: &Info{Effort: r.Response.Applied.Effort}}}, nil
 	case sent == "initialize" && r.Subtype == "success":
+		ask := [][]byte{c.control(map[string]any{"subtype": "get_settings"})}
 		ms := []Model{}
 		for _, m := range r.Response.Models {
 			if validModel(m.Value) != nil {
 				continue
 			}
-			ms = append(ms, Model{ID: m.Value, Name: m.DisplayName, Description: m.Description, Resolved: m.Resolved, Default: m.Value == "default"})
+			md := Model{ID: m.Value, Name: m.DisplayName, Description: m.Description, Resolved: m.Resolved, Default: m.Value == "default", EffortsKnown: true}
+			for _, e := range m.Efforts {
+				if validEffort(e) == nil {
+					md.Efforts = append(md.Efforts, e)
+				}
+			}
+			ms = append(ms, md)
 		}
 		if len(ms) > 0 {
-			return []Event{{Time: now, Kind: KindInfo, Info: &Info{Models: ms}}}
+			return []Event{{Time: now, Kind: KindInfo, Info: &Info{Models: ms}}}, ask
 		}
+		return nil, ask
 	}
-	return nil
+	return nil, nil
 }
 
 // stream turns partial messages into text deltas. A text block's ID is its

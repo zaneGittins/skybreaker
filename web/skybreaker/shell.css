@@ -442,5 +442,6 @@ details.earlier .row-list { margin-top: 4px; }
 .cmd-hint { display: grid; gap: 2px; padding: 7px 11px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); text-align: left; font: inherit; cursor: pointer; }
 .cmd-hint b { font: 600 13px var(--mono); }
 .cmd-hint span { font-size: 12px; color: var(--muted); }
+.cmd-hint.on { border-color: var(--text-2); }
 .swatch-hint { display: flex; align-items: center; gap: 7px; font-size: 13px; }
 .swatch { width: 14px; height: 14px; border-radius: 50%; background: var(--sc); }

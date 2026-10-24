@@ -61,7 +61,9 @@ type Backend interface {
 	ChatAnswer(ctx context.Context, id, ask string, a chat.Answer) error
 	ChatInterrupt(ctx context.Context, id string) error
 	ChatMode(ctx context.Context, id, mode string) error
-	ChatModel(ctx context.Context, id, model string) error
+	// ChatModel and ChatEffort return the session as saved.
+	ChatModel(ctx context.Context, id, model string) (store.Session, error)
+	ChatEffort(ctx context.Context, id, effort string) (store.Session, error)
 	ChatShown(id, name string) ([]byte, error)
 	ChatLogin(ctx context.Context, id string) error
 	ChatTerminal(ctx context.Context, id string) (store.Session, error)
@@ -186,6 +188,7 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("POST /api/sessions/{id}/interrupt", s.chatInterrupt)
 	m.HandleFunc("POST /api/sessions/{id}/mode", s.chatMode)
 	m.HandleFunc("POST /api/sessions/{id}/model", s.chatModel)
+	m.HandleFunc("POST /api/sessions/{id}/effort", s.chatEffort)
 	m.HandleFunc("GET /api/sessions/{id}/shown/{name}", s.chatShown)
 	m.HandleFunc("POST /api/sessions/{id}/login", s.chatLogin)
 	m.HandleFunc("POST /api/sessions/{id}/terminal", s.chatTerminal)
