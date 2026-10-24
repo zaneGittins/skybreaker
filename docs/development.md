@@ -15,6 +15,14 @@ scripts/redteam.sh       escape and exfiltration checks, run inside a sandbox
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has the full code map.
 
+## Build
+
+```sh
+make               # vet, test, build: bin/skybreaker and bin/skybreaker-setup
+```
+
+Go fetches the modules pinned in `go.mod`, and xterm.js is in the repository; `make deps` and `make vendor` are for bumping them.
+
 ## Tests
 
 ```sh

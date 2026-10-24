@@ -16,6 +16,7 @@
 
 <p align="center">
   <a href="docs/getting-started.md">Getting started</a> ·
+  <a href="docs/using.md">Using it</a> ·
   <a href="docs/ARCHITECTURE.md">Architecture</a> ·
   <a href="docs/security.md">Security model</a> ·
   <a href="docs/development.md">Development</a>
@@ -23,7 +24,7 @@
 
 ---
 
-Skybreaker runs coding agents per project inside gVisor sandboxes on a Linux host you control. Every request an agent makes leaves through Skybreaker's built-in broker, which holds the credentials, decides what's allowed and holds anything risky for your approval, down to which branches it may push and what its pull requests say. You drive them over Tailscale from wherever you work: the web app on a desktop or phone, the agents' own terminal UIs on your laptop, or VS Code inside the sandbox. It uses the official Claude Code and Codex CLIs, so your Claude and ChatGPT subscriptions work as they do in the vendors' own apps, and pi for your own keys or models you run yourself. It's one program, one config file and one machine.
+Skybreaker runs Claude Code, Codex and pi in a gVisor sandbox per project on a Linux server you control. Every request an agent makes goes through a built-in broker that holds your credentials, checks the request against your policy and holds anything risky for your approval. You drive it over Tailscale from the web app, your phone, your terminal or VS Code. Your Claude and ChatGPT subscriptions work as they do in the vendors' own apps.
 
 <p align="center">
   <img src="docs/img/screen-desktop.png" alt="A chat on a desktop: the agent's plan, its tool calls and edits, and the result" width="560">
@@ -31,15 +32,14 @@ Skybreaker runs coding agents per project inside gVisor sandboxes on a Linux hos
   <img src="docs/img/screen-home.png" alt="Home on a phone: an approval waiting, and chats ordered by what needs you" width="162">
 </p>
 
-## What it does
+## Features
 
-- **Credentials stay out of reach.** The broker adds GitHub App tokens and API keys on the way out, and only to the hosts each secret is bound to.
-- **Deny by default.** Every host and request is allowed, held for your approval or denied by per-project policy. Everything that leaves is audited, with a kill switch.
-- **Chat on a desktop or a phone.** Agents run in their structured modes and appear as a clean conversation in the web app, with tool calls, diffs, approvals and questions inline. The inbox shows what needs you first, and web push tells you when.
-- **Or from your terminal and editor.** `skybreaker` on your laptop attaches to a session in Claude Code's, Codex's or pi's own terminal UI, and opens a project's sandbox in desktop VS Code over SSH, all over your tailnet.
-- **A board per project.** Agents pick up, claim and hand back work through Skybreaker's MCP tools, scoped to their own project.
-- **Review and ship.** Read the workspace's changes against its base branch, then have the agent commit, push and open a pull request.
-- **Keeps itself current.** A weekly rebuild picks up new CLI versions and promotes them only after a protocol check.
+- **Credentials stay out of reach.** The broker adds tokens on the way out, only to the hosts each one is bound to.
+- **Deny by default.** Each request is allowed, held for your approval or refused, per project. Everything is audited, with a kill switch.
+- **Chat anywhere.** Tool calls, diffs, approvals and questions inline, with push notifications when an agent needs you.
+- **Terminal and VS Code.** Attach to any session in the agent's own terminal UI, or open its sandbox in VS Code.
+- **Review and ship.** Each chat works on its own branch; read its diff, then have the agent open a pull request.
+- **A board per project.** Agents pick up and hand back work through MCP tools.
 
 ## How it fits together
 
@@ -50,33 +50,25 @@ Skybreaker runs coding agents per project inside gVisor sandboxes on a Linux hos
   </picture>
 </p>
 
-More in [ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [security model](docs/security.md).
+## Quick start
 
-## Get started
-
-You need a Linux host (on Debian and Ubuntu the installer adds Docker), a Tailscale tailnet with MagicDNS and HTTPS certificates turned on, and a GitHub account for your repos. Then:
+You need a Debian or Ubuntu server, a Tailscale tailnet with MagicDNS and HTTPS certificates on, and a GitHub account. On the server:
 
 ```sh
 curl -fsSL https://github.com/zaneGittins/skybreaker/releases/latest/download/install.sh | sh
 ```
 
-`skybreaker-setup` installs Docker and gVisor if they're missing, asks for your tailnet login and your first repo, starts Skybreaker and gives you a link to approve it on your tailnet. Or paste [deploy/cloud-init.yaml](deploy/cloud-init.yaml) into a new server's user data to install it as the server boots. `sudo skybreaker-setup upgrade` updates it later ([upgrading](docs/upgrading.md)). See [getting started](docs/getting-started.md) for details, or [install by hand](docs/manual-install.md).
+Then follow [Getting started](docs/getting-started.md) to connect GitHub and start your first chat.
 
-On your laptop (Linux or macOS), the terminal client installs without sudo and finds your Skybreaker through Tailscale:
+Skybreaker is pre-1.0: a release may change the config file, and its notes say what to update.
 
-```sh
-curl -fsSL https://github.com/zaneGittins/skybreaker/releases/latest/download/install-cli.sh | sh
-```
+## Docs
 
-To build from source:
-
-```sh
-make               # vet, test, build: bin/skybreaker and bin/skybreaker-setup
-```
-
-Go fetches the modules pinned in `go.mod`, and xterm.js is in the repository; `make deps` and `make vendor` are for bumping them.
-
-Skybreaker is young: releases are before 1.0, and one may change the config file. Each release's notes say what to update, and `sudo skybreaker-setup upgrade` checks your config before changing anything.
+- [Getting started](docs/getting-started.md): install and first chat
+- [Using Skybreaker](docs/using.md): chats, previews, boards, terminal, VS Code
+- [Configuration](docs/configuration.md): access to APIs, local models, sandbox limits
+- [Upgrading](docs/upgrading.md) and [installing by hand](docs/manual-install.md)
+- [Architecture](docs/ARCHITECTURE.md), [security model](docs/security.md) and [development](docs/development.md)
 
 ## License
 

@@ -1,6 +1,6 @@
 # Security model
 
-Coding agents read untrusted input all day (issues, web pages, dependencies), and any of it can steer them. Skybreaker treats every agent as potentially hostile.
+Agents read untrusted input all day (issues, web pages, dependencies), and any of it can steer them. Skybreaker treats every agent as potentially hostile.
 
 ## Principles
 
@@ -16,7 +16,7 @@ Each project runs in its own gVisor (`runsc`) sandbox with the repo, toolchains,
 - **gVisor.** An escape needs a gVisor bug and then a host-kernel bug. Skybreaker refuses to start without `runsc`.
 - **Network.** Sandboxes have no DNS. nftables lets them reach only the broker and the hook listener on their bridge gateway; nothing is forwarded. Inner containers follow the same rules.
 - **SSH.** sshd in each sandbox accepts public keys only, and is reachable only through Skybreaker's relay for listed users. Removing a key cuts every open relay. The client forwards no agent or X11.
-- **Attachments.** Files you attach to a chat go into the project's sandbox, where every agent in that project can read them, so attach only what the project's agents may see. An image's preview in the chat is a thumbnail your browser made; the agent gets the image itself.
+- **Attachments.** Files you attach go into the project's sandbox, where every agent in that project can read them. Attach only what those agents may see.
 - **Your terminal.** The terminal client strips escape strings (OSC, DCS, APC, PM, SOS, C1) from sandbox output, so an agent can't write your clipboard or plant links.
 
 ## The broker
@@ -27,7 +27,7 @@ Sandboxes reach the outside only through `HTTPS_PROXY=http://<project>:<token>@b
 |---|---|
 | Caller | From the project's sandbox network, with a live token for that project. Revocation applies to open connections too. |
 | Destination | On the project's list, as a **tunnel** (opaque TLS, server name must match), **mitm** (TLS terminated so rules see method and path) or **route** (a reverse-proxy path). Plain HTTP only to a route's `allow_private` address, never with a secret. |
-| Request | Each method and path is `auto`, `ask` or `deny`. Requests carrying their own credentials are refused. `refs:`, `graphql:`, `k8s:` and `content_rules` narrow git pushes, GraphQL operations, Kubernetes verbs, and commit and pull request text. A read rule's `follow_redirects` lists the hosts the broker may follow the upstream's redirects to (GitHub's log storage), fetching them itself over https to a public address with no credentials, so the sandbox never reaches them; it's set in the config file only, and each hop is audited. |
+| Request | Each method and path is `auto`, `ask` or `deny`. Requests carrying their own credentials are refused. `refs:`, `graphql:`, `k8s:` and `content_rules` narrow git pushes, GraphQL operations, Kubernetes verbs, and commit and pull request text. `follow_redirects` (config file only) lets the broker itself follow a read's redirects to listed hosts, without credentials, auditing each hop. |
 | Credentials | A secret is added only if it lists the upstream host, so it can't be echoed back from elsewhere. |
 | Connection | Resolved addresses are checked against loopback, link-local, metadata, private ranges, the tailnet and your LAN. |
 | Audit | Every decision is logged and shown on the Activity page. |
