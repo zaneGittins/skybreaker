@@ -109,11 +109,14 @@ func (t *tools) agent(given string) string {
 	return "agent"
 }
 
-// claim is who a call claims as: its name, held by its MCP session so two
-// sessions with the same name are kept apart.
+// claim is who a call claims as: its name, held by its chat's work, else
+// its MCP session, so two sessions with the same name are kept apart.
 func (t *tools) claim(agent string, force bool) Claim {
 	c := Claim{Agent: t.agent(agent), Force: force}
-	if t.c.MCP != "" {
+	switch {
+	case t.c.Work != "":
+		c.Claimant = t.c.Work
+	case t.c.MCP != "":
 		c.Claimant = "mcp:" + t.c.MCP
 	}
 	return c

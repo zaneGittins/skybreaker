@@ -480,8 +480,26 @@ func TestMCPCaller(t *testing.T) {
 	if c, err := try(orbit, "/mcp/orbit/"+tok+"/"+s.ID); err != nil || c.Project != "orbit" || c.Session != s.ID {
 		t.Fatalf("own chat: %+v %v", c, err)
 	}
-	if c, err := try(orbit, "/mcp/orbit/"+tok+"/-"); err != nil || c.Session != "-" {
+	if c, err := try(orbit, "/mcp/orbit/"+tok+"/-"); err != nil || c.Session != "-" || c.Work != "" {
 		t.Fatalf("no chat: %+v %v", c, err)
+	}
+	// Claims belong to a chat's branch, so its restarts and /clear keep
+	// them; a chat in the shared workspace keeps its own.
+	if c, _ := try(orbit, "/mcp/orbit/"+tok+"/"+s.ID); c.Work != "chat:"+s.ID {
+		t.Errorf("shared workspace: work %q", c.Work)
+	}
+	own, err := f.app.NewChat(context.Background(), "orbit", "claude", NewOptions{OwnBranch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := f.app.NewChat(context.Background(), "orbit", "claude", NewOptions{Continues: own.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := try(orbit, "/mcp/orbit/"+tok+"/"+own.ID)
+	b, _ := tryAs(orbit, "/mcp/orbit/"+tok+"/-", cleared.ID)
+	if a.Work == "" || a.Work != b.Work || a.Work == "chat:"+own.ID {
+		t.Errorf("own branch and its /clear: %q, %q", a.Work, b.Work)
 	}
 	// pi's MCP config is shared by its sessions, so it names the chat in a
 	// header; one in the URL wins.
