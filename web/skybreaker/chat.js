@@ -333,7 +333,7 @@ async function renderChat(seq, d) {
   const ringPct = el('span.ctx-pct');
   const ringBtn = el('button.icon-btn.bare.ctx-btn', { onclick: e => sessionMenu(e.currentTarget), 'aria-label': 'Context and session' }, ring.node, ringPct);
 
-  const back = () => history.length > 1 ? history.back() : navigate('/');
+  const back = () => goBack('', projectPath(project.name));
   const page = el('div.chat-page', null,
     el('div.chat-bar', null,
       el('button.icon-btn.bare', { onclick: back, 'aria-label': 'Back' }, svg(ICON.back)),

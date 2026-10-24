@@ -12,7 +12,19 @@ function navigate(path) {
   // A form with unsaved changes (see saveBar) asks before it's left.
   if (state.dirty && !confirm('Leave without saving your changes?')) return;
   state.dirty = false;
-  if (location.pathname + location.search !== path) history.pushState(null, '', path);
+  const here = location.pathname + location.search;
+  if (here !== path) history.pushState({ from: here }, '', path);
+  moveTo();
+}
+
+// goBack is a page's Back button: see backTo. Replacing rather than pushing
+// keeps Back from bouncing between two pages.
+function goBack(want, fallback = '/') {
+  const to = backTo(history.state?.from, want, fallback);
+  if (to === null) return history.back();
+  if (state.dirty && !confirm('Leave without saving your changes?')) return;
+  state.dirty = false;
+  history.replaceState(history.state, '', to);
   moveTo();
 }
 
@@ -1113,11 +1125,11 @@ async function renderTerminal(seq, id, found) {
     type: 'button', 'aria-label': 'Message box', title: 'Message box',
     onmousedown: e => e.preventDefault(), onclick: () => compose(),
   }, svg(ICON.pencil));
-  let parent = '';
-  const toChat = el('button.btn.sm.to-chat', { type: 'button', hidden: true, onclick: () => navigate('/s/' + parent) }, svg(ICON.back), 'Chat');
+  let parent = '', upTo = '/';
+  const toChat = el('button.btn.sm.to-chat', { type: 'button', hidden: true, onclick: () => goBack('/s/' + parent) }, svg(ICON.back), 'Chat');
   const page = el('div.term-page' + (prefs.get('compose') === '1' ? '.composing' : ''), null,
     el('div.term-bar', null,
-      el('button.icon-btn.bare', { onclick: () => parent ? navigate('/s/' + parent) : history.length > 1 ? history.back() : navigate('/'), 'aria-label': 'Back' }, svg(ICON.back)),
+      el('button.icon-btn.bare', { onclick: () => goBack(parent && '/s/' + parent, upTo), 'aria-label': 'Back' }, svg(ICON.back)),
       el('div.term-title', null, title, sub),
       status,
       toChat,
@@ -1132,6 +1144,7 @@ async function renderTerminal(seq, id, found) {
     const s = d.session;
     crumb(d.project, sessionName(s));
     harness = s.harness;
+    upTo = projectPath(d.project.name);
     title.textContent = sessionName(s);
     sub.textContent = `${s.harness} · ${d.project.name}`;
     if (s.parent) {
