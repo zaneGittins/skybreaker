@@ -683,6 +683,10 @@ pre.dc-detail { padding: 10px 12px; font: 500 12.5px/1.5 var(--mono); white-spac
 .branch svg { width: 14px; height: 14px; }
 .review-sec { display: grid; gap: 10px; }
 .review-sec h3 { margin: 0; font-size: 15px; font-family: var(--font); font-weight: 800; color: var(--text-2); }
+.review-shots { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.review-shot { flex: none; display: grid; gap: 4px; max-width: 70%; color: var(--text-2); font-size: 12px; text-decoration: none; }
+.review-shot img { height: 150px; max-width: 100%; border-radius: 8px; border: 1px solid var(--border); object-fit: cover; object-position: top; display: block; }
+.review-shot span { width: 0; min-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .commits { border-radius: 14px; border: 1px solid var(--border); background: var(--surface); }
 .commit { display: flex; align-items: baseline; gap: 10px; padding: 9px 12px; font-size: 14px; border-bottom: 1px solid var(--border); }
 .commit:last-child { border-bottom: 0; }

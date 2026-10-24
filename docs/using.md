@@ -4,7 +4,7 @@
 
 **Branches.** Each chat works in its own copy of the repo, on branch `skybreaker/<session>`, so agents working side by side never touch each other's files. Untick **On its own branch** in the picker to work in the project's shared `/workspace` instead. A fresh copy has no ignored files such as `node_modules` or `.env`, so the agent installs what it needs.
 
-**Shipping.** **Changes** shows a chat's diff against its base branch. **Ship it** has the agent name the branch, push it and open a pull request.
+**Shipping.** **Changes** shows a chat's diff against its base branch, after any screenshots the agent showed of its work. **Ship it** has the agent name the branch, push it and open a pull request.
 
 **Ending.** Click a finished chat's check, swipe it left on a phone, or pick **End chat** in its menu. A chat whose pull request was merged ends by itself once you've read it. An ended chat's branch is kept, and sending it a message picks up where it stopped.
 

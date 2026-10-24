@@ -68,7 +68,9 @@ func Tools(b Backend) func(mcp.Caller) []mcp.Tool {
 				Name: "show_image",
 				Description: "Show an image file (PNG, JPEG, GIF or WebP) from your workspace to the user in the Skybreaker chat, " +
 					"such as a screenshot or a chart you made. Relative paths are under /workspace; files under /tmp work too. " +
-					"You don't get the image back.",
+					"You don't get the image back. When you finish a change the user can see, show them it working: screenshot it " +
+					"(playwright screenshot --viewport-size=390,844 http://localhost:<port> /tmp/shot.png; add --full-page for a long page) " +
+					"and show that before you say you're done.",
 				Input: json.RawMessage(`{"type":"object","properties":{` +
 					`"path":{"type":"string","description":"The image, relative to /workspace or absolute"},` +
 					`"caption":{"type":"string","description":"A short caption for the user"}},` +
