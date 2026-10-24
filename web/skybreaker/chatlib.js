@@ -163,21 +163,26 @@ const COMMANDS = [
   { cmd: 'fork', usage: '/fork', desc: 'Copy this conversation into a new chat' },
   { cmd: 'compact', usage: '/compact', desc: 'Summarise the conversation to free up context' },
   { cmd: 'prompt', usage: '/prompt <name>', desc: 'Send one of the prompts saved in Settings' },
+  { cmd: 'model', usage: '/model <name>', desc: 'Switch the model' },
   { cmd: 'effort', usage: '/effort <level>', desc: 'How hard the model thinks' },
+  { cmd: 'stop', usage: '/stop', desc: 'Stop the agent' },
+  { cmd: 'exit', usage: '/exit', desc: 'Stop the agent' },
 ];
 
 // parseCommand reads Skybreaker's own chat commands. Anything else starting
 // with a slash (the harness's own commands) is left for the agent.
 function parseCommand(text) {
-  const m = /^\/(rename|color|goal|clear|fork|compact|prompt|effort)(?:\s+([\s\S]*))?$/.exec(String(text ?? '').trim());
+  const m = /^\/(rename|color|goal|clear|fork|compact|prompt|model|effort|stop|exit)(?:\s+([\s\S]*))?$/.exec(String(text ?? '').trim());
   return m ? { cmd: m[1], arg: (m[2] || '').trim() } : null;
 }
 
 // commandHints is what to suggest while you type a command, with the
-// prompts saved in Settings for /prompt and the model's effort levels,
-// and the one it runs at, for /effort.
-function commandHints(text, prompts = [], levels = { list: [], on: '' }) {
+// prompts saved in Settings for /prompt, the model's effort levels for
+// /effort and the models for /model, each with the one the chat runs.
+function commandHints(text, prompts = [], levels = { list: [], on: '' }, models = { list: [], on: '' }) {
   const s = String(text ?? '');
+  const model = /^\/model\s+(\S*)$/.exec(s);
+  if (model) return models.list.filter(m => m.id.startsWith(model[1])).map(m => ({ cmd: 'model', model: m.id, desc: modelLabel(m), on: m.id === models.on }));
   const effort = /^\/effort\s+(\S*)$/.exec(s);
   if (effort) return levels.list.filter(l => l.startsWith(effort[1])).map(l => ({ cmd: 'effort', effort: l, on: l === levels.on }));
   const color = /^\/color\s+(\S*)$/.exec(s);
@@ -188,7 +193,7 @@ function commandHints(text, prompts = [], levels = { list: [], on: '' }) {
       .map(p => ({ cmd: 'prompt', prompt: p.name, desc: clipLabel(firstLine(p.text)) }));
   }
   const m = /^\/([a-z]*)$/.exec(s);
-  return m ? COMMANDS.filter(c => c.cmd.startsWith(m[1]) && (c.cmd !== 'effort' || levels.list.length)) : [];
+  return m ? COMMANDS.filter(c => c.cmd.startsWith(m[1]) && (c.cmd !== 'effort' || levels.list.length) && (c.cmd !== 'model' || models.list.length)) : [];
 }
 
 // promptText is what /prompt <name> [more] sends: the saved prompt, with

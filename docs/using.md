@@ -19,6 +19,8 @@
 | `/fork` | Copies the chat into a new one, on its own branch |
 | `/clear` | Ends the chat and starts a fresh one on the same branch |
 | `/prompt <name>` | Sends a prompt saved in Settings |
+| `/model <name>` | Switches the chat's model |
+| `/stop`, `/exit` | Stops the agent |
 
 Anything else goes to the agent as usual.
 
