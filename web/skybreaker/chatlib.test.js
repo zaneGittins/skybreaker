@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -592,4 +592,16 @@ test('composerAction: one button that stops, attaches or sends', () => {
   // While the agent waits on an answer, files can't go: the button sends words.
   assert.equal(a({ ask: true }), 'send');
   assert.equal(a({ ask: true, working: true }), 'send');
+});
+
+test('backTo: steps back only when that lands somewhere sensible', () => {
+  // Chat, then its terminal: Back returns to the chat already in history.
+  assert.equal(backTo('/s/c1', '/s/c1', '/p/web'), null);
+  // A terminal opened directly: the chat replaces it, so no loop builds up.
+  assert.equal(backTo('/', '/s/c1', '/p/web'), '/s/c1');
+  assert.equal(backTo('', '/s/c1', '/p/web'), '/s/c1');
+  // A chat reached in the app goes back the way it came.
+  assert.equal(backTo('/p/web', '', '/p/web'), null);
+  // A chat opened from a link goes up to its project.
+  assert.equal(backTo('', '', '/p/web'), '/p/web');
 });

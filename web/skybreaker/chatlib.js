@@ -693,6 +693,14 @@ function composerAction({ working, text, files, ask }) {
   return working ? 'stop' : 'attach';
 }
 
+// backTo says where a page's Back goes: null to step back through history,
+// else a path to replace this page with. from is the in-app page before this
+// one, want a page Back must reach, fallback where to go with no page before.
+function backTo(from, want, fallback) {
+  if (want) return from === want ? null : want;
+  return from ? null : fallback;
+}
+
 // thumbSize scales w×h down for a thumbnail that fills a square tile at
 // twice its 120px: 240 on the shorter side, at most 960 on the longer.
 function thumbSize(w, h) {
@@ -769,4 +777,4 @@ function agentActivity(it) {
   return it.children?.length ? 'Thinking' : 'Starting';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo };
