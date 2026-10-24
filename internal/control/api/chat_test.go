@@ -515,7 +515,7 @@ func TestChatShownIsInert(t *testing.T) {
 
 func TestEditSessionAPI(t *testing.T) {
 	f := newFixture(t, you)
-	code, body := f.do(t, "PATCH", "/api/sessions/s1", `{"title":"Login flow","color":"blue"}`, nil)
+	code, body := f.do(t, "PATCH", "/api/sessions/s1", `{"title":"Login flow","color":"stormlight"}`, nil)
 	if code != 200 || !strings.Contains(body, `"title":"Login flow"`) {
 		t.Fatalf("edit: %d %s", code, body)
 	}

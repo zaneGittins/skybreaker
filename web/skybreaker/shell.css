@@ -425,8 +425,8 @@ details.earlier .row-list { margin-top: 4px; }
 .np-warn a { color: var(--sun); }
 
 /* ---- chat colours, goal and commands ---- */
-.sc-sun { --sc: var(--sun); } .sc-planet { --sc: var(--planet); } .sc-red { --sc: #E8655A; } .sc-green { --sc: #3FB37A; }
-.sc-blue { --sc: #4C9BE8; } .sc-purple { --sc: #9A7BEA; } .sc-pink { --sc: #DB6E9C; } .sc-teal { --sc: #2FA89A; }
+.sc-sun { --sc: var(--sun); } .sc-titan { --sc: var(--planet); } .sc-mars { --sc: #E8655A; } .sc-aurora { --sc: #3FB37A; }
+.sc-stormlight { --sc: #4C9BE8; } .sc-voidlight { --sc: #9A7BEA; } .sc-venus { --sc: #DB6E9C; } .sc-comet { --sc: #2FA89A; }
 .chat-page[class*="sc-"] .chat-bar { box-shadow: inset 0 -2px 0 var(--sc); }
 .chat-page[class*="sc-"] .chat-title .title::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%; background: var(--sc); vertical-align: 1px; }
 /* 2px, with 1px less padding, so the box keeps its size. */

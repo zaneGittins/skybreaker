@@ -265,7 +265,7 @@ test('previewURL: only a bare http(s) origin becomes a link', () => {
 
 test('parseCommand: only Skybreaker\'s own commands, everything else goes to the agent', () => {
   assert.deepEqual(parseCommand('/rename Login flow'), { cmd: 'rename', arg: 'Login flow' });
-  assert.deepEqual(parseCommand('  /color blue  '), { cmd: 'color', arg: 'blue' });
+  assert.deepEqual(parseCommand('  /color stormlight  '), { cmd: 'color', arg: 'stormlight' });
   assert.deepEqual(parseCommand('/color'), { cmd: 'color', arg: '' });
   assert.deepEqual(parseCommand('/goal Ship the fix\nwith tests'), { cmd: 'goal', arg: 'Ship the fix\nwith tests' });
   assert.deepEqual(parseCommand('/goal'), { cmd: 'goal', arg: '' });
@@ -285,7 +285,7 @@ test('commandHints: what to suggest as you type', () => {
   assert.deepEqual(commandHints('/co').map(h => h.cmd), ['color', 'compact']);
   assert.deepEqual(commandHints('/f').map(h => h.cmd), ['fork']);
   assert.deepEqual(commandHints('/color ').map(h => h.color), CHAT_COLORS);
-  assert.deepEqual(commandHints('/color b').map(h => h.color), ['blue']);
+  assert.deepEqual(commandHints('/color s').map(h => h.color), ['sun', 'stormlight']);
   assert.deepEqual(commandHints('/rename x'), []);
   assert.deepEqual(commandHints('/model'), []);
   assert.deepEqual(commandHints('hello'), []);

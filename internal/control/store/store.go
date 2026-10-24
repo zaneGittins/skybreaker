@@ -158,7 +158,18 @@ func Open(path string) (*Store, error) {
 	if s.st.Tokens == nil {
 		s.st.Tokens = map[string]TokenRef{}
 	}
+	for i, x := range s.st.Sessions {
+		if c, ok := oldColors[x.Color]; ok {
+			s.st.Sessions[i].Color = c
+		}
+	}
 	return s, nil
+}
+
+// oldColors maps the chat colours' earlier names to their current ones.
+var oldColors = map[string]string{
+	"planet": "titan", "red": "mars", "green": "aurora", "blue": "stormlight",
+	"purple": "voidlight", "pink": "venus", "teal": "comet",
 }
 
 // save writes the snapshot to a temp file and renames it over the old one,
