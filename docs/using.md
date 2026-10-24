@@ -4,7 +4,7 @@
 
 **Branches.** Each chat works in its own copy of the repo, on branch `skybreaker/<session>`, so agents working side by side never touch each other's files. Untick **On its own branch** in the picker to work in the project's shared `/workspace` instead. A fresh copy has no ignored files such as `node_modules` or `.env`, so the agent installs what it needs.
 
-**Shipping.** **Changes** shows a chat's diff against its base branch. **Ship it** has the agent name the branch, push it and open a pull request.
+**Shipping.** **Changes** shows a chat's diff against its base branch, after any screenshots the agent showed of its work. **Ship it** has the agent name the branch, push it and open a pull request.
 
 **After shipping.** Skybreaker checks the pull request every two minutes. When its checks finish failing, or someone with write access to the repo comments, the idle chat gets a message about it and the agent carries on. After 3 of these without a reply from you, it stops and notifies you.
 

@@ -42,7 +42,7 @@ const MODE_INFO = {
   auto: { label: 'Full auto', short: 'Auto', desc: 'Never asks. The sandbox and broker still apply.' },
 };
 
-const SHIP_MESSAGE = 'Ship it: commit the work with a clear message on a feature/, fix/, docs/ or chore/ branch (never main; rename the branch you\'re on if it isn\'t one), push it, and open a pull request. Reply with the PR link.';
+const SHIP_MESSAGE = 'Ship it: commit the work with a clear message on a feature/, fix/, docs/ or chore/ branch (never main; rename the branch you\'re on if it isn\'t one), push it, and open a pull request. If the change is something the user can see, show a screenshot of it with show_image first. Reply with the PR link.';
 
 // ownBranch is whether new sessions get a branch of their own, in their own
 // copy of the repository: yes, unless you've turned it off in the picker.
@@ -355,7 +355,7 @@ async function renderChat(seq, d) {
   window.visualViewport?.addEventListener('resize', onViewport);
   window.visualViewport?.addEventListener('scroll', onViewport);
 
-  const v = { closed: false, es: null, timer: 0 };
+  const v = { closed: false, es: null, timer: 0, id, shots: () => shownImages(chat) };
   // startNode greets a chat with nothing in it yet; the first item replaces it.
   let startNode = null;
   state.chat = v;
@@ -1301,6 +1301,19 @@ function closeMenu() {
 
 // --- review ---------------------------------------------------------------------
 
+// shotsStrip is the screenshots chat chatId showed, as proof beside its diff.
+function shotsStrip(chatId) {
+  const shots = chatId && state.chat?.id === chatId ? state.chat.shots() : [];
+  if (!shots.length) return null;
+  return el('section.review-sec', null, el('h3', null, 'Shown by the agent'),
+    el('div.review-shots', null, shots.map(s => {
+      const url = `/api/sessions/${encodeURIComponent(chatId)}/shown/${encodeURIComponent(s.file)}`;
+      return el('a.review-shot', { href: url, target: '_blank', rel: 'noopener noreferrer', title: reveal(s.path) },
+        el('img', { src: url, alt: s.title || s.path, loading: 'lazy' }),
+        s.title ? el('span', null, reveal(s.title)) : null);
+    })));
+}
+
 // openReview shows what the project's workspace has changed or, from a
 // chat, what the chat has (on its own branch, if it has one), and a button
 // that asks the agent to ship it.
@@ -1321,6 +1334,7 @@ async function openReview(project, chatId) {
       r.base ? el('span.muted', null, 'against ' + r.base) : null,
       el('span.grow'),
       r.files.length ? el('span.tdiff', null, el('span.plus', null, '+' + added), el('span.minus', null, '−' + removed)) : null),
+    shotsStrip(chatId),
     r.clean ? el('div.empty-note', null, el('b', null, 'Nothing changed yet'), el('p', null, 'The workspace matches ' + (r.base || 'its last commit') + '.')) : null,
     r.commits.length ? el('section.review-sec', null, el('h3', null, `${r.commits.length} commit${r.commits.length === 1 ? '' : 's'}`),
       el('div.commits', null, r.commits.map(c => el('div.commit', null, el('span.mono.muted', null, c.sha), el('span', null, reveal(c.subject)), el('span.muted', null, ago(c.when)))))) : null,

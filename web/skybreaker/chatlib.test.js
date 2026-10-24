@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -618,4 +618,21 @@ test('backTo: steps back only when that lands somewhere sensible', () => {
   assert.equal(backTo('/p/web', '', '/p/web'), null);
   // A chat opened from a link goes up to its project.
   assert.equal(backTo('', '', '/p/web'), '/p/web');
+});
+
+test('shownImages: the images a chat showed, newest first, one per path', () => {
+  const c = newChat();
+  const show = (seq, id, kind, path, title) => foldChat(c, { seq, kind: 'show', id, show: { kind, path, title } });
+  show(1, 'a1.png', 'image', '/tmp/shot.png', 'before');
+  show(2, 'f.txt', 'text', 'main.go');
+  show(3, 'b.png', 'image', 'docs/desk.png', 'desktop');
+  show(4, 'a2.png', 'image', '/tmp/shot.png', 'after');
+  assert.deepEqual(shownImages(c), [
+    { file: 'a2.png', path: '/tmp/shot.png', title: 'after' },
+    { file: 'b.png', path: 'docs/desk.png', title: 'desktop' },
+  ]);
+  for (let i = 0; i < 10; i++) show(10 + i, `p${i}.png`, 'image', `/tmp/p${i}.png`);
+  assert.equal(shownImages(c).length, 6);
+  assert.equal(shownImages(c)[0].file, 'p9.png');
+  assert.deepEqual(shownImages(newChat()), []);
 });

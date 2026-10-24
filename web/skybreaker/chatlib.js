@@ -373,6 +373,19 @@ function newChat() {
   return { items: [], byId: new Map(), seq: 0, working: false, turnStart: null, asks: new Map(), info: {}, login: null, lastUser: '' };
 }
 
+// shownImages are the images a chat showed, newest first: one per path,
+// since an agent reshooting a page means the old one is out of date.
+function shownImages(c, max = 6) {
+  const out = [], paths = new Set();
+  for (let i = c.items.length - 1; i >= 0 && out.length < max; i--) {
+    const it = c.items[i];
+    if (it.type !== 'show' || it.show.kind !== 'image' || paths.has(it.show.path)) continue;
+    paths.add(it.show.path);
+    out.push({ file: it.file, path: it.show.path, title: it.show.title });
+  }
+  return out;
+}
+
 // foldChat applies one event and says what to draw: an added item, or a
 // changed one (redrawn in place). It returns null for an event already
 // seen, which a reconnect replays.
@@ -782,4 +795,4 @@ function agentActivity(it) {
   return it.children?.length ? 'Thinking' : 'Starting';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages };
