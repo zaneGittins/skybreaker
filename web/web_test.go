@@ -14,7 +14,7 @@ func TestJS(t *testing.T) {
 	if err != nil {
 		t.Skip("node not installed")
 	}
-	out, err := exec.Command(node, "--test", "shared/lib.test.js", "skybreaker/chatlib.test.js").CombinedOutput()
+	out, err := exec.Command(node, "--test", "shared/lib.test.js", "skybreaker/chatlib.test.js", "skybreaker/avatarlib.test.js").CombinedOutput()
 	if err != nil {
 		t.Fatalf("node --test failed:\n%s", out)
 	}

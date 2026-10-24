@@ -306,7 +306,11 @@ async function renderChat(seq, d) {
   // The agents chip shows while subagents run, which can outlast the turn;
   // it takes you to the newest.
   const agentsBtn = el('button.wagents', { type: 'button', hidden: true, onclick: () => showAgent() });
-  const working = el('div.chat-working', { hidden: true }, sunMark(),
+  // With an assistant, it's the assistant that works with you: its mark,
+  // its colour.
+  const asst = project.kind === 'assistant' ? asstLookOf(project) : null;
+  const asstMark = asst ? avatar(asst, { cls: 'a-chat-mark' }) : null;
+  const working = el('div.chat-working', { hidden: true }, asst ? avatar(asst, { state: 'thinking', cls: 'a-working-mark' }) : sunMark(),
     el('span.wtext', { role: 'status' }, 'Working'), el('span.wtime'), agentsBtn);
   const jump = el('button.jump', { type: 'button', hidden: true, onclick: () => toBottom(true) }, svg(ICON.down), 'Latest');
   const scroller = el('div.chat-scroll', null, el('div.chat-col', null, log, working));
@@ -333,15 +337,17 @@ async function renderChat(seq, d) {
   const ringPct = el('span.ctx-pct');
   const ringBtn = el('button.icon-btn.bare.ctx-btn', { onclick: e => sessionMenu(e.currentTarget), 'aria-label': 'Context and session' }, ring.node, ringPct);
 
-  const back = () => goBack('', projectPath(project.name));
-  const page = el('div.chat-page', null,
+  const back = () => goBack('', asst ? asstPath(project.name) : projectPath(project.name));
+  const page = el('div.chat-page' + (asst ? '.a-chat' : ''), null,
     el('div.chat-bar', null,
       el('button.icon-btn.bare', { onclick: back, 'aria-label': 'Back' }, svg(ICON.back)),
       mark, el('div.chat-title', null, title, sub),
-      el('button.icon-btn.bare', { onclick: () => openReview(session.project, id), 'aria-label': 'Review changes', title: 'Review changes' }, svg(ICON.branch)),
+      // An assistant has no repository to review.
+      project.kind === 'assistant' ? null : el('button.icon-btn.bare', { onclick: () => openReview(session.project, id), 'aria-label': 'Review changes', title: 'Review changes' }, svg(ICON.branch)),
       el('button.icon-btn.bare', { onclick: () => openTerminal(), 'aria-label': 'Open in terminal', title: 'Open in terminal' }, svg(ICON.term)),
       ringBtn),
     goalBar, scroller, jump, footer);
+  if (asst) asstAccent(page, asst.color);
   $('#app').replaceChildren(page);
   const viewport = trackViewport();
   viewport();
@@ -369,7 +375,8 @@ async function renderChat(seq, d) {
 
   // --- header and state ---
   const head = () => {
-    crumb(project, chatName(session));
+    if (project.kind === 'assistant') { asstCrumb(project); $('#crumb').append(el('span.sep', null, '/'), el('span.crumb-pill', null, el('span', null, chatName(session)))) }
+    else crumb(project, chatName(session));
     title.textContent = chatName(session);
     for (const c of CHAT_COLORS) page.classList.toggle('sc-' + c, session.color === c);
     goalBar.hidden = !session.goal;
@@ -377,7 +384,7 @@ async function renderChat(seq, d) {
       el('button.icon-btn.bare.sm', { type: 'button', 'aria-label': 'Unpin the goal', title: 'Unpin the goal', onclick: () => runCommand({ cmd: 'goal', arg: '' }) }, svg(ICON.x)));
     // Who, on what, where: agent, model, project, branch. The same on a
     // phone and a desktop; the model opens the model menu.
-    mark.replaceChildren(agentMark(session.harness, '.sm'));
+    mark.replaceChildren(asstMark || agentMark(session.harness, '.sm'));
     const model = modelLine(chatModel(), effortNow().on);
     const dot = () => el('span.sep', null, '·');
     const models = session.status === 'running' && chat.info.models?.length;
@@ -385,8 +392,10 @@ async function renderChat(seq, d) {
     append(sub, [
       el('span.sub-agent', null, harnessLabel(session.harness)),
       model ? [dot(), models ? el('button.sub-model', { type: 'button', title: 'Change the model or its effort', onclick: e => modelMenu(e.currentTarget) }, model) : el('span.sub-model', null, model)] : null,
-      dot(), el('span.proj.tint-' + (project.tint ?? 0), null, el('span.pdot'), project.name),
-      dot(), session.worktree
+      dot(), project.kind === 'assistant'
+        ? el('a.proj', { href: asstPath(project.name), 'data-link': true }, avatar(asst, { mini: true }), asst.name)
+        : el('span.proj.tint-' + (project.tint ?? 0), null, el('span.pdot'), project.name),
+      project.kind === 'assistant' ? null : dot(), project.kind === 'assistant' ? null : session.worktree
         ? el('span.sub-branch', { title: session.worktree_gone ? 'Its copy of the repository was tidied away; the branch stays' : 'Its own branch, in its own copy of the repository' }, svg(ICON.branch), el('span.bname', null, session.branch || 'its own branch'))
         : el('span.sub-branch', { title: 'Works in the project\'s shared workspace' }, svg(ICON.branch), el('span.bname', null, 'workspace'))]);
     const m = MODE_INFO[session.perm_mode] || MODE_INFO.ask;
@@ -529,7 +538,7 @@ async function renderChat(seq, d) {
   const syncComposer = () => {
     const ask = [...chat.asks.values()][0];
     composer.hidden = (ask?.ask.kind === 'question' && !oneQuestion(ask));
-    input.placeholder = oneQuestion(ask) ? 'Or answer in your own words…' : ask ? 'Or tell it what to do instead…' : chat.working ? 'Add to what it\'s doing…' : `Message ${harnessLabel(session.harness)}`;
+    input.placeholder = oneQuestion(ask) ? 'Or answer in your own words…' : ask ? 'Or tell it what to do instead…' : chat.working ? 'Add to what it\'s doing…' : `Message ${asst ? asst.name : harnessLabel(session.harness)}`;
     const action = composerAction({ working: chat.working, text: input.value.trim(), files: pending.length, ask: !!ask });
     sendBtn.classList.toggle('stop', action === 'stop');
     sendBtn.classList.toggle('attach', action === 'attach');
@@ -1179,6 +1188,7 @@ async function renderChat(seq, d) {
   const drawWorking = () => {
     const agents = runningAgents(chat);
     working.hidden = !(chat.working || agents.length) || chat.asks.size > 0;
+    avSet(asstMark, { state: chat.asks.size ? 'needs' : chat.working || agents.length ? 'thinking' : 'idle' });
     const lead = agents[agents.length - 1];
     agentsBtn.hidden = !lead;
     if (lead) {

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zaneGittins/skybreaker/internal/control/app"
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
@@ -217,7 +218,7 @@ func (s *Scheduler) execute(ctx, parent context.Context, job *config.Job, run st
 	finish := func(status, errMsg string, exit *int, res Result) {
 		s.store.UpdateRun(run.ID, func(r *store.Run) {
 			r.Status, r.Error, r.ExitCode, r.Finished = status, errMsg, exit, time.Now().UTC()
-			r.CostUSD, r.SessionID = res.CostUSD, res.SessionID
+			r.CostUSD, r.SessionID, r.Summary = res.CostUSD, res.SessionID, cut(res.Summary, maxSummary)
 		})
 		if r, ok := s.store.Run(run.ID); ok {
 			s.onUpdate(r)
@@ -256,17 +257,21 @@ func (s *Scheduler) execute(ctx, parent context.Context, job *config.Job, run st
 	s.prune(ctx, job.Project)
 	dir := runsRoot + "/" + run.ID
 	work := dir + "/work"
-	branch := s.cfg.Projects[job.Project].Branch
-
-	s.backend.Exec(ctx, job.Project, app.GitArgs("/workspace", "fetch", "--quiet", "origin")...)
-	if _, err := s.backend.Exec(ctx, job.Project, app.GitArgs("/workspace", "worktree", "add", "--detach", work, "origin/"+branch)...); err != nil {
-		if _, err := s.backend.Exec(ctx, job.Project, app.GitArgs("/workspace", "worktree", "add", "--detach", work, "HEAD")...); err != nil {
-			fail("git worktree: %v", err)
-			return
+	if s.cfg.Assistant(job.Project) {
+		// No repo: an assistant's routines work in its own files.
+		work = "/workspace"
+	} else {
+		branch := s.cfg.Projects[job.Project].Branch
+		s.backend.Exec(ctx, job.Project, app.GitArgs("/workspace", "fetch", "--quiet", "origin")...)
+		if _, err := s.backend.Exec(ctx, job.Project, app.GitArgs("/workspace", "worktree", "add", "--detach", work, "origin/"+branch)...); err != nil {
+			if _, err := s.backend.Exec(ctx, job.Project, app.GitArgs("/workspace", "worktree", "add", "--detach", work, "HEAD")...); err != nil {
+				fail("git worktree: %v", err)
+				return
+			}
 		}
+		sha, _ := s.backend.Exec(ctx, job.Project, app.GitArgs(work, "rev-parse", "HEAD")...)
+		s.store.UpdateRun(run.ID, func(r *store.Run) { r.GitSHA = strings.TrimSpace(string(sha)) })
 	}
-	sha, _ := s.backend.Exec(ctx, job.Project, app.GitArgs(work, "rev-parse", "HEAD")...)
-	s.store.UpdateRun(run.ID, func(r *store.Run) { r.GitSHA = strings.TrimSpace(string(sha)) })
 
 	m, ok := s.cfg.Harnesses.Get(job.Harness)
 	if !ok {
@@ -330,6 +335,21 @@ func (s *Scheduler) execute(ctx, parent context.Context, job *config.Job, run st
 	finish(status, errMsg, exitPtr, res)
 }
 
+// maxSummary bounds the final message a run keeps: the brief shows it, and
+// the whole of it is in the log.
+const maxSummary = 4 << 10
+
+// cut shortens s to at most n bytes, on a rune boundary.
+func cut(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
+}
+
 // keepWorktrees is how many of a project's newest runs keep their worktree
 // for inspection. Older runs keep only their log, until the store drops them.
 const keepWorktrees = 10
@@ -359,13 +379,13 @@ func (s *Scheduler) prune(ctx context.Context, project string) {
 		case !listed[id]:
 			root.RemoveAll(id)
 			removed = true
-		case !keep[id]:
+		case !keep[id] && !s.cfg.Assistant(project):
 			if _, err := root.Lstat(id + "/work"); err == nil {
 				s.backend.Exec(ctx, project, app.GitArgs("/workspace", "worktree", "remove", "--force", runsRoot+"/"+id+"/work")...)
 			}
 		}
 	}
-	if removed {
+	if removed && !s.cfg.Assistant(project) {
 		s.backend.Exec(ctx, project, app.GitArgs("/workspace", "worktree", "prune")...)
 	}
 }

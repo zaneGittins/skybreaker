@@ -67,6 +67,7 @@ type Config struct {
 	added      map[string]bool  // projects created in the app (projects.json)
 	fileAccess map[string]Grant // each project's access as the config file gives it
 	appBundles map[string]bool  // bundles made in the app (access.json)
+	appJobs    map[string]bool  // assistants' routines, made in the app (routines.json)
 	appContent *content.Rules   // content rules made in the app (access.json)
 }
 
@@ -113,7 +114,12 @@ type Sandbox struct {
 	CPUs       string `json:"cpus" yaml:"cpus"`
 }
 
+// KindAssistant is a project that is a personal assistant rather than a
+// repo to code in: it has no repo, and the app shows it apart.
+const KindAssistant = "assistant"
+
 type Project struct {
+	Kind      string            `json:"kind" yaml:"kind"` // "" (a repo) or assistant
 	Repo      string            `json:"repo" yaml:"repo"` // owner/name on GitHub
 	Branch    string            `json:"branch" yaml:"branch"`
 	Harnesses []string          `json:"harnesses" yaml:"harnesses"`
@@ -195,6 +201,13 @@ func loadWith(path string, staged *Paths) (*Config, error) {
 	if err := c.mergeAccess(a, paths.Access); err != nil {
 		return nil, err
 	}
+	var routines []*Job
+	if err := readJSON(paths.Routines, &routines); err != nil {
+		return nil, err
+	}
+	if err := c.mergeRoutines(routines, paths.Routines); err != nil {
+		return nil, err
+	}
 	c.AppSecretsFile = paths.Secrets
 	if err := c.init(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -255,6 +268,10 @@ func (c *Config) defaults() {
 	for _, j := range c.Jobs {
 		if j == nil {
 			continue
+		}
+		// A job that names no agent runs on its project's first.
+		if p := c.Projects[j.Project]; j.Harness == "" && p != nil && len(p.Harnesses) > 0 {
+			j.Harness = p.Harnesses[0]
 		}
 		if j.Harness == "" {
 			j.Harness = "claude"
@@ -326,8 +343,17 @@ func (c *Config) validate() error {
 			bad("project name %q: use lowercase letters, digits and dashes", name)
 			continue
 		}
-		if p.Repo != "" && !names.Repo(p.Repo) {
-			bad("project %s: repo must be owner/name", name)
+		switch p.Kind {
+		case "":
+			if p.Repo != "" && !names.Repo(p.Repo) {
+				bad("project %s: repo must be owner/name", name)
+			}
+		case KindAssistant:
+			if p.Repo != "" {
+				bad("project %s: an assistant has no repo", name)
+			}
+		default:
+			bad("project %s: unknown kind %q", name, p.Kind)
 		}
 		if p.Key != "" {
 			if !keyRe.MatchString(p.Key) {

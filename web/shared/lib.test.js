@@ -33,6 +33,13 @@ test('route', () => {
   assert.deepEqual(route('/nope'), { name: 'notfound' });
   assert.deepEqual(route('/p/%E0%A4%A'), { name: 'notfound' }); // malformed escape must not throw
   assert.deepEqual(route('/s/%'), { name: 'notfound' });
+  // An assistant's pages.
+  assert.deepEqual(route('/a/pip'), { name: 'assistant', project: 'pip', tab: 'today' });
+  for (const tab of ['memory', 'routines', 'look', 'browser']) assert.deepEqual(route('/a/pip/' + tab), { name: 'assistant', project: 'pip', tab });
+  assert.deepEqual(route('/a/pip/today'), { name: 'notfound' });
+  assert.deepEqual(route('/a/pip/board'), { name: 'notfound' });
+  assert.deepEqual(route('/a/Bad%20Name'), { name: 'notfound' });
+  assert.deepEqual(route('/a/%'), { name: 'notfound' });
 });
 
 test('toolSummary', () => {

@@ -18,6 +18,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/zaneGittins/skybreaker/internal/assistant"
 	"github.com/zaneGittins/skybreaker/internal/board"
 	"github.com/zaneGittins/skybreaker/internal/control/app"
 	"github.com/zaneGittins/skybreaker/internal/control/config"
@@ -262,6 +263,22 @@ func TestProjects(t *testing.T) {
 	}
 	if code, _ := f.do(t, "GET", "/api/projects/ghost", "", nil); code != 404 {
 		t.Errorf("unknown project: %d", code)
+	}
+}
+
+// The app shows assistants apart from repos, so every project says its kind.
+func TestProjectKind(t *testing.T) {
+	as, _ := assistant.Open("")
+	as.SetLook("pip", assistant.Look{Name: "Juno", Shape: "crescent", Color: "ink", Temper: "calm"})
+	as.Propose("pip", assistant.Proposal{Kind: assistant.ProposeMemory, Title: "Likes jazz"})
+	f := newFixture(t, you, func(d *Deps) {
+		d.Config.Projects["pip"] = &config.Project{Kind: config.KindAssistant, Harnesses: []string{"claude"}}
+		d.Assistants = as
+	})
+	_, body := f.do(t, "GET", "/api/projects", "", nil)
+	// An assistant brings its look, for the sidebar to draw.
+	if !strings.Contains(body, `"name":"pip","kind":"assistant"`) || !strings.Contains(body, `"look":{"name":"Juno","shape":"crescent"`) || !strings.Contains(body, `"asks":1`) || !strings.Contains(body, `"name":"orbit","kind":""`) {
+		t.Fatalf("projects = %s", body)
 	}
 }
 

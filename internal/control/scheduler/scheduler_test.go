@@ -114,7 +114,8 @@ func setup(t *testing.T, jobs string) (*Scheduler, *fakeBackend, *store.Store) {
 	cfgJSON := fmt.Sprintf(`{
 	  "data_dir": %q, "users": ["zane@example.com"],
 	  "sandbox": {"image": "img"},
-	  "projects": {"orbit": {"repo": "zaneGittins/orbit", "harnesses": ["claude", "pi", "codex"]}},
+	  "projects": {"orbit": {"repo": "zaneGittins/orbit", "harnesses": ["claude", "pi", "codex"]},
+	    "pip": {"kind": "assistant", "harnesses": ["claude"]}},
 	  "jobs": %s
 	}`, dir, jobs)
 	p := filepath.Join(dir, "skybreaker.json")
@@ -147,7 +148,7 @@ func TestTriggerRun(t *testing.T) {
 	if b.tmuxUp != 1 || len(b.find("kill-window")) != 1 {
 		t.Errorf("tmux ensured %d times, kill-window %v", b.tmuxUp, b.find("kill-window"))
 	}
-	if got.CostUSD != 0.37 || got.SessionID != "c-123" || got.GitSHA != "0123456789abcdef0123456789abcdef01234567" {
+	if got.CostUSD != 0.37 || got.SessionID != "c-123" || got.GitSHA != "0123456789abcdef0123456789abcdef01234567" || got.Summary != "Opened PR #12" {
 		t.Errorf("result not parsed: %+v", got)
 	}
 	if !strings.Contains(got.Prompt, "orbit") || !strings.Contains(got.Prompt, "review") {
@@ -182,6 +183,27 @@ func TestTriggerRun(t *testing.T) {
 	// The run waits for the sandbox's setup before touching the workspace.
 	if b.waited == 0 || b.execsBefore != 0 {
 		t.Errorf("waited %d times, after %d commands", b.waited, b.execsBefore)
+	}
+}
+
+// An assistant has no repo: its routines run in its workspace, with no git.
+func TestAssistantRunUsesTheWorkspace(t *testing.T) {
+	s, b, st := setup(t, `[{"name": "brief", "project": "pip", "schedule": "30 7 * * 1-5", "prompt": "Write my morning brief."}]`)
+	run, err := s.Trigger(context.Background(), "brief")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Wait()
+	if got, _ := st.Run(run.ID); got.Status != store.RunOK {
+		t.Fatalf("run = %+v", got)
+	}
+	for _, git := range []string{"git", "worktree", "fetch", "rev-parse"} {
+		if calls := b.find(git); len(calls) > 0 {
+			t.Errorf("ran %s: %v", git, calls)
+		}
+	}
+	if win := b.find("new-window"); len(win) != 1 || !slices.Contains(win[0], "/workspace") {
+		t.Fatalf("new-window = %v", win)
 	}
 }
 

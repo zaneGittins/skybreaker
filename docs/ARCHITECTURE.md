@@ -20,6 +20,7 @@ Skybreaker is one Go binary, `skybreaker`, running on one Linux host. It serves 
 | `internal/control/api` | The UI's HTTP API and server-sent events. |
 | `internal/control/sandbox`, `netrules` | Container specs under `runsc`, and the nftables ruleset. |
 | `internal/control/mcp`, `internal/board` | Skybreaker's MCP server and the per-project boards. |
+| `internal/assistant`, `internal/control/browser` | Assistants' look, personality, memory and proposals; their browser, driven over Chromium's DevTools pipe. |
 | `internal/control/scheduler`, `hooks`, `terminal` | Scheduled runs, Claude Code hooks, WebSocket terminals. |
 | `internal/control/preview` | Previews of a sandbox's web server, each on its project's own origin. |
 | `internal/control/sshkeys` | SSH keys allowed into sandboxes, for VS Code. |
@@ -62,6 +63,7 @@ The config file is the base. The app adds to it from `<data_dir>/settings` (`con
 | `access.json` | Bundles, and bundles and hosts granted to projects |
 | `app-secrets.json` | Secrets and the GitHub App, merged with the secrets file by `secrets.Merge` |
 | `instructions.md`, `prompts.json`, `chat-modes.json` | Agent instructions, saved prompts, default chat modes |
+| `routines.json` | Assistants' scheduled routines, merged into the jobs |
 
 Every change goes through `config.Edit`: stage the files, load the whole config, run `broker.Check`, then rename into place. It returns the config before and after, so the UI can show what each project gains and loses (`DiffReaches`). Policy feeds the broker, sandbox networks, boards and previews, so access changes restart Skybreaker (`controld.ErrRestart`) once no chat is working. Instructions, prompts and chat modes apply without a restart.
 
@@ -112,6 +114,24 @@ For VS Code, `skybreaker vscode setup` adds a key (`sshkeys.Store`) and a `Host 
 ## Boards and MCP
 
 `board.Store` keeps every project's items in `board.json`. Skybreaker's MCP server exposes them to agents on the sandbox's hook listener, scoped to their own project, and to you at `/mcp`.
+
+## Assistants
+
+An assistant is a project of kind `assistant`: no repo, so no clone, worktrees, review or `setup.sh`, and its scheduled runs work in `/workspace`.
+
+- **State.** `assistant.Store` keeps each one's look, personality versions, memories, proposals and updates in `assistants.json`, on the host only.
+- **Instructions.** `assistant.Instructions` renders who it is, its personality and an index of its newest memories. `app.RefreshInstructions` appends it to every agent's instructions in the project's `etc/` whenever it changes, so Claude, Codex and pi all read it.
+- **MCP.** Its own sandbox gets `recall`, `propose_memory`, `propose_routine` and `post_update`. A proposal takes effect only from its card in the app (`/api/assistants/{a}/proposals/{id}/...`).
+- **Routines** are jobs in `routines.json`, saved through `config.Edit` like projects. Runs keep their final message (`store.Run.Summary`) for the brief.
+
+**Its browser** (`app.Browser`) is a second container, `skybreaker-<a>-browser`, from the sandbox image, on the assistant's network at its own address (`sandbox.BrowserSpec`). Its profile, `<data>/assistants/<a>/browser`, is mounted there alone. Chromium runs through `docker exec -i` with `--remote-debugging-pipe` on the exec's stdin and stdout, so nothing listens. `browser.Browser`:
+
+- answers the broker's 407 from `Fetch.authRequired` with a broker token of its own, minting another when one stops working;
+- trusts the broker's CA by SPKI pin, beside Chromium's own roots;
+- checks every request against the deny list in `Fetch.requestPaused`;
+- reads pages and checks fields in an isolated world, never returning what a field holds.
+
+`browser.Tools` gives the agent open, read, click, type, scroll, back, screenshot, download, takeover and status. Screenshots and downloads reach `/workspace` through the sandbox (`app.SaveToWorkspace`, `CopyDownload`). `GET /api/assistants/{a}/browser/live` hands the browser to you over a WebSocket (`browser.Live`): JPEG screencast frames out, your input in, the agent's tools paused. It stops after half an hour unused, or with the sandbox.
 
 ## Development
 

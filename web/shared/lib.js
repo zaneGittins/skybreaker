@@ -56,6 +56,13 @@ function route(path) {
     if (section === 'access' && PROJECT.test(v)) return { name: 'settings', section, item: v };
     return { name: 'notfound' };
   }
+  // An assistant: Today, or another of its pages.
+  const a = /^\/a\/([^/]+)(?:\/(memory|routines|look|browser))?$/.exec(path);
+  if (a) {
+    let v;
+    try { v = decodeURIComponent(a[1]) } catch { return { name: 'notfound' } }
+    return PROJECT.test(v) ? { name: 'assistant', project: v, tab: a[2] || 'today' } : { name: 'notfound' };
+  }
   const t = /^\/p\/([^/]+)\/(board|runs)$/.exec(path);
   if (t) {
     let v;

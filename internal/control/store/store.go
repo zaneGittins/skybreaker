@@ -109,6 +109,7 @@ type Run struct {
 	Finished  time.Time `json:"finished,omitzero"`
 	ExitCode  *int      `json:"exit_code,omitempty"`
 	CostUSD   float64   `json:"cost_usd,omitempty"`
+	Summary   string    `json:"summary,omitempty"` // the harness's final message, cut short
 	Status    string    `json:"status"`
 	Error     string    `json:"error,omitempty"`
 }

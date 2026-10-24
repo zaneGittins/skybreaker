@@ -40,6 +40,7 @@ Skybreaker runs Claude Code, Codex and pi in a gVisor sandbox per project on a L
 - **Terminal and VS Code.** Attach to any session in the agent's own terminal UI, or open its sandbox in VS Code.
 - **Review and ship.** Each chat works on its own branch; read its diff, then have the agent open a pull request.
 - **A board per project.** Agents pick up and hand back work through MCP tools.
+- **Assistants.** A personal agent with no repo: memory you approve, scheduled routines, and a browser signed in to its own accounts whose logins it never sees.
 
 ## How it fits together
 
@@ -65,7 +66,7 @@ Skybreaker is pre-1.0: a release may change the config file, and its notes say w
 ## Docs
 
 - [Getting started](docs/getting-started.md): install and first chat
-- [Using Skybreaker](docs/using.md): chats, previews, boards, terminal, VS Code
+- [Using Skybreaker](docs/using.md): chats, previews, boards, assistants, terminal, VS Code
 - [Configuration](docs/configuration.md): access to APIs, local models, sandbox limits
 - [Upgrading](docs/upgrading.md) and [installing by hand](docs/manual-install.md)
 - [Architecture](docs/ARCHITECTURE.md), [security model](docs/security.md) and [development](docs/development.md)

@@ -34,6 +34,7 @@ type Paths struct {
 	Projects string // projects created in the app
 	Access   string // the app's bundles, and what it grants each project
 	Secrets  string // secrets added in the app (never shown again)
+	Routines string // assistants' scheduled routines
 }
 
 // AppPaths are where this configuration's app files are.
@@ -45,6 +46,7 @@ func pathsIn(dataDir string) Paths {
 		Projects: filepath.Join(dir, "projects.json"),
 		Access:   filepath.Join(dir, "access.json"),
 		Secrets:  filepath.Join(dir, "app-secrets.json"),
+		Routines: filepath.Join(dir, "routines.json"),
 	}
 }
 
@@ -75,6 +77,7 @@ type AppFiles struct {
 	Projects map[string]*Added
 	Access   Access
 	Secrets  secrets.AppFile
+	Routines []*Job
 }
 
 // ReadAppFiles reads the app's files as they are on disk.
@@ -88,7 +91,10 @@ func ReadAppFiles(p Paths) (AppFiles, error) {
 	if err := readJSON(p.Access, &f.Access); err != nil {
 		return f, err
 	}
-	f.Secrets, err = secrets.ReadAppFile(p.Secrets)
+	if f.Secrets, err = secrets.ReadAppFile(p.Secrets); err != nil {
+		return f, err
+	}
+	err = readJSON(p.Routines, &f.Routines)
 	return f, err
 }
 
@@ -246,9 +252,35 @@ func Edit(configPath string, change func(*AppFiles) error, check func(*Config) e
 	if err != nil {
 		return nil, nil, err
 	}
+	had := map[string]bool{}
+	for _, j := range f.Routines {
+		if j != nil {
+			had[j.Name] = true
+		}
+	}
 	if err := change(&f); err != nil {
 		return nil, nil, err
 	}
+	// A new routine must be for an assistant; an old one whose assistant
+	// is gone, or is no longer one, goes, so it never runs again.
+	assistant := func(name string) bool {
+		if a := f.Projects[name]; a != nil {
+			return a.Kind == KindAssistant
+		}
+		p := before.Projects[name]
+		return p != nil && p.Kind == KindAssistant && !before.Added(name)
+	}
+	kept := f.Routines[:0]
+	for _, j := range f.Routines {
+		switch {
+		case j == nil:
+		case assistant(j.Project):
+			kept = append(kept, j)
+		case !had[j.Name]:
+			return nil, nil, fmt.Errorf("routine %s: no assistant %q", j.Name, j.Project)
+		}
+	}
+	f.Routines = kept
 	// Grants keep to the project they were made for: each is stamped with
 	// its project's repo, and a grant for a project that's gone is dropped.
 	for name, g := range f.Access.Projects {
@@ -287,6 +319,7 @@ func Edit(configPath string, change func(*AppFiles) error, check func(*Config) e
 		{&staged.Projects, addedFile{Projects: f.Projects}, addedFile{}},
 		{&staged.Access, f.Access, Access{}},
 		{&staged.Secrets, f.Secrets, secrets.AppFile{}},
+		{&staged.Routines, f.Routines, []*Job(nil)},
 	} {
 		b, err := jsonIndent(x.v)
 		if err != nil {

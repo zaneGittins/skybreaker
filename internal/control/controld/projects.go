@@ -155,6 +155,9 @@ func (d *settings) AddProject(ctx context.Context, by, name string, a config.Add
 	if err := config.AddProject(d.configPath, name, a, d.check); err != nil {
 		return api.AddedProject{}, err
 	}
+	if a.Kind == config.KindAssistant {
+		return api.AddedProject{Name: name, Restart: d.saved(by, "created assistant "+name)}, nil
+	}
 	out := api.AddedProject{Name: name, Restart: d.saved(by, "created project "+name+" for "+a.Repo)}
 	gctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	installed, url, err := d.broker.GitHubAccess(gctx, a.Repo)

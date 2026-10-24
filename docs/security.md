@@ -48,6 +48,15 @@ Sandboxes can't reach the app, so the risks are a hijacked session or a listed u
 - **Previews** run on a separate origin per project, for listed users only, with a CSP limiting the page to its own server and cookies signed by Skybreaker.
 - **Boards.** An agent reads and writes only its own project's board, and can't mark items Done or take over claimed items.
 
+## Assistants
+
+An assistant reads email, web pages and files, all of it untrusted. It gets the same sandbox and broker as a coding agent, and more limits.
+
+- **It proposes; you decide.** It can't keep a memory, schedule a routine or change its personality. `propose_memory` and `propose_routine` only make a card. Any user can keep or forget memories; only admins save routines or change its personality, which is part of its instructions.
+- **Its state lives on the host.** Memory and personality are never in the sandbox. Every personality is kept. A memory notes the chat that suggested it, as its sandbox reported it.
+- **Its browser's logins stay out of reach.** Chromium runs in its own container with the profile mounted there only, driven over a pipe, so the sandbox has nothing to connect to. The agent gets high-level actions: no script, cookies or DevTools protocol. Traffic goes through the broker under the assistant's policy, in TLS pinned to the broker's CA.
+- **The agent never types secrets.** It can't type into password, code or card fields, screenshots blur them, and reads never include what a field holds. Account security pages are closed to it. For a login, it asks you to take over; what you type goes to the browser only.
+
 ## Protecting `main`
 
 - **A GitHub ruleset** blocks direct pushes, force pushes and deletion, with the App off its bypass list. This is the backstop.
@@ -62,6 +71,8 @@ Sandboxes can't reach the app, so the risks are a hijacked session or a listed u
 - **Harness logins live in the sandbox.** Subscription tokens are readable by the agent. Use broker-injected API keys (`llm-anthropic`) where that matters.
 - **`auto` rules are trusted.** Anything auto-approved, a hostile agent can do. Make destructive actions `ask` or `deny`.
 - **Previews can navigate away.** A page can still send data in a URL by navigating, or over WebRTC. Close previews you don't trust.
+- **A signed-in browser can act as its account.** The deny list and broker rules narrow what it does; they don't make an account safe to hand over. Give an assistant accounts of its own.
+- **The browser shares its assistant's network.** Its proxy login and any plain-HTTP page cross the network the sandbox is on; HTTPS stays pinned to the broker's CA. The login is the assistant's own, which its sandbox already holds.
 - **Content rules don't cover** tunnelled hosts, commits made through GitHub's API, or issues and comments.
 
 ## Response and testing

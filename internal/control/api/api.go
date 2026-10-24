@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zaneGittins/skybreaker/internal/assistant"
 	"github.com/zaneGittins/skybreaker/internal/board"
 	"github.com/zaneGittins/skybreaker/internal/control/app"
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
@@ -138,6 +139,8 @@ type Deps struct {
 	SSHKeys    *sshkeys.Store    // nil when SSH into sandboxes is off
 	Settings   Settings          // nil when settings can't be changed here
 	Usage      Usage             // nil when tokens aren't counted
+	Assistants *assistant.Store  // nil when there are none
+	Browsers   Browsers          // nil when assistants have no browser
 	Identifier tsauth.Identifier
 	Static     fs.FS
 	Version    string
@@ -170,6 +173,7 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("GET /api/projects", s.projects)
 	m.HandleFunc("POST /api/projects", s.createProject)
+	m.HandleFunc("PUT /api/projects/{p}/harnesses", s.setHarnesses)
 	m.HandleFunc("GET /api/capabilities", s.capabilities)
 	m.HandleFunc("GET /api/ssh-keys", s.sshKeys)
 	m.HandleFunc("POST /api/ssh-keys", s.addSSHKey)
@@ -210,6 +214,7 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("GET /api/approvals", s.approvals)
 	m.HandleFunc("POST /api/approvals/{id}", s.decide)
 	s.boardRoutes(m)
+	s.assistantRoutes(m)
 	s.settingsRoutes(m)
 	m.HandleFunc("GET /api/requests", s.requests)
 	m.HandleFunc("POST /api/requests/{id}/{verb}", s.decideRequest)
@@ -231,6 +236,8 @@ func fail(w http.ResponseWriter, err error) {
 		webutil.Error(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, approval.ErrNotPending):
 		webutil.Error(w, http.StatusConflict, "this request was already decided or has expired")
+	case errors.Is(err, app.ErrNoRepo):
+		webutil.Error(w, http.StatusConflict, err.Error())
 	case errors.Is(err, app.ErrBusy):
 		webutil.Error(w, http.StatusConflict, err.Error())
 	default:
@@ -271,25 +278,34 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 }
 
 type projectView struct {
-	Name      string   `json:"name"`
-	Repo      string   `json:"repo"`
-	Harnesses []string `json:"harnesses"`
-	Key       string   `json:"key,omitempty"` // the board's ref prefix
-	Subnet    string   `json:"subnet"`
-	Tint      int      `json:"tint"`
-	Running   bool     `json:"running"`
-	Live      int      `json:"live"` // running sessions
-	Pending   int      `json:"pending"`
-	Open      int      `json:"open"` // board items not done
-	Error     string   `json:"error,omitempty"`
+	Name string `json:"name"`
+	Kind string `json:"kind"` // "" (a repo) or assistant
+	// Look is an assistant's mark and name, for the sidebar to draw.
+	Look      *assistant.Look `json:"look,omitempty"`
+	Asks      int             `json:"asks,omitempty"` // what an assistant asks of you: suggestions, take-overs
+	Added     bool            `json:"added"`          // made in the app, so its agents can be changed there
+	Repo      string          `json:"repo"`
+	Harnesses []string        `json:"harnesses"`
+	Key       string          `json:"key,omitempty"` // the board's ref prefix
+	Subnet    string          `json:"subnet"`
+	Tint      int             `json:"tint"`
+	Running   bool            `json:"running"`
+	Live      int             `json:"live"` // running sessions
+	Pending   int             `json:"pending"`
+	Open      int             `json:"open"` // board items not done
+	Error     string          `json:"error,omitempty"`
 }
 
 // view summarises a project, with its sessions from s.sessions. The two
 // sandbox questions (its state, its tmux sessions) are asked at once.
 func (s *server) view(ctx context.Context, name string) (projectView, []store.Session) {
 	p := s.Config.Projects[name]
-	v := projectView{Name: name, Repo: p.Repo, Harnesses: p.Harnesses,
+	v := projectView{Name: name, Kind: p.Kind, Added: s.Config.Added(name), Repo: p.Repo, Harnesses: p.Harnesses,
 		Subnet: s.Config.Subnet(name).String(), Tint: s.tints[name], Key: s.boardKey(name), Open: s.openItems(name), Pending: len(s.Approvals.Pending(name)) + len(s.pendingRequests(name))}
+	if p.Kind == config.KindAssistant && s.Assistants != nil {
+		a := s.Assistants.Get(name)
+		v.Look, v.Asks = &a.Look, len(a.Proposals)
+	}
 	var sessions []store.Session
 	var wg sync.WaitGroup
 	wg.Go(func() { sessions = s.sessions(ctx, name) })
@@ -501,10 +517,11 @@ func (s *server) session(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, http.StatusNotFound, "no such session")
 		return
 	}
-	webutil.WriteJSON(w, http.StatusOK, map[string]any{
-		"session": sess,
-		"project": map[string]any{"name": sess.Project, "tint": s.tints[sess.Project]},
-	})
+	project := map[string]any{"name": sess.Project, "tint": s.tints[sess.Project]}
+	if s.Config.Assistant(sess.Project) && s.Assistants != nil {
+		project["kind"], project["look"] = config.KindAssistant, s.Assistants.Get(sess.Project).Look
+	}
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"session": sess, "project": project})
 }
 
 // editSession renames a session, colours it or sets its goal.

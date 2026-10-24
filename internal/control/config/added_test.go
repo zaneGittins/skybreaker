@@ -46,6 +46,18 @@ func TestAddProject(t *testing.T) {
 	}
 }
 
+func TestAddAssistant(t *testing.T) {
+	path := mainConfig(t)
+	if err := AddProject(path, "pip", Added{Kind: KindAssistant, Harnesses: []string{"claude"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	c := mustLoad(t, path)
+	p := c.Projects["pip"]
+	if p == nil || p.Repo != "" || !c.Assistant("pip") || c.Assistant("orbit") || !c.Subnet("pip").IsValid() {
+		t.Fatalf("pip %+v assistant=%v", p, c.Assistant("pip"))
+	}
+}
+
 func TestAddProjectRefusals(t *testing.T) {
 	path := mainConfig(t)
 	ok := Added{Repo: "zaneGittins/comet", Harnesses: []string{"claude"}, Capabilities: []string{"github"}}
@@ -68,6 +80,8 @@ func TestAddProjectRefusals(t *testing.T) {
 		"an unknown capability":     {"nova", Added{Repo: "a/b", Harnesses: []string{"claude"}, Capabilities: []string{"everything"}}, nil, "everything"},
 		"a board key in use":        {"nova", Added{Repo: "a/b", Harnesses: []string{"claude"}, Key: "ORB"}, nil, "ORB"},
 		"the broker's check":        {"nova", Added{Repo: "a/b", Harnesses: []string{"claude"}}, checkFails, "github_app"},
+		"an assistant with a repo":  {"nova", Added{Kind: KindAssistant, Repo: "a/b", Harnesses: []string{"claude"}}, nil, "repo"},
+		"an unknown kind":           {"nova", Added{Kind: "robot", Repo: "a/b", Harnesses: []string{"claude"}}, nil, "robot"},
 	} {
 		err := AddProject(path, c.name, c.added, c.check)
 		if err == nil || !strings.Contains(err.Error(), c.want) {
