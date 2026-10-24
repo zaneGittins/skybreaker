@@ -6,6 +6,8 @@
 
 **Shipping.** **Changes** shows a chat's diff against its base branch. **Ship it** has the agent name the branch, push it and open a pull request.
 
+**After shipping.** Skybreaker checks the pull request every two minutes. When its checks finish failing, or someone with write access to the repo comments, the idle chat gets a message about it and the agent carries on. After 3 of these without a reply from you, it stops and notifies you.
+
 **Ending.** Click a finished chat's check, swipe it left on a phone, or pick **End chat** in its menu. A chat whose pull request was merged ends by itself once you've read it. An ended chat's branch is kept, and sending it a message picks up where it stopped.
 
 **Commands.**

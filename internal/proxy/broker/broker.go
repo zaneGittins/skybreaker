@@ -203,6 +203,16 @@ func (b *Broker) GitHubAccess(ctx context.Context, repo string) (installed bool,
 	return installed, installURL, nil
 }
 
+// GitHubGet reads path within repo on GitHub as the GitHub App, for the
+// control plane; the token never leaves the broker.
+func (b *Broker) GitHubGet(ctx context.Context, repo, path string, out any) error {
+	app := b.secrets.GitHubApp()
+	if app == nil {
+		return ErrNoGitHubApp
+	}
+	return app.Get(ctx, repo, path, out)
+}
+
 // GitHubInstallURL is where to install the GitHub App on more repositories.
 func (b *Broker) GitHubInstallURL(ctx context.Context) (string, error) {
 	app := b.secrets.GitHubApp()

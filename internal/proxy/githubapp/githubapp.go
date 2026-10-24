@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -263,11 +264,34 @@ func (a *App) mint(ctx context.Context, installation int64, repo string) (string
 	return out.Token, out.ExpiresAt, nil
 }
 
+// Get reads path, such as "/pulls?state=open", within repo ("owner/name")
+// with an installation token for repo alone.
+func (a *App) Get(ctx context.Context, repo, path string, out any) error {
+	if !names.Repo(repo) {
+		return fmt.Errorf("githubapp: invalid repo %q", repo)
+	}
+	p, _, _ := strings.Cut(path, "?")
+	if !strings.HasPrefix(p, "/") || strings.Contains(p, "//") || strings.ContainsAny(p, "%\\#") ||
+		slices.Contains(strings.Split(p, "/"), "..") {
+		return fmt.Errorf("githubapp: invalid path %q", path)
+	}
+	tok, err := a.Token(ctx, repo)
+	if err != nil {
+		return err
+	}
+	return a.do(ctx, http.MethodGet, "/repos/"+repo+path, tok, nil, http.StatusOK, out)
+}
+
 func (a *App) call(ctx context.Context, method, path string, in any, want int, out any) error {
 	jwt, err := a.JWT()
 	if err != nil {
 		return err
 	}
+	return a.do(ctx, method, path, jwt, in, want, out)
+}
+
+// do makes one request to the API with bearer auth.
+func (a *App) do(ctx context.Context, method, path, auth string, in any, want int, out any) error {
 	var rd io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -286,7 +310,7 @@ func (a *App) call(ctx context.Context, method, path string, in any, want int, o
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("Authorization", "Bearer "+auth)
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

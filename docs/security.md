@@ -46,6 +46,7 @@ Sandboxes can't reach the app, so the risks are a hijacked session or a listed u
 - **Secrets keep their hosts.** A secret's hosts change only when its value is pasted again. Values are never shown.
 - **Changes are checked and audited.** Each is compiled against the whole config before saving, shown as what each project gains and loses, and logged by who made it.
 - **Previews** run on a separate origin per project, for listed users only, with a CSP limiting the page to its own server and cookies signed by Skybreaker.
+- **Pull requests.** Comments on a chat's pull request become prompts, so only those from the repo's owners, members and collaborators are passed on, never bots'. Skybreaker reads them as the GitHub App, from the host.
 - **Boards.** An agent reads and writes only its own project's board, and can't mark items Done or take over claimed items.
 
 ## Assistants

@@ -136,6 +136,16 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("API version %q", r.Header.Get("X-GitHub-Api-Version"))
 	}
 	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ghs_") {
+		// An installation token, for reading a repo.
+		if r.Method == "GET" && r.URL.Path == "/repos/zaneGittins/orbit/pulls" && r.URL.Query().Get("head") == "zaneGittins:fix/x" {
+			fmt.Fprintf(w, `[{"number": 7, "auth": %q}]`, auth)
+			return
+		}
+		t.Errorf("unexpected %s %s with a token", r.Method, r.URL)
+		http.NotFound(w, r)
+		return
+	}
 	if !strings.HasPrefix(auth, "Bearer ") {
 		t.Errorf("Authorization %q", auth)
 	} else if c := verifyJWT(t, strings.TrimPrefix(auth, "Bearer ")); c["iss"] != "777" {
@@ -357,5 +367,30 @@ func TestInstalledAndInstallURL(t *testing.T) {
 	}
 	if u, err := a.InstallURL(ctx); err != nil || u != "https://github.com/apps/skybreaker-test/installations/new" {
 		t.Fatalf("install url %q %v", u, err)
+	}
+}
+
+func TestGetReadsTheRepoWithItsToken(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	f := &fakeGitHub{t: t, expires: now.Add(time.Hour)}
+	a := newApp(t, f, &now)
+	var pulls []struct {
+		Number int    `json:"number"`
+		Auth   string `json:"auth"`
+	}
+	if err := a.Get(context.Background(), "zaneGittins/orbit", "/pulls?head=zaneGittins:fix/x", &pulls); err != nil {
+		t.Fatal(err)
+	}
+	if len(pulls) != 1 || pulls[0].Number != 7 || pulls[0].Auth != "Bearer ghs_token1" {
+		t.Errorf("pulls %+v", pulls)
+	}
+	// Only within the repo the token is for.
+	for _, path := range []string{"pulls", "/../../orgs/x", "/pulls/../../../user", "//evil.example/x"} {
+		if err := a.Get(context.Background(), "zaneGittins/orbit", path, &pulls); err == nil {
+			t.Errorf("read %q", path)
+		}
+	}
+	if err := a.Get(context.Background(), "../orbit", "/pulls", &pulls); err == nil {
+		t.Error("read with a bad repo")
 	}
 }
