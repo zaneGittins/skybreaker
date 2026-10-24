@@ -1,12 +1,10 @@
 # Example: DigitalOcean
 
-Give a project's agents the DigitalOcean API in three steps: a **secret** (your token), a **bundle** (where it goes and what's allowed), and a **grant** (which project gets the bundle). The same steps work for any token-based API.
-
-The token never enters the sandbox. The broker checks each request and adds the token on the way out.
+Give a project's agents the DigitalOcean API in three steps: a **secret** (your token), a **bundle** (where it goes and what's allowed) and a **grant** (which project gets it). The same steps work for any token-based API. The token never enters the sandbox; the broker adds it on the way out.
 
 ## 1. Make a token
 
-In DigitalOcean: **API → Tokens → Generate New Token → Custom Scopes**. Grant only what agents need. Scopes cap what any approval can do.
+In DigitalOcean: **API → Tokens → Generate New Token → Custom Scopes**. Grant only what agents need; scopes cap what any approval can do.
 
 ## 2. Add the secret
 

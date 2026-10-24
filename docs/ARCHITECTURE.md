@@ -46,61 +46,72 @@ The server uses the standard library except for two adapters: `tsauth/tsnetsrv` 
   </picture>
 </p>
 
-1. **Caller.** The connection must come from a sandbox network, carrying a live token minted for that project. Tokens are rechecked on every request inside MITM connections, and revoked tokens' connections are closed.
-2. **Destination.** The host must be in the project's `allow` list or capabilities. A **tunnel** splices bytes, **mitm** terminates TLS with the broker's CA, and a **route** is a reverse-proxy path on the broker.
-3. **Rules.** The first matching rule decides `auto`, `ask` or `deny`; no match is a denial. Requests with their own credentials, impersonation headers, ambiguous paths (`..`, `//`, encoded slashes) and protocol upgrades are refused first. GraphQL rules parse the operation (`internal/proxy/graphql`) and Kubernetes routes the verb and resource. Content rules read pushed commits from the pack as it streams (`gitproto.ReadPush`, gated in `server/content.go`) and pull request titles and bodies from REST or GraphQL. An `ask` is bound to a hash of the exact request, headers included, and held for approval.
-4. **Credentials.** The token is checked again (it may have been revoked while held), then the broker strips placeholders and adds the secret, only if the secret lists the upstream host. Revoking a token also cancels its requests still in flight.
-5. **Connect.** Resolved addresses are checked against loopback, link-local, metadata, private and tailnet ranges. Tailnet upstreams a route allows are dialled through Skybreaker's own Tailscale node.
+1. **Caller.** From a sandbox network, with a live token for that project. Tokens are rechecked on every request, and revoking one closes its connections.
+2. **Destination.** In the project's `allow` list or capabilities, as a **tunnel** (bytes spliced), **mitm** (TLS terminated with the broker's CA) or **route** (a reverse-proxy path).
+3. **Rules.** The first matching rule decides `auto`, `ask` or `deny`; no match is a denial. Own credentials, impersonation headers, ambiguous paths and protocol upgrades are refused first. GraphQL, Kubernetes and content rules (`gitproto.ReadPush`, `server/content.go`) parse further. An `ask` is held, bound to a hash of the exact request.
+4. **Credentials.** The token is checked again, then the secret is added only if it lists the upstream host.
+5. **Connect.** Resolved addresses are checked against loopback, link-local, metadata, private and tailnet ranges.
 
-## Projects
+## Settings and restarts
 
-The config file is the base; the app adds to it from three files in `<data_dir>/settings` (`config.Paths`; the service can't write `/etc`): `projects.json` (projects created in the app), `access.json` (bundles made in Settings, and bundles and hosts added to any project) and `app-secrets.json` (secrets added in Settings, and the GitHub App created there, merged with the secrets file by `secrets.Merge`). Every change goes through `config.Edit`: it stages the files, loads the whole configuration from them, runs the broker's check (`broker.Check`) and only then renames them into place, returning the configuration before and after so the API can show what each project gains and loses (`ProjectPolicy.Reaches` and `DiffReaches` in `proxy/config`). `api/settings.go` serves the Settings page and the GitHub manifest flow (`githubapp.Manifest`, `Convert`); `controld`'s `settings` saves, audits (`broker.LogConfig`) and asks for a restart. Projects and policy fan out into the broker's compiled policy and secrets, sandbox networks, boards and previews, so Skybreaker restarts itself to apply a change (`controld.ErrRestart`, re-executed by `main`), once no chat is working. The nftables ruleset covers the whole sandbox range, so a new project needs no new rules.
+The config file is the base. The app adds to it from `<data_dir>/settings` (`config.Paths`), since the service can't write `/etc`:
+
+| File | Holds |
+|---|---|
+| `projects.json` | Projects created in the app |
+| `access.json` | Bundles, and bundles and hosts granted to projects |
+| `app-secrets.json` | Secrets and the GitHub App, merged with the secrets file by `secrets.Merge` |
+| `instructions.md`, `prompts.json`, `chat-modes.json` | Agent instructions, saved prompts, default chat modes |
+
+Every change goes through `config.Edit`: stage the files, load the whole config, run `broker.Check`, then rename into place. It returns the config before and after, so the UI can show what each project gains and loses (`DiffReaches`). Policy feeds the broker, sandbox networks, boards and previews, so access changes restart Skybreaker (`controld.ErrRestart`) once no chat is working. Instructions, prompts and chat modes apply without a restart.
 
 ## Sandboxes
 
-Each project gets a long-lived `runsc` container, `skybreaker-<project>`, on its own bridge network. Its environment points `HTTPS_PROXY` at the broker on the bridge gateway, with no DNS and the broker's CA mounted. Starting a sandbox mints its token and revokes earlier ones.
+Each project gets a long-lived `runsc` container, `skybreaker-<project>`, on its own bridge network, with `HTTPS_PROXY` set to the broker, no DNS and the broker's CA mounted. Starting a sandbox mints its token and revokes earlier ones.
 
-The sandbox runs its own dockerd for builds and `docker compose`, storing images in the project's `docker/` directory on disk. Inner containers have no DNS either and reach the broker through the sandbox. A `runc` wrapper mounts the sandbox's CA bundle into every container and build step, so they trust the broker without image changes.
-
-A new container runs the repository's `.skybreaker/setup.sh` after the clone, in the same background run (`App.WaitWorkspace`), so chats and scheduled runs start once it's done. Only `/root`, `/workspace` and inner Docker storage persist, so the image puts what agents install with mise and uv (under `/root`) last on `PATH`, behind the harnesses' own tools.
-
-The host never reads sandbox-writable paths directly: workspaces, homes and inner Docker storage are never read, and scheduled runs' output is read through `os.Root`.
+- **Inner Docker.** The sandbox runs its own dockerd. Inner containers follow the same network rules, and a `runc` wrapper mounts the CA into each so they trust the broker.
+- **Persistence.** Only `/root`, `/workspace` and inner Docker storage persist. Tools agents install with mise and uv live under `/root`.
+- **Setup.** A new container runs the repo's `.skybreaker/setup.sh` after the clone; chats wait for it (`App.WaitWorkspace`).
+- **No reads from sandbox paths.** The host never reads workspaces, homes or inner Docker storage, and reads scheduled runs' output through `os.Root`.
 
 ## Chats
 
-A chat runs the harness's structured mode (`claude -p --output-format stream-json`, `codex app-server`, `skybreaker-pi --mode rpc`) through `docker exec -i`. A `chat.Driver` translates each protocol into `chat.Event`s; the `Manager` stores them in a per-chat log and streams them to the UI over server-sent events. "Open in terminal" resumes the same conversation in tmux. Terminals, resumes and scheduled runs get Skybreaker's MCP server through their manifest's `{mcp_config}` (Claude's and pi's config file) or `{mcp_url}` (Codex's `-c mcp_servers.skybreaker` override; a Codex run also approves its tools, since `codex exec` can't ask). A job setting its harness's headless command has no place for (`budget_usd`, `allowed_tools`) is listed as ignored on the Runs tab, and a board job on a harness given no MCP server fails each run saying why; neither stops Skybreaker starting. Drivers never name models and ignore what they don't recognise; a weekly image rebuild promotes new CLI versions only if they still speak the protocols the drivers use. pi runs in chats, terminals and jobs through `skybreaker-pi` (`images/sandbox`), which merges Skybreaker's MCP server and the model servers in `pi.providers` (`config.PiConfig`, written to the sandbox's read-only `/etc/skybreaker/pi-models.json`) into pi's own config inside the sandbox; the host never writes into a sandbox's home. That config is shared by every pi in the sandbox, so its Skybreaker server names the calling chat in an `X-Skybreaker-Session` header from `$SKYBREAKER_SESSION` rather than in the URL. A pi turn ends at `agent_settled`, not `agent_end`, since pi can carry on by itself after a run (retries, compaction, queued messages); extensions' dialogs become asks.
+A chat runs the harness's structured mode through `docker exec -i`:
 
-A message can carry attachments (`chat/attach.go`). A chat takes one message at a time from its files to its queued turn, so messages keep their order. The app starts the sandbox if it isn't running and writes each file through `docker exec -i` to `/root/.skybreaker/attachments/<session>/`, in the home that outlives the container, then tidies files untouched for a month; a chat's agent, when it starts, has any of its files that were tidied put back from the chat's copies. Only after the writes does the `Manager` keep copies in the chat's storage, on a shelf with its own quota beside the files agents show. The harness gets the message with each file's path appended, and an image as image input as well if it's a PNG, JPEG or GIF that decodes whole, at most 2000 pixels a side and 3.75 MB, within 12 MB a message: content blocks for Claude, data URLs for Codex, `images` for pi. A model without image input still has the path. The web app scales images down to 2000 pixels and 3.75 MB before sending, and sends a thumbnail of each larger image for the chat's previews; the server keeps a thumbnail, on a shelf of its own, only if it's a JPEG or PNG of at most 96 KB and 960 pixels, and never passes it on to the sandbox or the model.
+| Harness | Mode |
+|---|---|
+| Claude Code | `claude -p --output-format stream-json` |
+| Codex | `codex app-server` |
+| pi | `skybreaker-pi --mode rpc` |
 
-A session can work on its own branch (`app/worktree.go`): a git worktree in the sandbox's `/skybreaker/worktrees/<session>`, mounted from the project's `worktrees/` directory, on `skybreaker/<session>` from the tip of the project's branch. It's made on the first start, and the chat, its terminal and a `/clear`ed successor all run there; Changes and `show_file` read from it. A fork gets a new worktree from a snapshot of the original's files, uncommitted work included, made with a separate index so the original is untouched. Once every session in a worktree has ended it's tidied: a clean one is removed (and its branch, if nothing was committed); one with uncommitted work or ignored files stays for the ten most recently ended, and past that its work is committed to `refs/skybreaker/wip/<session>` first, where a fork or a carried-on chat finds it again. A detached HEAD is kept on the session's branch. Anything tidying can't check, it leaves for its next pass. Every five minutes `EndMerged` fetches and ends idle chats you've read whose checked-out branch, pushed and clean, has landed on the project's branch: by ancestry, by `git cherry`, or by the patch ID of the branch's whole diff (a squash merge); anything it can't tell keeps the chat. An ended chat carries on when sent a message (`ReopenChat`), unless another live session works in its worktree; a per-chat lock keeps a send and an end from crossing. All of this is git run in the sandbox.
+A `chat.Driver` translates each protocol into `chat.Event`s. The `Manager` stores them in a per-chat log and streams them to the UI over server-sent events. Drivers never name models and ignore what they don't recognise; the weekly image rebuild promotes new CLIs only if they still speak these protocols.
 
-Subagents are tool cards of kind `agent`, their steps nested under them by `Tool.Parent`, and a card stays `running` until the subagent ends, which can be after the turn that started it: Claude's background agents end with a `task_notification`, and Codex's run in threads of their own on the same app-server connection, which the driver follows by thread ID, so their messages and turns never pass for the main thread's. pi has none built in; an extension's subagent tool (named `subagent`, `agent` or `task`) is a card that runs until the tool returns, its progress shown as the card's output rather than as nested steps. The `Manager` keeps a chat `working` while any subagent card runs (the inbox says how many), so it isn't reaped, its sandbox isn't stopped and "finished" is pushed once the last one ends; a harness that exits, or a restart, ends the cards it left running.
+- **MCP.** Terminals, resumes and scheduled runs get Skybreaker's MCP server through the manifest's `{mcp_config}` or `{mcp_url}`.
+- **pi.** `skybreaker-pi` merges Skybreaker's MCP server and `pi.providers` (from the read-only `/etc/skybreaker/pi-models.json`) into pi's config inside the sandbox. A pi turn ends at `agent_settled`, since pi can carry on by itself after `agent_end`.
+- **Attachments** (`chat/attach.go`). Written into `/root/.skybreaker/attachments/<session>/`, with the path appended to the message. Images within size limits also go to the model as image input. Files untouched for a month are tidied and restored if the chat carries on.
+- **Subagents** are tool cards of kind `agent`, with their steps nested by `Tool.Parent`. A chat stays `working` while any subagent runs, so it isn't reaped or stopped early.
+- **Instructions** are mounted read-only into each sandbox: `/etc/claude-code/CLAUDE.md` for Claude, `/etc/codex/managed_config.toml` for Codex, `--append-system-prompt` for pi. Saved prompts never reach a sandbox; the chat page expands `/prompt <name>` into an ordinary message.
+- **Usage.** Drivers report tokens and plan limits. `usage.Store` keeps them by hour for a month and `/api/usage` serves them.
+
+## Branches
+
+A session on its own branch (`app/worktree.go`) gets a git worktree at `/skybreaker/worktrees/<session>` on `skybreaker/<session>`, from the tip of the project's branch. Its chat, terminal and `/clear`ed successor all run there. A fork gets a new worktree from a snapshot of the original's files.
+
+When every session in a worktree has ended, it's tidied: a clean one is removed, and one with uncommitted work stays for the ten most recently ended, then its work is committed to `refs/skybreaker/wip/<session>`. Every five minutes `EndMerged` ends idle, read chats whose branch has landed, by ancestry, `git cherry` or patch ID (squash merges). An ended chat reopens when sent a message (`ReopenChat`). All of this is git run inside the sandbox.
 
 ## Previews
 
-Each project has a preview origin, a port of Skybreaker's tailnet name assigned once (`store.PreviewPort`) and never reused for another project. `preview.Handler` serves it to listed users, proxying to the port you chose on the sandbox's fixed address (`sandbox.Addr`). It admits only its own origin's requests and navigations, namespaces cookies per project and strips CORS headers. The dev server sees itself addressed as `localhost`. The app lists the sandbox's listening ports from its `/proc/net/tcp`.
+Each project has a preview origin on a port of its own (`store.PreviewPort`), never reused. `preview.Handler` serves it to listed users, proxying to the chosen port on the sandbox (`sandbox.Addr`). It admits only same-origin requests, namespaces cookies per project and strips CORS headers. Listening ports come from the sandbox's `/proc/net/tcp`.
 
-## Terminal client
+## Terminal client and VS Code
 
-Run without a server command, `skybreaker` is a client for your own machine. It finds the server through the local Tailscale and is known to it by your tailnet login, like the browser. It lists sessions from the inbox and attaches over the same WebSocket as the browser's terminal, switching a chat to its terminal first. A sandbox's bytes reach a real terminal emulator here, not xterm.js, so `client.Filter` drops every OSC, DCS, APC, PM and SOS string and C1 control before writing them.
+The `skybreaker` client finds the server through the local Tailscale and is known by your tailnet login. It attaches over the same WebSocket as the browser's terminal. Its output goes to a real terminal emulator, so `client.Filter` drops OSC, DCS, APC, PM and SOS strings and C1 controls.
 
-## VS Code over SSH
-
-Each sandbox runs sshd. `skybreaker vscode setup` makes the computer a key, adds it through `POST /api/ssh-keys` (`sshkeys.Store`, which rewrites it in canonical form) and puts a `Host *.skybreaker` block first in `~/.ssh/config`, whose `ProxyCommand` is `skybreaker ssh-proxy`. That carries ssh's bytes over a WebSocket to `/api/projects/{p}/ssh`, which starts the sandbox and relays to its sshd on `sandbox.Addr:22`. `app.SetAuthorizedKeys` writes the keys into every project's `etc/`, and sshd reads them on each login through `AuthorizedKeysCommand`. Deleting a key cuts the open relays.
-
-## Instructions and usage
-
-Every agent's instructions are `settings/instructions.md`, set in Settings by admins (`PUT /api/instructions`, audited). `app.SetInstructions` writes them into each project's `etc/` as `instructions.md` and as `codex-managed-config.toml` (`developer_instructions`), each mounted read-only on its own: at `/etc/claude-code/CLAUDE.md` for Claude Code and `/etc/codex/managed_config.toml` for Codex. They're rewritten in place, since a rename would leave the mount on the old file. `skybreaker-pi` passes the file to pi with `--append-system-prompt`.
-
-Canned prompts are `settings/prompts.json`, set in Settings by admins (`PUT /api/prompts`, audited) and read by anyone (`GET /api/prompts`). They never reach a sandbox: the chat page expands `/prompt <name>` into the prompt's text and sends it as an ordinary message, so no harness needs to know about them.
-
-The modes new chats start in are `settings/chat-modes.json`, a default and per-project overrides set in Settings by admins one at a time (`PUT /api/chat-modes/default` and `/api/chat-modes/projects/{p}`, audited; a project that is gone loses its mode at the next change). `app.NewChat` reads it for each new chat; a mode the harness lacks starts the chat in the harness's first (safest) mode.
-
-The chat drivers report tokens (`Out.Usage`: Claude's per-model result usage as it grows, Codex's `thread/tokenUsage/updated`) and plan limits (`Out.Limits`: Claude's `rate_limit_event`, Codex's `account/rateLimits/read` and updates). `usage.Store` keeps them by UTC hour for a month in `usage.json`, with scheduled runs' totals from their logs, and `/api/usage` serves the home page's rail.
+For VS Code, `skybreaker vscode setup` adds a key (`sshkeys.Store`) and a `Host *.skybreaker` block to `~/.ssh/config` whose `ProxyCommand` is `skybreaker ssh-proxy`. That relays ssh over a WebSocket to `/api/projects/{p}/ssh`, then to the sandbox's sshd. Deleting a key cuts its open relays.
 
 ## Boards and MCP
 
-`board.Store` keeps every project's items in `board.json`. Skybreaker's MCP server exposes them to agents on the sandbox's hook listener, identified by network and hook token and scoped to their own project, and to you at `/mcp` on the app.
+`board.Store` keeps every project's items in `board.json`. Skybreaker's MCP server exposes them to agents on the sandbox's hook listener, scoped to their own project, and to you at `/mcp`.
 
 ## Development
 
