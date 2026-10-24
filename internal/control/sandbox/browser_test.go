@@ -8,7 +8,7 @@ import (
 )
 
 func testBrowser() BrowserSpec {
-	return BrowserSpec{Project: "pip", Image: "ghcr.io/zanegittins/skybreaker-sandbox:1", Subnet: netip.MustParsePrefix("10.89.42.0/24"), Profile: "/var/lib/skybreaker/assistants/pip/browser"}
+	return BrowserSpec{Project: "pip", Image: "ghcr.io/zanegittins/skybreaker-sandbox:1", Subnet: netip.MustParsePrefix("10.89.42.0/24"), Profile: "/var/lib/skybreaker/assistants/pip/browser", UID: 998, GID: 997}
 }
 
 // The browser runs beside an assistant's sandbox with nothing of the
@@ -26,6 +26,9 @@ func TestBrowserRunArgs(t *testing.T) {
 	for flag, want := range map[string]string{
 		"--name": "skybreaker-pip-browser", "--runtime": "runsc", "--network": "skybreaker-pip",
 		"--ip": "10.89.42.3", "--dns": "127.0.0.1", "--entrypoint": "/bin/sleep",
+		// Chromium runs as the service, which owns its profile: with no
+		// capabilities, root couldn't open a directory it doesn't own.
+		"--user": "998:997",
 	} {
 		if got := pairs(args, flag); len(got) != 1 || got[0] != want {
 			t.Errorf("%s = %v, want %s", flag, got, want)
@@ -40,7 +43,7 @@ func TestBrowserRunArgs(t *testing.T) {
 			t.Errorf("browser args contain %q: %v", never, args)
 		}
 	}
-	for _, want := range []string{"--cap-drop", "no-new-privileges", "--pids-limit", "/downloads:size=512m"} {
+	for _, want := range []string{"--cap-drop", "no-new-privileges", "--pids-limit", "/downloads:size=512m,mode=1777"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("browser args lack %s", want)
 		}
@@ -51,6 +54,12 @@ func TestBrowserRunArgs(t *testing.T) {
 	if BrowserAddr(b.Subnet) == Addr(b.Subnet) || BrowserAddr(b.Subnet) == Gateway(b.Subnet) {
 		t.Error("the browser's address is taken")
 	}
+	b = testBrowser()
+	b.UID = -1
+	if _, err := b.RunArgs(); err == nil {
+		t.Error("accepted a negative uid")
+	}
+	b = testBrowser()
 	b.Profile = "relative/dir"
 	if _, err := b.RunArgs(); err == nil {
 		t.Error("accepted a relative profile")

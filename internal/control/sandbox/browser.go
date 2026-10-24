@@ -27,6 +27,9 @@ type BrowserSpec struct {
 	Subnet         netip.Prefix
 	Profile        string // host directory
 	Memory         string
+	// UID and GID are who Chromium runs as: the service, which owns the
+	// profile, since root without capabilities can't open it.
+	UID, GID int
 }
 
 // RunArgs builds the browser's `docker run` arguments.
@@ -44,6 +47,9 @@ func (b BrowserSpec) RunArgs() ([]string, error) {
 	if !filepath.IsAbs(b.Profile) || filepath.Clean(b.Profile) != b.Profile || strings.ContainsAny(b.Profile, ",=\"\n") {
 		errs = append(errs, fmt.Errorf("browser profile %q must be a clean absolute path without , = or \"", b.Profile))
 	}
+	if b.UID < 0 || b.GID < 0 {
+		errs = append(errs, fmt.Errorf("invalid browser user %d:%d", b.UID, b.GID))
+	}
 	if b.Memory != "" && !memoryRe.MatchString(b.Memory) {
 		errs = append(errs, fmt.Errorf("invalid memory limit %q", b.Memory))
 	}
@@ -58,7 +64,8 @@ func (b BrowserSpec) RunArgs() ([]string, error) {
 		"--network", NetworkName(b.Project),
 		"--ip", BrowserAddr(b.Subnet).String(),
 		"--dns", "127.0.0.1",
-		"--read-only", "--tmpfs", "/tmp:size=256m", "--tmpfs", "/downloads:size=512m",
+		"--read-only", "--tmpfs", "/tmp:size=256m", "--tmpfs", "/downloads:size=512m,mode=1777",
+		"--user", fmt.Sprintf("%d:%d", b.UID, b.GID),
 		// Chromium runs without its own sandbox here, so it gets nothing
 		// to escalate with.
 		"--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "512", "--cpus", "2",

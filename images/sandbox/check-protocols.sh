@@ -15,12 +15,17 @@ if command -v playwright >/dev/null; then
   playwright screenshot "data:text/html,<p>ok</p>" "$shot" >/dev/null && [ -s "$shot" ] \
     || { echo "Chromium can't take a screenshot" >&2; exit 1; }
   # An assistant's browser: the Chromium Skybreaker launches, answering on
-  # its DevTools pipe (sandbox.BrowserChromium).
+  # its DevTools pipe (sandbox.BrowserChromium), as a user that owns its
+  # profile and with no capabilities, as sandbox.BrowserSpec runs it.
   bin=$(ls -d /opt/ms-playwright/chromium-*/chrome-linux*/chrome 2>/dev/null | head -n 1)
   [ -x "$bin" ] || { echo "no Chromium at /opt/ms-playwright/chromium-*/chrome-linux*/chrome" >&2; exit 1; }
+  profile=$(mktemp -d)
+  chown 65534:65534 "$profile" && chmod 700 "$profile"
   (printf '{"id":1,"method":"Browser.getVersion"}\000'; sleep 10) \
-    | timeout 20 sh -c 'exec "$0" --headless --no-sandbox --remote-debugging-pipe --user-data-dir="$(mktemp -d)" 3<&0 4>&1 >/dev/null 2>&1' "$bin" \
-    | tr '\000' '\n' | grep -q '"product"' || { echo "Chromium doesn't answer on its DevTools pipe" >&2; exit 1; }
+    | HOME=/tmp timeout 20 setpriv --reuid=65534 --regid=65534 --clear-groups --inh-caps=-all --bounding-set=-all --no-new-privs \
+      sh -c 'exec "$0" --headless --no-sandbox --remote-debugging-pipe --user-data-dir="$1" 3<&0 4>&1 >/dev/null 2>&1' "$bin" "$profile" \
+    | tr '\000' '\n' | grep -q '"product"' || { echo "Chromium doesn't answer on its DevTools pipe as a user without capabilities" >&2; exit 1; }
+  rm -rf "$profile"
 fi
 claude --version
 codex --version

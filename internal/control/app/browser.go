@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -126,7 +127,8 @@ func (a *App) startBrowser(ctx context.Context, project string) (*liveBrowser, e
 		return nil, err
 	}
 	spec := sandbox.BrowserSpec{Project: project, Image: a.cfg.Sandbox.Image, Subnet: a.cfg.Subnet(project),
-		Profile: filepath.Join(a.cfg.DataDir, "assistants", project, "browser"), Memory: browserMemory}
+		Profile: filepath.Join(a.cfg.DataDir, "assistants", project, "browser"), Memory: browserMemory,
+		UID: os.Getuid(), GID: os.Getgid()}
 	if err := a.sandbox.StartBrowser(ctx, spec); err != nil {
 		return nil, err
 	}
