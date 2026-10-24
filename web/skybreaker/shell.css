@@ -290,6 +290,8 @@ details.earlier .row-list { margin-top: 4px; }
     display: flex; flex-direction: column; gap: 2px; position: fixed; z-index: 30; inset: 0 auto 0 0; width: var(--side-w);
     padding: 18px 14px 14px; background: var(--bg-2); border-right: 1px solid var(--border); overflow-y: auto;
   }
+  /* A long sidebar scrolls rather than squashing its rows. */
+  .sidebar > * { flex-shrink: 0; }
   .sidebar .brand { height: 44px; padding: 0 8px; }
   .sidebar .brand svg { width: 30px; height: 30px; }
   .sidebar .wordmark { font-size: 20px; }

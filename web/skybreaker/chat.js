@@ -339,11 +339,17 @@ async function renderChat(seq, d) {
 
   const back = () => goBack('', asst ? asstPath(project.name) : projectPath(project.name));
   const page = el('div.chat-page' + (asst ? '.a-chat' : ''), null,
-    el('div.chat-bar', null,
+    // An assistant's chat has no bar: round buttons and its mark float over
+    // the conversation. The ring's menu holds the model and the terminal.
+    asst ? el('div.chat-bar.a-bar', null,
+      el('button.icon-btn.bare.a-round', { onclick: back, 'aria-label': 'Back' }, svg(ICON.back)),
+      el('div.a-bar-who', null,
+        el('a.a-bar-link', { href: asstPath(project.name), 'data-link': true, 'aria-label': asst.name }, asstMark, el('b.a-bar-name', null, asst.name))),
+      el('div.a-bar-acts', null, ringBtn))
+    : el('div.chat-bar', null,
       el('button.icon-btn.bare', { onclick: back, 'aria-label': 'Back' }, svg(ICON.back)),
       mark, el('div.chat-title', null, title, sub),
-      // An assistant has no repository to review.
-      project.kind === 'assistant' ? null : el('button.icon-btn.bare', { onclick: () => openReview(session.project, id), 'aria-label': 'Review changes', title: 'Review changes' }, svg(ICON.branch)),
+      el('button.icon-btn.bare', { onclick: () => openReview(session.project, id), 'aria-label': 'Review changes', title: 'Review changes' }, svg(ICON.branch)),
       el('button.icon-btn.bare', { onclick: () => openTerminal(), 'aria-label': 'Open in terminal', title: 'Open in terminal' }, svg(ICON.term)),
       ringBtn),
     goalBar, scroller, jump, footer);
@@ -384,18 +390,17 @@ async function renderChat(seq, d) {
       el('button.icon-btn.bare.sm', { type: 'button', 'aria-label': 'Unpin the goal', title: 'Unpin the goal', onclick: () => runCommand({ cmd: 'goal', arg: '' }) }, svg(ICON.x)));
     // Who, on what, where: agent, model, project, branch. The same on a
     // phone and a desktop; the model opens the model menu.
-    mark.replaceChildren(asstMark || agentMark(session.harness, '.sm'));
+    mark.replaceChildren(agentMark(session.harness, '.sm'));
     const model = modelLine(chatModel(), effortNow().on);
     const dot = () => el('span.sep', null, '·');
     const models = session.status === 'running' && chat.info.models?.length;
+    const modelNode = model ? models ? el('button.sub-model', { type: 'button', title: 'Change the model or its effort', onclick: e => modelMenu(e.currentTarget) }, model) : el('span.sub-model', null, model) : null;
     sub.replaceChildren();
     append(sub, [
       el('span.sub-agent', null, harnessLabel(session.harness)),
-      model ? [dot(), models ? el('button.sub-model', { type: 'button', title: 'Change the model or its effort', onclick: e => modelMenu(e.currentTarget) }, model) : el('span.sub-model', null, model)] : null,
-      dot(), project.kind === 'assistant'
-        ? el('a.proj', { href: asstPath(project.name), 'data-link': true }, avatar(asst, { mini: true }), asst.name)
-        : el('span.proj.tint-' + (project.tint ?? 0), null, el('span.pdot'), project.name),
-      project.kind === 'assistant' ? null : dot(), project.kind === 'assistant' ? null : session.worktree
+      modelNode ? [dot(), modelNode] : null,
+      dot(), el('span.proj.tint-' + (project.tint ?? 0), null, el('span.pdot'), project.name),
+      dot(), session.worktree
         ? el('span.sub-branch', { title: session.worktree_gone ? 'Its copy of the repository was tidied away; the branch stays' : 'Its own branch, in its own copy of the repository' }, svg(ICON.branch), el('span.bname', null, session.branch || 'its own branch'))
         : el('span.sub-branch', { title: 'Works in the project\'s shared workspace' }, svg(ICON.branch), el('span.bname', null, 'workspace'))]);
     const m = MODE_INFO[session.perm_mode] || MODE_INFO.ask;
@@ -893,8 +898,9 @@ async function renderChat(seq, d) {
       running && session.resume ? { label: 'Compact', desc: 'Summarise the conversation to free up context', run: () => runCommand({ cmd: 'compact', arg: '' }) } : null,
       { label: 'New chat', desc: 'Start fresh; this one stays as it is', run: () => newChatIn(project.name, session.harness) },
       session.resume ? { label: 'Fork', desc: 'Copy this conversation into a new chat', run: () => runCommand({ cmd: 'fork', arg: '' }) } : null,
+      asst ? { label: 'Open in terminal', desc: 'The agent\'s own command line', run: () => openTerminal() } : null,
       running && chat.info.models?.length ? { label: 'Model', desc: modelLine(chatModel(), effortNow().on), run: () => modelMenu(anchor) } : null,
-      { label: 'Project ' + project.name, run: () => navigate('/p/' + project.name) },
+      asst ? null : { label: 'Project ' + project.name, run: () => navigate('/p/' + project.name) },
       running ? { label: 'End chat', desc: 'A message carries it on again', run: () => endChat(id) } : null,
     ].filter(Boolean));
   };
@@ -1200,7 +1206,7 @@ async function renderChat(seq, d) {
   const drawWorking = () => {
     const agents = runningAgents(chat);
     working.hidden = !(chat.working || agents.length) || chat.asks.size > 0;
-    avSet(asstMark, { state: chat.asks.size ? 'needs' : chat.working || agents.length ? 'thinking' : 'idle' });
+    avSet(asstMark, asstMotion(chat.asks.size, (chat.working ? 1 : 0) + agents.length));
     const lead = agents[agents.length - 1];
     agentsBtn.hidden = !lead;
     if (lead) {

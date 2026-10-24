@@ -49,13 +49,15 @@ const depth = r => !r ? 0 : r.name === 'home' ? 0 : r.name === 'session' || r.na
 // moveTo shows the page at the address now in the bar. On a phone, going
 // deeper slides the new page in from the right and coming back from the
 // left, the old page holding until the new one is drawn; elsewhere, and
-// between pages at one depth, the new page fades in.
+// between pages at one depth, the new page fades in. A tab doesn't.
 function moveTo() {
   state.boardAdd = state.board = null;
-  const from = depth(state.route), to = depth(route(location.pathname));
+  const next = route(location.pathname);
+  const from = depth(state.route), to = depth(next);
   const dir = to > from ? 'forward' : to < from ? 'back' : '';
   const slide = dir && document.startViewTransition && matchMedia('(max-width: 1023px)').matches && !matchMedia('(prefers-reduced-motion: reduce)').matches;
-  state.moved = !slide;
+  // Another tab of the page you're on redraws in place, without a fade.
+  state.moved = !slide && !samePage(state.route, next);
   if (!slide) return go();
   document.documentElement.dataset.nav = dir;
   document.startViewTransition(() => go()).finished.finally(() => { delete document.documentElement.dataset.nav });
@@ -130,7 +132,9 @@ const refresh = debounce(() => {
   // A chat streams on its own; a browser you've taken over must not be
   // closed and handed back by a redraw.
   if (!state.route || state.route.name === 'session' || state.route.tab === 'browser') return;
-  if (busy()) { state.stale = true; return }
+  // An open sheet that can redraw itself does, so what you answer there
+  // leaves it; the page waits until the sheet closes.
+  if (busy()) { state.stale = true; state.sheetReload?.(); return }
   const y = scrollY;
   const focused = document.activeElement?.closest('a[href]')?.getAttribute('href');
   go().then(() => {
@@ -587,10 +591,7 @@ async function renderProject(seq, name, tab = 'chats') {
   const p = d.project;
   crumb(p);
   markSidebar();
-  const waiting = new Set(d.pending.map(a => a.session)), now = Date.now();
-  const live = d.sessions.filter(s => s.status === 'running' && !s.parent);
-  const shown = live.filter(s => !resting(s, now, waiting));
-  const ended = d.sessions.filter(s => !s.parent && (s.status !== 'running' || resting(s, now, waiting))).sort((x, y) => when(y) - when(x));
+  const { live, shown, ended } = chatGroups(d.sessions, new Set(d.pending.map(a => a.session)));
   const open = COLUMNS.reduce((n, [k]) => n + (k === 'done' ? 0 : b.board.counts?.[k] || 0), 0);
   const tabs = [['chats', 'Chats', shown.length], ['board', 'Board', open], ['runs', 'Runs', null]];
 
@@ -627,14 +628,21 @@ function chatsView(p, d, b, live, ended) {
   const waiting = [...(d.requests || []).map(a => requestCard(a, p.tint)), ...d.pending.map(a => approvalCard(a, p.tint))];
   const main = el('div.p-main', null,
     waiting.length ? el('div.approvals', null, waiting) : null,
+    ...chatList(p, live, ended),
+    upNext(p, b),
+    b.history && boardChart(b.history) ? el('section.list-sec.phone-only.p-chart', null, el('div.sec-title', null, el('h2', null, 'Board, last 14 days')), boardChart(b.history)) : null);
+  return el('div.p-cols', null, main, el('aside.p-side.desk-only', null, boardSnapshot(p, b)));
+}
+
+// chatList is a project's open chats, then the ones before.
+function chatList(p, live, ended) {
+  return [
     live.length ? el('div.row-list', null, live.map(s => sessionRow(s)))
       : el('button.empty-add', { type: 'button', onclick: () => pickHarness(p) }, svg(ICON.plus), 'Start a chat'),
     ended.length ? el('details.earlier', null,
       el('summary', null, el('span', null, 'Earlier'), el('span.n', null, String(ended.length)), svg(ICON.chevron, 'chev')),
       el('div.row-list', null, ended.slice(0, 40).map(s => s.mode === 'chat' ? sessionRow(s) : endedRow(s)))) : null,
-    upNext(p, b),
-    b.history && boardChart(b.history) ? el('section.list-sec.phone-only.p-chart', null, el('div.sec-title', null, el('h2', null, 'Board, last 14 days')), boardChart(b.history)) : null);
-  return el('div.p-cols', null, main, el('aside.p-side.desk-only', null, boardSnapshot(p, b)));
+  ];
 }
 
 // runsView is the project's schedules and their runs.
@@ -1003,7 +1011,7 @@ const sheetOpen = () => [...$('#sheet-root').children].some(n => !n.classList.co
 // closeSheet takes the sheet away the way it came; one opened meanwhile
 // replaces it at once.
 function closeSheet() {
-  state.itemSheet = null;
+  state.itemSheet = state.sheetReload = null;
   const going = [...$('#sheet-root').children].filter(n => !n.classList.contains('leaving'));
   if (!going.length) return;
   leave(going, 180);
@@ -1479,7 +1487,7 @@ function sidebar(d) {
   $('#side-user').textContent = state.meta?.user || '';
   const open = name => openCount(d.sessions, name);
   const assistants = d.projects.filter(p => p.kind === 'assistant'), repos = d.projects.filter(p => p.kind !== 'assistant');
-  $('#side-assistants').replaceChildren(...assistants.map(p => sideAssistant(p, d)),
+  $('#side-assistants').replaceChildren(...assistants.flatMap(p => sideAssistant(p, d)),
     el('button.side-link.side-new', { type: 'button', onclick: newAssistantSheet, title: 'New assistant' }, svg(ICON.plus), el('span', null, 'New assistant')));
   $('#side-projects').replaceChildren(...repos.map(p => el('a.side-link.side-project.tint-' + p.tint + (p.running ? '.running' : ''), {
     href: '/p/' + encodeURIComponent(p.name), 'data-link': true, 'data-project': p.name,
@@ -1497,10 +1505,15 @@ function sideAssistant(p, d) {
   const look = asstLookOf(p);
   const needs = p.pending + (p.asks || 0) > 0;
   const row = el('a.side-link.side-project.side-assistant', { href: asstPath(p.name), 'data-link': true, 'data-project': p.name, title: look.name + (needs ? ' needs you' : '') },
-    avatar(look, { mini: true, state: asstState(needs, d.sessions.filter(s => s.project === p.name)) }), el('span', null, look.name),
+    avatar(look, { mini: true, ...asstState(needs, d.sessions.filter(s => s.project === p.name)) }), el('span', null, look.name),
     needs ? el('span.side-needs', null, el('span.sr-only', null, 'needs you')) : null);
   asstAccent(row, look.color);
-  return row;
+  // Its latest chats show beneath it while you're with it.
+  const recent = recentChats(d.sessions, p.name);
+  if (!recent.length) return row;
+  return [row, el('div.side-chats', null,
+    recent.map(s => el('a.side-chat', { href: '/s/' + s.id, 'data-link': true, 'data-session': s.id, title: chatName(s) }, chatName(s))),
+    el('a.side-chat.more', { href: asstPath(p.name, 'chats'), 'data-link': true }, 'All chats'))];
 }
 
 // refreshSidebar keeps the sidebar current on pages that don't fetch the
@@ -1519,6 +1532,7 @@ function markSidebar() {
   $('#nav-activity').classList.toggle('on', r.name === 'activity');
   $('#nav-settings').classList.toggle('on', r.name === 'settings');
   for (const a of document.querySelectorAll('.side-project')) a.classList.toggle('on', a.dataset.project === project);
+  for (const a of document.querySelectorAll('.side-chat[data-session]')) a.classList.toggle('on', r.name === 'session' && a.dataset.session === r.id);
   const asst = (state.inbox?.projects || []).find(p => p.name === project && p.kind === 'assistant');
   $('#new-chat-label').textContent = asst ? 'Message ' + (asst.look?.name || project) : project ? 'New chat in ' + project : 'New chat';
   // In an assistant's space the frame takes its colour too.
@@ -1529,9 +1543,6 @@ function markSidebar() {
 }
 
 function startNewChat() {
-  // On an assistant's Today, its message box is right there.
-  const box = $('.a-composer .composer-input');
-  if (box) { box.focus(); return }
   const projects = state.inbox?.projects || state.projects || [];
   const p = projects.find(x => x.name === state.newChatIn);
   p ? pickHarness(p) : newSessionSheet(projects);

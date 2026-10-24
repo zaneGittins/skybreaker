@@ -14,27 +14,24 @@ const avNode = (tag, attrs) => {
 };
 
 // avatar is an assistant's mark. mini draws the shape alone, for small
-// places like the sidebar; state is idle, thinking, busy, needs or done.
-function avatar(look, { state = 'idle', mini = false, cls = '' } = {}) {
+// places like the sidebar; state is idle, thinking, busy, needs or done,
+// and jobs is how many things a busy mark has in flight.
+function avatar(look, { state = 'idle', jobs = 3, mini = false, cls = '' } = {}) {
   const id = 'av' + (++avIds);
   const s = avNode('svg', { viewBox: '0 0 100 100', class: 'av-mark' + (mini ? ' mini' : '') + (cls ? ' ' + cls : ''), 'aria-hidden': 'true' });
   const defs = avNode('defs');
-  defs.append(
-    avGrain(id + 'g'),
-    avClip(id + 'a', 0), avClip(id + 'b', 50));
+  defs.append(avGrain(id + 'g'));
   const back = avNode('path', { class: 'av-ring' });
-  const planetBack = avNode('circle', { class: 'av-planet' });
-  const body = avNode('g');
-  const top = avNode('g', { 'clip-path': `url(#${id}a)` }), bottom = avNode('g', { 'clip-path': `url(#${id}b)` });
-  const shape = () => avNode('path', { class: 'av-shape', filter: `url(#${id}g)` });
-  top.append(shape());
-  bottom.append(shape());
-  body.append(top, bottom);
   const front = avNode('path', { class: 'av-ring' });
-  const planetFront = avNode('circle', { class: 'av-planet' });
-  s.append(defs, back, planetBack, body, front, planetFront);
-  s._av = { look, state, mini, back, front, planetBack, planetFront, body, top, bottom, born: performance.now() };
-  avDraw(s, 0);
+  // The planet and its moons each have a circle behind the shape and one
+  // in front, and show whichever side of the orbit they are on.
+  const bodies = () => Array.from({ length: AV_MOONS + 1 }, () => avNode('circle', { class: 'av-planet', r: '0' }));
+  const behind = bodies(), ahead = bodies();
+  const body = avNode('path', { class: 'av-shape', filter: `url(#${id}g)` });
+  s.append(defs, back, ...behind, body, front, ...ahead);
+  s._av = { look, state, jobs, mini, back, front, behind, ahead, body, born: performance.now() };
+  // Drawn where the clock is now, so a redrawn mark doesn't jump.
+  avDraw(s, performance.now() / 1000);
   if (!avStill()) {
     avLive.add(s);
     avTick();
@@ -52,45 +49,36 @@ function avGrain(id) {
   return f;
 }
 
-// avClip is half the square, for a shape that splits while busy.
-function avClip(id, y) {
-  const c = avNode('clipPath', { id });
-  c.append(avNode('rect', { x: '-20', y: String(y - (y ? 0 : 20)), width: '140', height: '70' }));
-  return c;
-}
-
 const avStill = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function avDraw(s, t) {
   const a = s._av;
-  const f = avFrame(a.look, a.state, t, { rings: !a.mini });
-  const fill = f.color;
-  for (const g of [a.top, a.bottom]) {
-    const p = g.firstChild;
-    p.setAttribute('d', f.shape);
-    p.setAttribute('fill', fill);
-  }
-  a.top.setAttribute('transform', `translate(0 ${-f.split})`);
-  a.bottom.setAttribute('transform', `translate(0 ${f.split})`);
-  a.body.setAttribute('transform', `rotate(${f.rot} 50 50)`);
   const showRing = !a.mini;
-  a.back.setAttribute('d', showRing ? f.back : '');
-  a.front.setAttribute('d', showRing ? f.front : '');
-  const planet = f.planet;
-  for (const [c, on] of [[a.planetBack, !planet.front], [a.planetFront, planet.front]]) {
-    if (!showRing || !on) { c.setAttribute('r', '0'); continue }
-    c.setAttribute('cx', planet.x.toFixed(2));
-    c.setAttribute('cy', planet.y.toFixed(2));
-    c.setAttribute('r', planet.r.toFixed(2));
-    c.classList.toggle('amber', !!planet.color);
+  const f = avFrame(a.look, a.state, t, { rings: showRing, jobs: a.jobs });
+  a.body.setAttribute('d', f.shape);
+  a.body.setAttribute('fill', f.color);
+  a.body.setAttribute('transform', `translate(0 ${-f.lift}) rotate(${f.rot} 50 50)`);
+  a.back.setAttribute('d', f.back);
+  a.front.setAttribute('d', f.front);
+  const all = showRing ? [f.planet, ...f.moons] : [];
+  for (let i = 0; i < a.behind.length; i++) {
+    const p = all[i];
+    for (const [c, on] of [[a.behind[i], p && !p.front], [a.ahead[i], p && p.front]]) {
+      if (!on) { c.setAttribute('r', '0'); continue }
+      c.setAttribute('cx', p.x.toFixed(2));
+      c.setAttribute('cy', p.y.toFixed(2));
+      c.setAttribute('r', p.r.toFixed(2));
+      c.classList.toggle('amber', !!p.color);
+    }
   }
 }
 
-// avSet changes a mark's look or state in place.
-function avSet(s, { look, state } = {}) {
+// avSet changes a mark's look, state or jobs in place.
+function avSet(s, { look, state, jobs } = {}) {
   if (!s?._av) return;
   if (look) s._av.look = look;
   if (state) s._av.state = state;
+  if (jobs) s._av.jobs = jobs;
   avDraw(s, performance.now() / 1000);
 }
 

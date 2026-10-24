@@ -16,7 +16,8 @@ test('every frame is drawable', () => {
       const f = avFrame({ shape, color: 'ink', temper }, state, t);
       assert.ok(finite(f.back) && finite(f.front) && f.back.startsWith('M') && f.front.endsWith('Z'), `${shape} ${temper} ${state}`);
       assert.ok(Number.isFinite(f.planet.x) && Number.isFinite(f.planet.y) && f.planet.r > 0);
-      assert.ok(Number.isFinite(f.rot) && Number.isFinite(f.split));
+      assert.ok(Number.isFinite(f.rot) && Number.isFinite(f.lift));
+      assert.ok(f.moons.every(m => Number.isFinite(m.x) && Number.isFinite(m.y) && m.r > 0));
     }
   }
 });
@@ -27,13 +28,28 @@ test('states read by motion', () => {
   // Idle: the planet orbits, the shape stays put.
   assert.notEqual(at('idle', 0).planet.x, at('idle', 3).planet.x);
   assert.equal(at('idle', 3).rot, 0);
-  // Thinking turns the shape; busy splits it.
+  // Thinking turns the shape; busy floats it with moons on the orbit.
   assert.notEqual(at('thinking', 1).rot, 0);
-  assert.ok(at('busy', 1.4).split > 0);
+  assert.notEqual(at('busy', 1).lift, 0);
+  assert.equal(at('idle', 1).moons.length, 0);
   // Needs you: the planet stops, amber, where you'll look for it.
   assert.equal(at('needs', 1).planet.color, '#E8B04A');
   assert.equal(at('needs', 1).planet.x, at('needs', 7).planet.x);
   assert.equal(at('idle', 1).planet.color, null);
+});
+
+test('busy has a moon for each job, the planet among them', () => {
+  const look = { shape: 'dot', color: 'sage', temper: 'calm' };
+  const f = n => avFrame(look, 'busy', 2, { jobs: n });
+  assert.equal(f(3).moons.length, 2);
+  assert.equal(f(undefined).moons.length, 2);
+  assert.equal(f(1).moons.length, 1);
+  assert.equal(f(99).moons.length, 4);
+  // Spread evenly around the orbit, so no two overlap.
+  const [a, b] = f(3).moons;
+  assert.ok(Math.hypot(a.x - f(3).planet.x, a.y - f(3).planet.y) > 10);
+  assert.ok(Math.hypot(a.x - b.x, a.y - b.y) > 10);
+  assert.equal(avFrame(look, 'busy', 2, { jobs: 3, rings: false }).moons.length, 0);
 });
 
 test('unknown looks fall back rather than break', () => {

@@ -15,7 +15,6 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/browser"
 	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
-	policy "github.com/zaneGittins/skybreaker/internal/proxy/config"
 	"github.com/zaneGittins/skybreaker/internal/tsauth"
 	"github.com/zaneGittins/skybreaker/internal/webutil"
 )
@@ -361,7 +360,7 @@ func (r *statusRecorder) WriteHeader(code int) {
 const todayWindow = 24 * time.Hour
 
 // today is an assistant's brief: what waits on the user, what it did
-// lately, and everything its sandbox may reach.
+// lately, and how its browser is.
 func (s *server) today(w http.ResponseWriter, r *http.Request) {
 	name, ok := s.named(w, r)
 	if !ok {
@@ -381,10 +380,6 @@ func (s *server) today(w http.ResponseWriter, r *http.Request) {
 			runs = append(runs, run)
 		}
 	}
-	reaches := []policy.Reach{}
-	if pp, ok := s.Config.Policy.Project(name); ok {
-		reaches = nonNil(pp.Reaches())
-	}
 	var bv *browserView
 	if s.Browsers != nil {
 		if st, ok := s.Browsers.BrowserStatus(r.Context(), name); ok {
@@ -397,7 +392,7 @@ func (s *server) today(w http.ResponseWriter, r *http.Request) {
 	webutil.WriteJSON(w, http.StatusOK, map[string]any{
 		"name": name, "look": a.Look, "browser": bv,
 		"approvals": nonNil(s.Approvals.Pending(name)), "requests": nonNil(s.pendingRequests(name)),
-		"proposals": nonNil(a.Proposals), "updates": updates, "runs": runs, "reaches": reaches,
+		"proposals": nonNil(a.Proposals), "updates": updates, "runs": runs,
 	})
 }
 
