@@ -153,7 +153,7 @@ function list(lines, i, out) {
 
 // CHAT_COLORS are the tints a chat can be given; the server keeps the same
 // list (app.ChatColors).
-const CHAT_COLORS = ['sun', 'planet', 'red', 'green', 'blue', 'purple', 'pink', 'teal'];
+const CHAT_COLORS = ['sun', 'titan', 'mars', 'aurora', 'stormlight', 'voidlight', 'venus', 'comet'];
 
 const COMMANDS = [
   { cmd: 'rename', usage: '/rename <title>', desc: 'Name this chat' },

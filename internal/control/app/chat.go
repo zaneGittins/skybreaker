@@ -916,7 +916,7 @@ func (a *App) MCPCaller(r *http.Request) (mcp.Caller, error) {
 }
 
 // ChatColors are the colours a chat can be given, to tell sessions apart.
-var ChatColors = []string{"sun", "planet", "red", "green", "blue", "purple", "pink", "teal"}
+var ChatColors = []string{"sun", "titan", "mars", "aurora", "stormlight", "voidlight", "venus", "comet"}
 
 const (
 	maxTitle = 200

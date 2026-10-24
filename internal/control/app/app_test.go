@@ -965,8 +965,8 @@ func TestEditSession(t *testing.T) {
 	f := newFixture(t)
 	f.app.store.CreateSession(store.Session{ID: "c1", Project: "orbit", Mode: store.ModeChat, Status: store.StatusRunning, Title: "fix the login"})
 	str := func(s string) *string { return &s }
-	s, err := f.app.EditSession("c1", SessionEdit{Title: str("  Login flow  "), Color: str("blue"), Goal: str("Ship the login fix with tests")})
-	if err != nil || s.Title != "Login flow" || s.Color != "blue" || s.Goal != "Ship the login fix with tests" {
+	s, err := f.app.EditSession("c1", SessionEdit{Title: str("  Login flow  "), Color: str("stormlight"), Goal: str("Ship the login fix with tests")})
+	if err != nil || s.Title != "Login flow" || s.Color != "stormlight" || s.Goal != "Ship the login fix with tests" {
 		t.Fatalf("edit: %+v %v", s, err)
 	}
 	// Fields left out stay; empty colour and goal clear them.

@@ -208,3 +208,19 @@ func TestPreviewPorts(t *testing.T) {
 		t.Fatal("ran past the range")
 	}
 }
+
+func TestOpenRenamesOldColors(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "skybreaker.json")
+	if err := os.WriteFile(p, []byte(`{"sessions":[{"id":"a","color":"planet"},{"id":"b","color":"blue"},{"id":"c","color":"sun"},{"id":"d"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]string{"a": "titan", "b": "stormlight", "c": "sun", "d": ""} {
+		if x, _ := s.Session(id); x.Color != want {
+			t.Errorf("session %s colour %q, want %q", id, x.Color, want)
+		}
+	}
+}
