@@ -353,6 +353,12 @@ func TestListItemsFilters(t *testing.T) {
 	check("query title", Filter{Query: "CRASH"}, "[BIF-1]")
 	check("query body", Filter{Query: "dark"}, "[BIF-2]")
 	check("query label", Filter{Query: "ui"}, "[BIF-1]")
+	check("query ref", Filter{Query: "atl-1"}, "[ATL-1]")
+	check("query ref is exact", Filter{Query: "#BIF-2"}, "[BIF-2]")
+	check("query key alone is no ref", Filter{Query: "bif"}, "[]")
+	if items, total, err := s.ListPage(Filter{Limit: 1}); err != nil || len(items) != 1 || total != 3 {
+		t.Errorf("page: %d items of %d, %v", len(items), total, err)
+	}
 	check("assignee", Filter{Assignee: "Codex"}, "[ATL-1]")
 	check("limit", Filter{Limit: 1}, "[ATL-1]")
 	check("several statuses", Filter{Project: "bifract", Statuses: []string{"todo", "Done"}}, "[BIF-1 BIF-3]")
@@ -383,6 +389,16 @@ func TestDoneIsNewestFirst(t *testing.T) {
 	items, _ := s.ListItems(Filter{Statuses: []string{"done"}})
 	if got := fmt.Sprint(refs(items)); got != "[BIF-1 BIF-3 BIF-2]" {
 		t.Fatalf("done order %s", got)
+	}
+	// Finished at the same instant, the later item comes first.
+	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return at }
+	for _, title := range []string{"x", "y", "z"} {
+		mustItem(t, s, "bifract", ItemInput{Title: title, Status: "done"})
+	}
+	items, _ = s.ListItems(Filter{Statuses: []string{"done"}, Limit: 3})
+	if got := fmt.Sprint(refs(items)); got != "[BIF-6 BIF-5 BIF-4]" {
+		t.Fatalf("same-instant done order %s", got)
 	}
 }
 

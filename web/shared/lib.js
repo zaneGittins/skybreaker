@@ -181,6 +181,16 @@ function dropPosition(above, below) {
   return (above + below) / 2;
 }
 
+// columnPage picks the cards a board column shows: an open column's first 20
+// until it's expanded, or every Done card loaded. more labels the button for
+// the rest; below is the position of the first card left out.
+function columnPage(status, items, total, expanded, cap = 20) {
+  const shown = status === 'done' || expanded ? items : items.slice(0, cap);
+  const hidden = total - shown.length;
+  const more = hidden <= 0 ? null : status === 'done' ? `Show ${Math.min(50, hidden)} older` : `Show ${hidden} more`;
+  return { shown, more, below: items[shown.length]?.position };
+}
+
 // auditRow turns a broker audit entry into one line of the activity page: a
 // tone, a verb and what it was about.
 const AUDIT = {
@@ -272,4 +282,4 @@ function limitLabel(l) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-if (typeof module !== 'undefined') module.exports = { activitySeries, usageSeries, compactCount, limitLabel, boardSeries, hostsFromText, ago, until, duration, route, auditRow, dropPosition, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal };
+if (typeof module !== 'undefined') module.exports = { activitySeries, usageSeries, compactCount, limitLabel, boardSeries, hostsFromText, ago, until, duration, route, auditRow, dropPosition, columnPage, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal };

@@ -151,7 +151,7 @@ func (t *tools) listProjects() mcp.Tool {
 }
 
 func (t *tools) listItems() mcp.Tool {
-	props := pStatuses + `,"type":{"type":"string","description":"bug, feature or chore"},"query":{"type":"string","description":"text to search for in titles, descriptions and labels"},"include_done":{"type":"boolean","description":"include done items when no status is given"},"limit":{"type":"integer","description":"maximum items to return (default 100)"}`
+	props := pStatuses + `,"type":{"type":"string","description":"bug, feature or chore"},"query":{"type":"string","description":"text to search for in refs, titles, descriptions and labels"},"include_done":{"type":"boolean","description":"include done items when no status is given"},"limit":{"type":"integer","description":"maximum items to return (default 100)"}`
 	desc := "List this project's items, open ones by default, in board order. Filter by status, type or text."
 	props = pProject + `,` + props
 	if t.user() {

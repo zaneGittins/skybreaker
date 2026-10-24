@@ -503,13 +503,19 @@ func (s *Store) History(project string, since time.Time) (History, error) {
 // ListItems returns matching items, board by board, each column in its board
 // order; Done is newest first.
 func (s *Store) ListItems(f Filter) ([]Item, error) {
+	items, _, err := s.ListPage(f)
+	return items, err
+}
+
+// ListPage is ListItems that also says how many matched before the limit.
+func (s *Store) ListPage(f Filter) ([]Item, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var project string
 	if f.Project != "" {
 		p, err := s.project(f.Project)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		project = p.Slug
 	}
@@ -517,7 +523,7 @@ func (s *Store) ListItems(f Filter) ([]Item, error) {
 	for _, st := range f.Statuses {
 		st = NormalizeStatus(st)
 		if !ValidStatus(st) {
-			return nil, invalid("unknown status %q (use %s)", st, strings.Join(Statuses, ", "))
+			return nil, 0, invalid("unknown status %q (use %s)", st, strings.Join(Statuses, ", "))
 		}
 		statuses = append(statuses, st)
 	}
@@ -525,10 +531,15 @@ func (s *Store) ListItems(f Filter) ([]Item, error) {
 	if f.Type != "" {
 		typ = NormalizeType(f.Type)
 		if !ValidType(typ) {
-			return nil, invalid("unknown type %q (use %s)", f.Type, strings.Join(Types, ", "))
+			return nil, 0, invalid("unknown type %q (use %s)", f.Type, strings.Join(Types, ", "))
 		}
 	}
 	q := strings.ToLower(strings.TrimSpace(f.Query))
+	// A query that is a ref ("BIF-12") also finds that one item.
+	refKey, refN, refErr := ParseRef(q)
+	isRef := func(it *Item) bool {
+		return refErr == nil && it.Number == refN && strings.EqualFold(s.st.Projects[it.Project].Key, refKey)
+	}
 	var out []*Item
 	for _, it := range s.st.Items {
 		switch {
@@ -537,7 +548,7 @@ func (s *Store) ListItems(f Filter) ([]Item, error) {
 		case len(statuses) == 0 && !f.IncludeDone && it.Status == "done":
 		case typ != "" && it.Type != typ:
 		case f.Assignee != "" && !strings.EqualFold(it.Assignee, f.Assignee):
-		case q != "" && !strings.Contains(strings.ToLower(it.Title), q) && !strings.Contains(strings.ToLower(it.Body), q) &&
+		case q != "" && !isRef(it) && !strings.Contains(strings.ToLower(it.Title), q) && !strings.Contains(strings.ToLower(it.Body), q) &&
 			!slices.ContainsFunc(it.Labels, func(l string) bool { return strings.Contains(l, q) }):
 		default:
 			out = append(out, it)
@@ -551,7 +562,10 @@ func (s *Store) ListItems(f Filter) ([]Item, error) {
 			return c
 		}
 		if a.Status == "done" {
-			return completed(b).Compare(completed(a))
+			if c := completed(b).Compare(completed(a)); c != 0 {
+				return c
+			}
+			return b.Number - a.Number
 		}
 		if a.Position != b.Position {
 			if a.Position < b.Position {
@@ -561,6 +575,7 @@ func (s *Store) ListItems(f Filter) ([]Item, error) {
 		}
 		return a.Number - b.Number
 	})
+	total := len(out)
 	if f.Limit > 0 && len(out) > f.Limit {
 		out = out[:f.Limit]
 	}
@@ -568,7 +583,7 @@ func (s *Store) ListItems(f Filter) ([]Item, error) {
 	for i, it := range out {
 		items[i] = view(it, false)
 	}
-	return items, nil
+	return items, total, nil
 }
 
 func completed(it *Item) time.Time {
