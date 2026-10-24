@@ -103,20 +103,24 @@ async function go() {
   }
 }
 
-// busy is true while the user is reading a sheet or typing: a live update
-// then waits rather than wiping what they were doing.
+// busy is true while the user is reading a sheet, typing or swiping a row:
+// a live update then waits rather than wiping what they were doing.
 function busy() {
   const a = document.activeElement;
-  return sheetOpen() || !!state.dirty || !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.value);
+  return sheetOpen() || !!state.dirty || !!(a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.value) || !!$('.srow-wrap.swiping');
 }
 
 // refresh re-renders the current view in place after a live event, except
-// the terminal, which streams on its own.
+// the terminal, which streams on its own. A focused link stays focused.
 const refresh = debounce(() => {
   if (!state.route || state.route.name === 'session') return;
   if (busy()) { state.stale = true; return }
   const y = scrollY;
-  go().then(() => scrollTo(0, y));
+  const focused = document.activeElement?.closest('a[href]')?.getAttribute('href');
+  go().then(() => {
+    scrollTo(0, y);
+    if (focused) document.querySelector(`a[href="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
+  });
 }, 400);
 
 function renderNotFound() {
@@ -141,7 +145,7 @@ async function renderHome(seq) {
   const review = d.review || [];
   const next = d.next || [];
   const orphans = d.pending.filter(a => !d.sessions.some(s => s.id === a.session));
-  // Open chats stay in view; Earlier is only what has ended.
+  // Earlier is what has ended, and chats resting a day.
   const earlier = g.ended;
   const needs = g.forYou.length + requests.length + review.length + orphans.length;
   const parts = [
@@ -161,9 +165,9 @@ async function renderHome(seq) {
     g.forYou.some(s => pendingFor(s.id).length) ? el('div.approvals', null, d.pending.filter(a => g.forYou.some(s => s.id === a.session)).map(a => approvalCard(a, tints[a.project]))) : null,
     g.working.length ? el('section.list-sec', null, secHead('Working', g.working.length), el('div.row-list', null, g.working.map(row))) : null,
     g.recent.length ? el('section.list-sec', null, secHead('Open', g.recent.length), el('div.row-list', null, g.recent.map(row))) : null,
-    !d.sessions.some(s => s.status === 'running') ? el('button.empty-add', { type: 'button', onclick: () => newSessionSheet(d.projects) }, svg(ICON.plus), 'Start a chat') : null,
+    !d.sessions.some(s => s.status === 'running' && !resting(s)) ? el('button.empty-add', { type: 'button', onclick: () => newSessionSheet(d.projects) }, svg(ICON.plus), 'Start a chat') : null,
     el('section.list-sec.phone-only', null, secHead('Projects'),
-      el('div.tiles', null, d.projects.map(p => projectTile(p, review)),
+      el('div.tiles', null, d.projects.map(p => projectTile(p, review, openCount(d.sessions, p.name))),
         el('button.tile.np-tile', { type: 'button', onclick: newProjectSheet },
           el('span.tile-name', null, svg(ICON.plus), 'New project'), el('span.tile-sub', null, 'From a GitHub repo')))),
     earlier.length ? el('details.earlier', { open: prefs.get('earlierOpen') === '1', ontoggle: e => prefs.set('earlierOpen', e.target.open ? '1' : '0') },
@@ -190,9 +194,9 @@ function secHead(title, n) {
 
 // projectTile is a project on the phone's home: its colour, what's live and
 // what's on its board.
-function projectTile(p, review) {
+function projectTile(p, review, open) {
   const r = review.filter(it => it.project === p.name).length;
-  const sub = [p.live ? plural(p.live, 'chat') : p.running ? 'running' : 'stopped', r ? `${r} to review` : p.open ? `${p.open} on the board` : ''].filter(Boolean).join(' · ');
+  const sub = [open ? plural(open, 'chat') : p.running ? 'running' : 'stopped', r ? `${r} to review` : p.open ? `${p.open} on the board` : ''].filter(Boolean).join(' · ');
   return el('a.tile.tint-' + p.tint, { href: '/p/' + encodeURIComponent(p.name), 'data-link': true },
     el('span.tile-name', null, el('span.pdot'), p.name), el('span.tile-sub', null, sub));
 }
@@ -262,13 +266,13 @@ function railItem(it) {
 }
 
 // sessionRow is one session on one line: who, what it's doing, where and
-// when. Tap it to open it.
+// when. Tap it to open it; end a chat that's done with its check or a swipe.
 function sessionRow(s, opts = {}) {
   const t = sessionTone(s);
   const label = opts.pending ? 'Waiting for approval' : t.label;
   const tone = opts.pending ? 'wait' : t.tone;
   const tint = CHAT_COLORS.includes(s.color) ? '.sc-' + s.color : '';
-  return el('a.srow.srow-open.tone-' + tone + tint, { href: '/s/' + s.id, 'data-link': true },
+  const link = el('a.srow.srow-open.tone-' + tone + tint, { href: '/s/' + s.id, 'data-link': true },
     agentMark(s.harness, '.sm'),
     el('div.who', null,
       el('div.title', null, s.mode === 'chat' ? chatName(s) : sessionName(s)),
@@ -280,6 +284,75 @@ function sessionRow(s, opts = {}) {
         el('span.sep', null, '·'),
         el('span', null, ago(s.updated && !s.updated.startsWith('0001') ? s.updated : s.ended || s.created)))),
     svg(ICON.chevron, 'chev'));
+  if (opts.pending || !closable(s) || resting(s)) return link;
+  const done = el('button.srow-done', { type: 'button', 'aria-label': 'End ' + chatName(s), title: 'End chat' }, svg(ICON.check));
+  done.onclick = async e => {
+    done.disabled = true;
+    if (!await endChat(s.id)) { done.disabled = false; return }
+    // From the keyboard, focus goes to the next row.
+    const rows = [...document.querySelectorAll('.srow-open')], at = rows.indexOf(link);
+    if (!e.detail) (rows[at + 1] || rows[at - 1])?.focus();
+  };
+  const row = el('div.srow-wrap', null, link, done);
+  swipeToEnd(row, link, () => endChat(s.id));
+  return row;
+}
+
+// endChat ends a chat, with a moment to take it back, and says if it did.
+async function endChat(id) {
+  try { await api('DELETE', '/api/sessions/' + id) } catch (e) { toast(e.message, 'error'); return false }
+  toast('Chat ended', '', { label: 'Undo', run: () => api('POST', `/api/sessions/${id}/reopen`, {}).catch(e => toast(e.message, 'error')) });
+  return true;
+}
+
+// swipeToEnd lets one finger drag a row left to end it; a drag that isn't
+// clearly sideways is left to scroll the list.
+function swipeToEnd(row, link, end) {
+  let x0, y0, dx = 0, on = false, id = null, swiped = 0;
+  const far = () => -dx > row.offsetWidth * 0.35;
+  const settle = () => {
+    link.style.transform = '';
+    row.classList.remove('swiping', 'armed');
+    if (state.stale) refresh();
+  };
+  // The tap a swipe ends with mustn't open the chat.
+  link.addEventListener('click', e => { if (Date.now() - swiped < 400) { e.preventDefault(); e.stopPropagation() } }, true);
+  row.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch' || !e.isPrimary || id !== null) return;
+    x0 = e.clientX; y0 = e.clientY; dx = 0; id = e.pointerId;
+  });
+  row.addEventListener('pointermove', e => {
+    if (e.pointerId !== id) return;
+    const mx = e.clientX - x0, my = e.clientY - y0;
+    if (!on) {
+      if (Math.abs(my) > 10) { id = null; return }
+      if (mx > -12) return;
+      on = true;
+      row.classList.add('swiping');
+      row.setPointerCapture(id);
+    }
+    dx = Math.min(0, mx);
+    link.style.transform = `translateX(${dx}px)`;
+    row.classList.toggle('armed', far());
+  });
+  row.addEventListener('pointerup', e => {
+    if (e.pointerId !== id) return;
+    const ending = on && far();
+    if (on) swiped = Date.now();
+    on = false;
+    id = null;
+    if (!ending) { settle(); return }
+    // It slides away, and the list redraws without it once it's ended.
+    row.classList.remove('swiping');
+    link.style.transform = 'translateX(-100%)';
+    end().then(ok => ok ? refresh() : settle());
+  });
+  row.addEventListener('pointercancel', e => {
+    if (e.pointerId !== id) return;
+    on = false;
+    id = null;
+    settle();
+  });
 }
 
 // newSessionSheet starts a session: pick a project (when there are a few),
@@ -490,10 +563,12 @@ async function renderProject(seq, name, tab = 'chats') {
   const p = d.project;
   crumb(p);
   markSidebar();
+  const waiting = new Set(d.pending.map(a => a.session)), now = Date.now();
   const live = d.sessions.filter(s => s.status === 'running' && !s.parent);
-  const ended = d.sessions.filter(s => s.status !== 'running' && !s.parent);
+  const shown = live.filter(s => !resting(s, now, waiting));
+  const ended = d.sessions.filter(s => !s.parent && (s.status !== 'running' || resting(s, now, waiting))).sort((x, y) => when(y) - when(x));
   const open = b.items.filter(i => i.status !== 'done').length;
-  const tabs = [['chats', 'Chats', live.length], ['board', 'Board', open], ['runs', 'Runs', null]];
+  const tabs = [['chats', 'Chats', shown.length], ['board', 'Board', open], ['runs', 'Runs', null]];
 
   const head = el('header.p-head.tint-' + p.tint, null,
     el('div.p-title', null,
@@ -510,7 +585,7 @@ async function renderProject(seq, name, tab = 'chats') {
   const tabBar = el('nav.p-tabs', { 'aria-label': 'Project' }, tabs.map(([k, label, n]) =>
     el('a.p-tab' + (k === tab ? '.on' : ''), { href: projectPath(p.name, k), 'data-link': true, 'aria-current': k === tab ? 'page' : null },
       el('span', null, label), n ? el('span.n', null, String(n)) : null)));
-  const body = tab === 'board' ? boardView(p.name, b) : tab === 'runs' ? runsView(d) : chatsView(p, d, b, live, ended);
+  const body = tab === 'board' ? boardView(p.name, b) : tab === 'runs' ? runsView(d) : chatsView(p, d, b, shown, ended);
   const page = el('div.page.project.tab-' + tab, null, head, tabBar, body);
   // On a phone the + adds an item on the board and starts a chat elsewhere;
   // a desktop board adds in each column.
@@ -531,7 +606,7 @@ function chatsView(p, d, b, live, ended) {
     live.length ? el('div.row-list', null, live.map(s => sessionRow(s)))
       : el('button.empty-add', { type: 'button', onclick: () => pickHarness(p) }, svg(ICON.plus), 'Start a chat'),
     ended.length ? el('details.earlier', null,
-      el('summary', null, el('span', null, plural(ended.length, 'ended chat')), svg(ICON.chevron, 'chev')),
+      el('summary', null, el('span', null, 'Earlier'), el('span.n', null, String(ended.length)), svg(ICON.chevron, 'chev')),
       el('div.row-list', null, ended.slice(0, 40).map(s => s.mode === 'chat' ? sessionRow(s) : endedRow(s)))) : null,
     upNext(p, b),
     b.history && boardChart(b.history) ? el('section.list-sec.phone-only.p-chart', null, el('div.sec-title', null, el('h2', null, 'Board, last 14 days')), boardChart(b.history)) : null);
@@ -1368,12 +1443,13 @@ function sidebar(d) {
   count.hidden = !needs;
   count.textContent = String(needs);
   $('#side-user').textContent = state.meta?.user || '';
+  const open = name => openCount(d.sessions, name);
   $('#side-projects').replaceChildren(...d.projects.map(p => el('a.side-link.side-project.tint-' + p.tint + (p.running ? '.running' : ''), {
     href: '/p/' + encodeURIComponent(p.name), 'data-link': true, 'data-project': p.name,
-    title: p.name + (p.running ? ' · ' + (p.live ? plural(p.live, 'live chat') : 'sandbox running') : ''),
+    title: p.name + (p.running ? ' · ' + (open(p.name) ? plural(open(p.name), 'open chat') : 'sandbox running') : ''),
   },
     el('span.pdot'), el('span', null, p.name),
-    p.running ? el('span.side-live', null, el('span.dot'), p.live ? String(p.live) : '') : null)),
+    p.running ? el('span.side-live', null, el('span.dot'), open(p.name) ? String(open(p.name)) : '') : null)),
     el('button.side-link.side-new', { type: 'button', onclick: newProjectSheet, title: 'New project' }, svg(ICON.plus), el('span', null, 'New project')));
   markSidebar();
 }

@@ -133,6 +133,9 @@ func (b *fakeBackend) ChatFork(_ context.Context, id string) (store.Session, err
 	}
 	return store.Session{ID: "f1", Resume: "conv-1", Fork: true, Status: store.StatusRunning}, known(id)
 }
+func (b *fakeBackend) ReopenChat(_ context.Context, id string) (store.Session, error) {
+	return store.Session{ID: id, Status: store.StatusRunning}, known(id)
+}
 func (b *fakeBackend) ChatEvents(id string, after int64) ([]chat.Event, error) {
 	if err := known(id); err != nil {
 		return nil, err
@@ -298,6 +301,12 @@ func TestChatActions(t *testing.T) {
 	}
 	if code, body := f.do(t, "POST", "/api/sessions/c1/fork", `{}`, nil); code != 200 || !strings.Contains(body, `"id":"f1"`) || !strings.Contains(body, `"fork":true`) {
 		t.Errorf("fork: %d %s", code, body)
+	}
+	if code, body := f.do(t, "POST", "/api/sessions/c1/reopen", `{}`, nil); code != 200 || !strings.Contains(body, `"status":"running"`) {
+		t.Errorf("reopen: %d %s", code, body)
+	}
+	if code, _ := f.do(t, "POST", "/api/sessions/nope/reopen", `{}`, nil); code != 404 {
+		t.Errorf("reopen unknown: %d", code)
 	}
 	for path, want := range map[string]int{"/api/sessions/busy/fork": 409, "/api/sessions/nope/fork": 404, "/api/sessions/new/fork": 400} {
 		if code, body := f.do(t, "POST", path, `{}`, nil); code != want {

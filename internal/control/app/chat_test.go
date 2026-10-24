@@ -256,12 +256,16 @@ func TestKillChat(t *testing.T) {
 	if x.Status != store.StatusKilled {
 		t.Errorf("status = %q", x.Status)
 	}
-	if err := f.app.ChatSend(ctx, s.ID, "more"); err == nil {
-		t.Error("sent to an ended chat")
-	}
 	// Its conversation stays readable.
 	if ev, err := f.app.ChatEvents(s.ID, 0); err != nil || len(ev) == 0 {
 		t.Errorf("events after end = %d, %v", len(ev), err)
+	}
+	// And a message carries it on.
+	if err := f.app.ChatSend(ctx, s.ID, "more"); err != nil {
+		t.Fatal(err)
+	}
+	if x, _ := f.app.store.Session(s.ID); x.Status != store.StatusRunning {
+		t.Errorf("status after a message = %q", x.Status)
 	}
 }
 

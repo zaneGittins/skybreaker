@@ -325,14 +325,17 @@ func (a *App) restoreState(ctx context.Context, project, dir, state string) erro
 	return nil
 }
 
+// scriptGit defines g for a script: git in the worktree $wt, with gitSafe.
+var scriptGit = `g() { git -C "$wt" ` + strings.Join(gitSafe, " ") + ` "$@"; }`
+
 // snapshotScript prints a worktree's HEAD and a commit of everything in it,
 // uncommitted and untracked work included (but not what .gitignore keeps
 // out), or HEAD twice when there's nothing uncommitted. It works on a copy
 // of the index, so the worktree and its index are left as they were. The
 // directory is an argument, never part of the script.
-const snapshotScript = `set -e
+var snapshotScript = `set -e
 wt=$1
-g() { git -C "$wt" -c core.fsmonitor=false -c core.hooksPath=/dev/null --no-pager "$@"; }
+` + scriptGit + `
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 head=$(g rev-parse --verify HEAD)
@@ -574,4 +577,89 @@ func (a *App) removeWorktree(ctx context.Context, project, dir string, keep, for
 		}
 	}
 	return branch, nil
+}
+
+// mergedQuiet is how long a chat must have been quiet before its merged
+// branch ends it, so it never closes mid-conversation.
+const mergedQuiet = 10 * time.Minute
+
+// mergedScript prints "merged" if the branch a worktree has checked out,
+// pushed and clean, has landed on the base branch: merged, rebased or
+// squashed. Anything it can't tell, it answers otherwise or fails.
+var mergedScript = `set -e
+wt=$1 base=$2 from=$3
+` + scriptGit + `
+g rev-parse -q --verify "$base^{commit}" >/dev/null || { echo no-base; exit 0; }
+branch=$(g symbolic-ref -q --short HEAD) || { echo detached; exit 0; }
+g rev-parse -q --verify "refs/remotes/origin/$branch^{commit}" >/dev/null || { echo unpushed; exit 0; }
+status=$(g status --porcelain)
+[ -z "$status" ] || { echo dirty; exit 0; }
+own=$(g rev-list -1 HEAD --not "$from")
+[ -n "$own" ] || { echo empty; exit 0; }
+if g merge-base --is-ancestor HEAD "$base"; then echo merged; exit 0; fi
+mb=$(g merge-base HEAD "$base")
+cherry=$(g cherry "$base" HEAD)
+case $cherry in *+*) ;; *) echo merged; exit 0 ;; esac
+squash=$(g diff --no-color --no-ext-diff --no-textconv "$mb" HEAD -- | g patch-id --stable)
+[ -n "$squash" ] || exit 1
+landed=$(g log --no-merges --no-color --no-ext-diff --no-textconv -p "$mb..$base" -- | g patch-id --stable)
+case "
+$landed" in *"
+${squash%% *} "*) echo merged ;; *) echo open ;; esac`
+
+// merged reports whether chat s's branch has landed on the project's
+// branch on GitHub, as last fetched.
+func (a *App) merged(ctx context.Context, s store.Session, branch string) bool {
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	out, err := a.sandbox.Exec(ctx, s.Project, "sh", "-c", mergedScript, "sh", s.Worktree, "origin/"+branch, s.BranchFrom)
+	return err == nil && strings.TrimSpace(string(out)) == "merged"
+}
+
+// mergedDue is a chat EndMerged may end, if its branch has landed: on its
+// own branch, idle, seen and quiet. A change to any of these since its
+// branch was checked keeps it.
+func mergedDue(s store.Session, now time.Time) bool {
+	return s.Mode == store.ModeChat && s.Status == store.StatusRunning && s.Worktree != "" && s.Terminal == "" &&
+		s.State == store.ChatIdle && !s.Seen.Before(s.Updated) && now.Sub(s.Updated) > mergedQuiet && validRef(s.BranchFrom)
+}
+
+// EndMerged ends chats whose branch has landed on their project's branch
+// on GitHub. A message carries one on again.
+func (a *App) EndMerged(ctx context.Context) {
+	for _, project := range slices.Sorted(maps.Keys(a.cfg.Projects)) {
+		var due []store.Session
+		for _, s := range a.store.ListSessions(project) {
+			if mergedDue(s, time.Now()) {
+				due = append(due, s)
+			}
+		}
+		if len(due) == 0 {
+			continue
+		}
+		p, err := a.project(project)
+		if err != nil {
+			continue
+		}
+		if st, err := a.sandbox.Status(ctx, project); err != nil || !st.Running {
+			continue
+		}
+		a.fetch(ctx, project)
+		for _, s := range due {
+			if a.merged(ctx, s, p.Branch) {
+				a.endMerged(ctx, s)
+			}
+		}
+	}
+}
+
+// endMerged ends chat s unless it has moved on since it was checked.
+func (a *App) endMerged(ctx context.Context, s store.Session) {
+	defer a.lockSession(s.ID)()
+	x, ok := a.store.Session(s.ID)
+	if !ok || !mergedDue(x, time.Now()) || !x.Updated.Equal(s.Updated) || !x.Seen.Equal(s.Seen) {
+		return
+	}
+	a.endChat(ctx, x)
+	a.chat.Note(x.ID, "Its branch was merged, so this chat closed. Send a message to carry on.")
 }

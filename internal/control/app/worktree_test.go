@@ -72,7 +72,7 @@ func (g *gitSandbox) exec(args []string) (string, error) {
 	switch {
 	case args[0] == "git", args[0] == "ls",
 		args[0] == "test" && len(args) == 3 && args[2] != readyMarker,
-		args[0] == "sh" && len(args) > 2 && (args[2] == snapshotScript || args[2] == presentScript || args[2] == cloneScript):
+		args[0] == "sh" && len(args) > 2 && (args[2] == snapshotScript || args[2] == presentScript || args[2] == cloneScript || args[2] == mergedScript):
 	default:
 		return "", nil
 	}
@@ -468,6 +468,315 @@ func TestEndedChatsWorktreesAreTidied(t *testing.T) {
 	}
 	if g.read(back.ID, "wip.txt") != oldest.ID {
 		t.Errorf("fork of archived chat has wip.txt %q", g.read(back.ID, "wip.txt"))
+	}
+}
+
+func TestEndedChatCarriesOn(t *testing.T) {
+	f, sp := chatFixture(t)
+	g := newGitSandbox(t, f)
+	ctx := context.Background()
+	s := startedChat(t, f, NewOptions{OwnBranch: true})
+	os.WriteFile(filepath.Join(g.dir(s.ID), "main.go"), []byte("package main // done\n"), 0o644)
+	g.run(g.dir(s.ID), "commit", "--quiet", "-am", "done")
+	if err := f.app.KillSession(ctx, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.app.bg.Wait()
+	if _, err := os.Stat(g.dir(s.ID)); !os.IsNotExist(err) {
+		t.Fatal("worktree not tidied")
+	}
+
+	if err := f.app.ChatSend(ctx, s.ID, "more"); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the resumed turn", func() bool { return turnsDone(f, s.ID) == 2 })
+	x, _ := f.app.store.Session(s.ID)
+	if x.Status != store.StatusRunning || x.Ended != nil || x.WorktreeGone {
+		t.Errorf("session = %+v", x)
+	}
+	if !slices.Contains(sp.last(), "conv-1") {
+		t.Errorf("harness didn't resume the conversation: %q", sp.last())
+	}
+	if g.read(s.ID, "main.go") != "package main // done\n" {
+		t.Errorf("worktree has %q", g.read(s.ID, "main.go"))
+	}
+}
+
+// turnsDone counts a chat's turns that have ended.
+func turnsDone(f *fixture, id string) (n int) {
+	ev, _ := f.app.ChatEvents(id, 0)
+	for _, e := range ev {
+		if e.Kind == chat.KindTurn && e.Turn != nil && e.Turn.State != chat.TurnWorking {
+			n++
+		}
+	}
+	return n
+}
+
+func TestReopenChat(t *testing.T) {
+	f, _ := chatFixture(t)
+	ctx := context.Background()
+	s, _ := f.app.NewChat(ctx, "orbit", "claude", NewOptions{})
+	if err := f.app.KillSession(ctx, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	ended, _ := f.app.store.Session(s.ID)
+	x, err := f.app.ReopenChat(ctx, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Back as it was, in its place among the others.
+	if x.Status != store.StatusRunning || x.Ended != nil || !x.Updated.Equal(ended.Updated) || !x.Seen.Equal(ended.Seen) {
+		t.Errorf("reopened = %+v", x)
+	}
+	if y, _ := f.app.store.Session(s.ID); y.Status != store.StatusRunning {
+		t.Errorf("stored = %+v", y)
+	}
+	if y, err := f.app.ReopenChat(ctx, s.ID); err != nil || y.Status != store.StatusRunning {
+		t.Errorf("reopening a live chat: %+v, %v", y, err)
+	}
+	if _, err := f.app.ReopenChat(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown session: %v", err)
+	}
+
+	f.app.KillSession(ctx, s.ID)
+	f.app.bg.Wait() // the sandbox's warm start reads the config
+	f.app.cfg.Projects["orbit"].Harnesses = []string{"codex"}
+	if _, err := f.app.ReopenChat(ctx, s.ID); err == nil {
+		t.Error("reopened a chat whose harness the project no longer enables")
+	}
+}
+
+func TestReopenRefusedWhileItsWorktreeIsInUse(t *testing.T) {
+	// A cleared chat's successor carries on in its worktree.
+	f, _ := chatFixture(t)
+	newGitSandbox(t, f)
+	ctx := context.Background()
+	a := startedChat(t, f, NewOptions{OwnBranch: true})
+	b, err := f.app.NewChat(ctx, "orbit", "claude", NewOptions{Continues: a.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.app.KillSession(ctx, a.ID)
+	if _, err := f.app.ReopenChat(ctx, a.ID); !errors.Is(err, ErrBusy) {
+		t.Errorf("reopen while %s works there: %v", b.ID, err)
+	}
+	if err := f.app.ChatSend(ctx, a.ID, "more"); !errors.Is(err, ErrBusy) {
+		t.Errorf("send while %s works there: %v", b.ID, err)
+	}
+	f.app.KillSession(ctx, b.ID)
+	if _, err := f.app.ReopenChat(ctx, a.ID); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestUndoBeforeTidyKeepsTheWork(t *testing.T) {
+	f, _ := chatFixture(t)
+	g := newGitSandbox(t, f)
+	ctx := context.Background()
+	s := startedChat(t, f, NewOptions{OwnBranch: true})
+	os.WriteFile(filepath.Join(g.dir(s.ID), "wip.txt"), []byte("wip\n"), 0o644)
+	f.app.KillSession(ctx, s.ID)
+	if _, err := f.app.ReopenChat(ctx, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.app.bg.Wait()
+	if g.read(s.ID, "wip.txt") != "wip\n" {
+		t.Errorf("worktree has wip.txt %q", g.read(s.ID, "wip.txt"))
+	}
+	if x, _ := f.app.store.Session(s.ID); x.WorktreeGone || x.Status != store.StatusRunning {
+		t.Errorf("session = %+v", x)
+	}
+}
+
+// landOnMain lands commits on GitHub's main from a fresh clone: f runs
+// there with the worktree's HEAD fetched as FETCH_HEAD.
+func (g *gitSandbox) landOnMain(id string, f func(dir string)) {
+	g.t.Helper()
+	tmp := g.t.TempDir()
+	g.run("", "clone", "--quiet", g.origin, tmp)
+	if id != "" {
+		g.run(tmp, "fetch", "--quiet", g.dir(id), "HEAD")
+	}
+	f(tmp)
+	g.run(tmp, "push", "--quiet", "origin", "main")
+}
+
+// squashMerge lands a worktree's commits on main as one commit, as
+// GitHub's squash and merge does.
+func (g *gitSandbox) squashMerge(id string) {
+	g.landOnMain(id, func(dir string) {
+		g.run(dir, "merge", "--quiet", "--squash", "FETCH_HEAD")
+		g.run(dir, "commit", "--quiet", "-m", "squashed")
+	})
+}
+
+func TestMergedChatsEnd(t *testing.T) {
+	f, _ := chatFixture(t)
+	g := newGitSandbox(t, f)
+	ctx := context.Background()
+	commit := func(s store.Session, name string) {
+		t.Helper()
+		os.WriteFile(filepath.Join(g.dir(s.ID), name), []byte(s.ID+"\n"), 0o644)
+		g.run(g.dir(s.ID), "add", "-A")
+		g.run(g.dir(s.ID), "commit", "--quiet", "-m", name)
+	}
+	push := func(s store.Session) { t.Helper(); g.run(g.dir(s.ID), "push", "--quiet", "origin", "HEAD") }
+	// Quiet for a while, and its last turn seen.
+	settle := func(s store.Session) {
+		f.app.store.UpdateSession(s.ID, func(x *store.Session) {
+			x.Updated = time.Now().UTC().Add(-time.Hour)
+			x.Seen = time.Now().UTC()
+		})
+	}
+	type want struct {
+		name  string
+		s     store.Session
+		ended bool
+	}
+	var cases []want
+	chatFor := func(name string, ended bool) store.Session {
+		s := startedChat(t, f, NewOptions{OwnBranch: true})
+		cases = append(cases, want{name, s, ended})
+		return s
+	}
+
+	squashed := chatFor("squash merged", true)
+	commit(squashed, "a.txt")
+	commit(squashed, "b.txt")
+	push(squashed)
+	g.squashMerge(squashed.ID)
+
+	merged := chatFor("merged", true)
+	commit(merged, "c.txt")
+	push(merged)
+	g.run(g.dir(merged.ID), "push", "--quiet", "origin", "HEAD:main")
+
+	// Main moves on, then GitHub's rebase and merge copies each commit.
+	rebased := chatFor("rebase merged", true)
+	commit(rebased, "d1.txt")
+	commit(rebased, "d2.txt")
+	push(rebased)
+	g.landOnMain("", func(dir string) { g.run(dir, "commit", "--quiet", "--allow-empty", "-m", "elsewhere") })
+	g.landOnMain(rebased.ID, func(dir string) { g.run(dir, "cherry-pick", "--quiet", "HEAD..FETCH_HEAD") })
+
+	open := chatFor("unmerged", false)
+	commit(open, "e.txt")
+	push(open)
+
+	chatFor("no commits", false)
+
+	dirty := chatFor("uncommitted work", false)
+	commit(dirty, "f.txt")
+	push(dirty)
+	g.squashMerge(dirty.ID)
+	os.WriteFile(filepath.Join(g.dir(dirty.ID), "more.txt"), []byte("wip\n"), 0o644)
+
+	unpushed := chatFor("a commit not pushed", false)
+	commit(unpushed, "g.txt")
+	push(unpushed)
+	g.squashMerge(unpushed.ID)
+	commit(unpushed, "g2.txt")
+
+	local := chatFor("never pushed", false)
+	commit(local, "h.txt")
+	g.squashMerge(local.ID)
+
+	// After its merge the agent starts more work from main.
+	followup := chatFor("on a new branch from main", false)
+	commit(followup, "i.txt")
+	push(followup)
+	g.squashMerge(followup.ID)
+	g.run(g.ws, "fetch", "--quiet", "origin")
+	g.run(g.dir(followup.ID), "switch", "--quiet", "-c", "next", "origin/main")
+
+	// Done and undone: nothing to land, whatever main has.
+	reverted := chatFor("no change in all", false)
+	commit(reverted, "j.txt")
+	g.run(g.dir(reverted.ID), "revert", "--quiet", "--no-edit", "HEAD")
+	push(reverted)
+	g.landOnMain("", func(dir string) { g.run(dir, "commit", "--quiet", "--allow-empty", "-m", "nothing") })
+
+	unseen := chatFor("unseen", false)
+	commit(unseen, "k.txt")
+	push(unseen)
+	g.squashMerge(unseen.ID)
+
+	recent := chatFor("recently active", false)
+	commit(recent, "l.txt")
+	push(recent)
+	g.squashMerge(recent.ID)
+
+	// It moves on while git looks.
+	busy := chatFor("busy since", false)
+	commit(busy, "m.txt")
+	push(busy)
+	g.squashMerge(busy.ID)
+
+	for _, c := range cases {
+		if c.s.ID != recent.ID {
+			settle(c.s)
+		}
+	}
+	f.app.store.UpdateSession(unseen.ID, func(x *store.Session) { x.Seen = x.Updated.Add(-time.Minute) })
+	f.docker.set(func() {
+		f.docker.execOut = func(args []string) (string, error) {
+			if len(args) > 4 && args[2] == mergedScript && args[4] == busy.Worktree {
+				f.app.store.UpdateSession(busy.ID, func(x *store.Session) { x.State, x.Updated = store.ChatWorking, time.Now().UTC() })
+			}
+			return g.exec(args)
+		}
+	})
+
+	f.app.EndMerged(ctx)
+	f.app.bg.Wait()
+	for _, c := range cases {
+		x, _ := f.app.store.Session(c.s.ID)
+		if got := x.Status != store.StatusRunning; got != c.ended {
+			t.Errorf("%s chat: status %q", c.name, x.Status)
+		}
+		ev, _ := f.app.ChatEvents(c.s.ID, 0)
+		noted := len(ev) > 0 && ev[len(ev)-1].Kind == chat.KindNotice && strings.Contains(ev[len(ev)-1].Text, "merged")
+		if noted != c.ended {
+			t.Errorf("%s chat: noted %v", c.name, noted)
+		}
+	}
+}
+
+func TestMergedSkipsWhatItCantCheck(t *testing.T) {
+	f, _ := chatFixture(t)
+	g := newGitSandbox(t, f)
+	ctx := context.Background()
+	s := startedChat(t, f, NewOptions{OwnBranch: true})
+	os.WriteFile(filepath.Join(g.dir(s.ID), "a.txt"), []byte("a\n"), 0o644)
+	g.run(g.dir(s.ID), "add", "-A")
+	g.run(g.dir(s.ID), "commit", "--quiet", "-m", "a")
+	g.run(g.dir(s.ID), "push", "--quiet", "origin", "HEAD")
+	if f.app.merged(ctx, s, "main") {
+		t.Error("unmerged branch taken for merged")
+	}
+	// A project branch GitHub doesn't have.
+	if f.app.merged(ctx, s, "nope") {
+		t.Error("merged into a branch that isn't there")
+	}
+	g.squashMerge(s.ID)
+	g.run(g.ws, "fetch", "--quiet", "origin")
+	if !f.app.merged(ctx, s, "main") {
+		t.Fatal("squash merge missed")
+	}
+	// A stopped sandbox isn't started to look.
+	f.app.store.UpdateSession(s.ID, func(x *store.Session) { x.Updated, x.Seen = time.Now().UTC().Add(-time.Hour), time.Now().UTC() })
+	if err := f.app.StopSandbox(ctx, "orbit"); err != nil {
+		t.Fatal(err)
+	}
+	fetches := func() int { return len(f.docker.find(func(c []string) bool { return slices.Contains(c, "fetch") })) }
+	before := fetches()
+	f.app.EndMerged(ctx)
+	if x, _ := f.app.store.Session(s.ID); x.Status != store.StatusRunning {
+		t.Errorf("ended with its sandbox stopped: %q", x.Status)
+	}
+	if fetches() != before {
+		t.Error("fetched for a stopped sandbox")
 	}
 }
 

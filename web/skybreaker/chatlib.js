@@ -503,15 +503,32 @@ function sessionTone(s) {
   return unseen ? { tone: 'done', label: 'Finished' } : { tone: 'idle', label: 'Idle' };
 }
 
+// REST_AFTER is how long an idle chat you've seen stays among the open ones.
+const REST_AFTER = 24 * 3600e3;
+
+// resting is an idle chat you've seen, quiet a day and with no approval
+// waiting: it's listed with the ended ones, though it still takes messages.
+const resting = (s, now = Date.now(), waiting = new Set()) =>
+  sessionTone(s).tone === 'idle' && s.mode === 'chat' && now - when(s) > REST_AFTER && !waiting.has(s.id);
+
+// openCount is how many of a project's sessions are listed as open.
+const openCount = (sessions, project, now = Date.now()) =>
+  sessions.filter(s => s.project === project && s.status === 'running' && !resting(s, now)).length;
+
+// closable is a live chat that isn't busy or waiting on you, so ending it
+// interrupts nothing.
+const closable = s => s.mode === 'chat' && s.status === 'running' && ['idle', 'done', 'bad'].includes(sessionTone(s).tone) && s.state !== 'login';
+
 // inboxGroups sorts sessions into what needs you (approvals, problems,
-// finished work you haven't seen), what's working, the rest, and ended.
-function inboxGroups(sessions, pending = []) {
+// finished work you haven't seen), what's working, the rest, and ended
+// or resting.
+function inboxGroups(sessions, pending = [], now = Date.now()) {
   const waiting = new Set(pending.map(p => p.session));
   const g = { forYou: [], working: [], recent: [], ended: [] };
   const rank = { wait: 0, bad: 1, done: 2 };
   for (const s of sessions) {
     const { tone } = sessionTone(s);
-    if (tone === 'ended') g.ended.push(s);
+    if (tone === 'ended' || resting(s, now, waiting)) g.ended.push(s);
     else if (tone in rank || waiting.has(s.id)) g.forYou.push(s);
     else if (tone === 'work') g.working.push(s);
     else g.recent.push(s);
@@ -752,4 +769,4 @@ function agentActivity(it) {
   return it.children?.length ? 'Thinking' : 'Starting';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction };

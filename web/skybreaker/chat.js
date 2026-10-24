@@ -58,7 +58,6 @@ Object.assign(ICON, {
   list: ['M9 6h11', 'M9 12h11', 'M9 18h11', 'M4 6h.01', 'M4 12h.01', 'M4 18h.01'],
   plug: ['M9 2v6', 'M15 2v6', 'M6 8h12v4a6 6 0 0 1-12 0z', 'M12 18v4'],
   copy: ['M9 9h11v11H9z', 'M5 15H4V4h11v1'],
-  fork: ['M6 3v12', 'M18 9a3 3 0 1 0 0-6a3 3 0 1 0 0 6', 'M6 21a3 3 0 1 0 0-6a3 3 0 1 0 0 6', 'M18 9a9 9 0 0 1-9 9'],
   down: ['M12 5v14', 'M6 13l6 6 6-6'],
   brain: ['M12 5a3 3 0 0 0-6 1 3 3 0 0 0-2 5 3 3 0 0 0 3 5 3 3 0 0 0 5 1z', 'M12 5a3 3 0 0 1 6 1 3 3 0 0 1 2 5 3 3 0 0 1-3 5 3 3 0 0 1-5 1z'],
   ship: ['M12 3v12', 'M7 8l5-5 5 5', 'M5 21h14'],
@@ -326,9 +325,8 @@ async function renderChat(seq, d) {
   // What a screen reader hears of the tray: a line, not every tile again.
   const trayStatus = el('span.sr-only', { role: 'status' });
   const composer = el('form.composer', { onsubmit: e => { e.preventDefault(); submit() } }, modeBtn, input, sendBtn, picker);
-  const ended = el('div.ended-bar', { hidden: true });
   const hints = el('div.cmd-hints', { hidden: true });
-  const footer = el('div.chat-foot', null, dock, hints, tray, trayStatus, composer, ended);
+  const footer = el('div.chat-foot', null, dock, hints, tray, trayStatus, composer);
   const goalBar = el('div.chat-goal', { hidden: true });
   const ring = contextRing();
   // The ring is how full the context window is, and says so in figures.
@@ -398,12 +396,6 @@ async function renderChat(seq, d) {
     ring.set(use);
     ringPct.textContent = use?.pct ? use.pct + '%' : '';
     ringBtn.title = use ? `Context ${use.pct}% used: ${fmtTokens(use.used)} of ${fmtTokens(use.window)} tokens` : 'Context and session';
-    const over = session.status !== 'running';
-    composer.hidden = over;
-    ended.hidden = !over;
-    if (over) ended.replaceChildren(el('span', null, 'This session has ended.'),
-      session.resume ? el('button.btn.sm', { type: 'button', onclick: () => runCommand({ cmd: 'fork', arg: '' }) }, svg(ICON.fork), 'Fork') : null,
-      el('button.btn.sm', { type: 'button', onclick: () => newChatIn(project.name, session.harness) }, svg(ICON.plus), 'New chat'));
     syncComposer();
   };
   // saved takes the session as a change here left it; a refresh begun
@@ -536,7 +528,7 @@ async function renderChat(seq, d) {
   const oneQuestion = ask => ask?.ask.kind === 'question' && (ask.ask.questions || []).length === 1 && !ask.ask.questions[0].multi;
   const syncComposer = () => {
     const ask = [...chat.asks.values()][0];
-    composer.hidden = session.status !== 'running' || (ask?.ask.kind === 'question' && !oneQuestion(ask));
+    composer.hidden = (ask?.ask.kind === 'question' && !oneQuestion(ask));
     input.placeholder = oneQuestion(ask) ? 'Or answer in your own words…' : ask ? 'Or tell it what to do instead…' : chat.working ? 'Add to what it\'s doing…' : `Message ${harnessLabel(session.harness)}`;
     const action = composerAction({ working: chat.working, text: input.value.trim(), files: pending.length, ask: !!ask });
     sendBtn.classList.toggle('stop', action === 'stop');
@@ -882,12 +874,7 @@ async function renderChat(seq, d) {
       session.resume ? { label: 'Fork', desc: 'Copy this conversation into a new chat', run: () => runCommand({ cmd: 'fork', arg: '' }) } : null,
       running && chat.info.models?.length ? { label: 'Model', desc: modelLine(chatModel(), effortNow().on), run: () => modelMenu(anchor) } : null,
       { label: 'Project ' + project.name, run: () => navigate('/p/' + project.name) },
-      session.status === 'running' ? {
-        label: 'End session', danger: true, run: async () => {
-          if (!confirm('End this session? The conversation stays here to read.')) return;
-          try { await api('DELETE', '/api/sessions/' + id); v.refreshMeta() } catch (e) { toast(e.message, 'error') }
-        },
-      } : null,
+      running ? { label: 'End chat', desc: 'A message carries it on again', run: () => endChat(id) } : null,
     ].filter(Boolean));
   };
 
