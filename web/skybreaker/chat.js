@@ -634,7 +634,7 @@ async function renderChat(seq, d) {
     if (!composer.hidden) addFiles([...e.dataTransfer.files]);
   });
 
-  // --- Skybreaker's own commands: /rename, /color, /goal, /clear, /fork, /compact, /prompt, /effort ---
+  // --- Skybreaker's own commands: /rename, /color, /goal, /clear, /fork, /compact, /prompt, /model, /effort, /stop, /exit ---
   api('GET', '/api/prompts').then(r => { prompts = r.prompts || []; showHints() }).catch(() => { });
   const edit = async body => {
     session = await api('PATCH', '/api/sessions/' + encodeURIComponent(id), body);
@@ -668,6 +668,14 @@ async function renderChat(seq, d) {
         if (!list.length) { toast('This model has no effort levels to choose from.'); return false }
         if (!list.includes(c.arg)) { toast('Effort levels: ' + list.join(', ')); return false }
         await setEffort(c.arg);
+      } else if (c.cmd === 'model') {
+        const { list } = modelsNow();
+        if (!list.length) { toast('This chat has no models to choose from.'); return false }
+        if (!list.some(m => m.id === c.arg)) { toast('Models: ' + list.map(m => m.id).join(', ')); return false }
+        await setModel(c.arg);
+      } else if (c.cmd === 'stop' || c.cmd === 'exit') {
+        if (!chat.working) { toast('The agent isn\'t working.'); return true }
+        await api('POST', `/api/sessions/${id}/interrupt`, {});
       } else if (c.cmd === 'clear') {
         if (chat.working) { toast('Stop the agent first, then clear.'); return false }
         await clearChat();
@@ -695,12 +703,12 @@ async function renderChat(seq, d) {
     syncComposer();
   };
   const showHints = () => {
-    const hs = commandHints(input.value, prompts, effortNow());
+    const hs = commandHints(input.value, prompts, effortNow(), modelsNow());
     hints.hidden = !hs.length;
-    hints.replaceChildren(...hs.map(h => h.effort
+    hints.replaceChildren(...hs.map(h => h.effort || h.model
       ? el('button.cmd-hint' + (h.on ? '.on' : ''), { type: 'button', title: h.on ? 'Current' : null, 'aria-current': h.on ? 'true' : null,
-        onmousedown: e => e.preventDefault(), onclick: async () => { if (await runCommand({ cmd: 'effort', arg: h.effort })) clearInput() } },
-        el('b', null, h.effort))
+        onmousedown: e => e.preventDefault(), onclick: async () => { if (await runCommand({ cmd: h.cmd, arg: h.effort || h.model })) clearInput() } },
+        el('b', null, h.effort || h.model), h.desc && h.desc !== h.model ? el('span', null, h.desc) : null)
       : h.color
       ? el('button.cmd-hint.swatch-hint.sc-' + h.color, { type: 'button', onmousedown: e => e.preventDefault(),
         onclick: async () => { if (await runCommand({ cmd: 'color', arg: h.color })) clearInput() } }, el('span.swatch'), h.color)
@@ -714,7 +722,7 @@ async function renderChat(seq, d) {
   };
   // complete fills in a hint, leaving you to add to it before sending.
   const complete = h => {
-    input.value = h.color ? '/color ' + h.color : h.effort ? '/effort ' + h.effort : h.prompt ? '/prompt ' + h.prompt + ' ' : '/' + h.cmd + ' ';
+    input.value = h.color ? '/color ' + h.color : h.effort ? '/effort ' + h.effort : h.model ? '/model ' + h.model : h.prompt ? '/prompt ' + h.prompt + ' ' : '/' + h.cmd + ' ';
     input.focus();
     grow();
     showHints();
@@ -723,7 +731,7 @@ async function renderChat(seq, d) {
   };
   input.addEventListener('keydown', e => {
     if (e.key === 'Tab' && !e.shiftKey && !hints.hidden) {
-      const h = commandHints(input.value, prompts, effortNow())[0];
+      const h = commandHints(input.value, prompts, effortNow(), modelsNow())[0];
       if (h) { e.preventDefault(); complete(h) }
       return;
     }
@@ -839,9 +847,13 @@ async function renderChat(seq, d) {
   // effortNow is the effort levels the chat offers and the one it runs at.
   const effortNow = () => effortChoice(chatModel(), session.status === 'running', session.chosen_effort, chat.info.effort);
 
+  // modelsNow is the models the chat can switch to while it runs, and the one it runs.
+  const modelsNow = () => ({ list: session.status === 'running' ? chat.info.models || [] : [], on: chatModel()?.id || '' });
+
   // The server answers a model or effort change with the session as
   // saved, which may have fitted the effort to a new model.
   const setEffort = async level => saved((await api('POST', `/api/sessions/${id}/effort`, { effort: level })).session);
+  const setModel = async model => saved((await api('POST', `/api/sessions/${id}/model`, { model })).session);
 
   // The model menu lists the models once; the effort levels of the one
   // the chat runs sit below them.
@@ -851,7 +863,7 @@ async function renderChat(seq, d) {
     menu(anchor, [...(chat.info.models || []).map(m => ({
       label: m.name || m.id, desc: m.description, on: cur?.id === m.id,
       run: async () => {
-        try { saved((await api('POST', `/api/sessions/${id}/model`, { model: m.id })).session) } catch (e) { toast(e.message, 'error') }
+        try { await setModel(m.id) } catch (e) { toast(e.message, 'error') }
       },
     })), effort.list.length ? { node: effortPicker(cur, effort) } : null].filter(Boolean));
   };

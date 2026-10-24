@@ -296,19 +296,20 @@ test('parseCommand: only Skybreaker\'s own commands, everything else goes to the
   assert.deepEqual(parseCommand('/goal'), { cmd: 'goal', arg: '' });
   assert.deepEqual(parseCommand('/prompt review focus on auth'), { cmd: 'prompt', arg: 'review focus on auth' });
   assert.deepEqual(parseCommand('/prompt'), { cmd: 'prompt', arg: '' });
-  for (const c of ['clear', 'fork', 'compact']) {
+  for (const c of ['clear', 'fork', 'compact', 'stop', 'exit']) {
     assert.deepEqual(parseCommand('/' + c), { cmd: c, arg: '' });
     assert.deepEqual(parseCommand(' /' + c + ' '), { cmd: c, arg: '' });
   }
-  for (const s of ['/model opus', '/renamed x', '/Rename x', 'please /rename x', '/clearly', '/forks', '/prompts:review', '/prompts', '/', 'hello', '']) {
+  for (const s of ['/models', '/stopped', '/renamed x', '/Rename x', 'please /rename x', '/clearly', '/forks', '/prompts:review', '/prompts', '/', 'hello', '']) {
     assert.equal(parseCommand(s), null, s);
   }
 });
 
 test('commandHints: what to suggest as you type', () => {
-  assert.deepEqual(commandHints('/').map(h => h.cmd), ['rename', 'color', 'goal', 'clear', 'fork', 'compact', 'prompt']);
+  assert.deepEqual(commandHints('/').map(h => h.cmd), ['rename', 'color', 'goal', 'clear', 'fork', 'compact', 'prompt', 'stop', 'exit']);
   assert.deepEqual(commandHints('/co').map(h => h.cmd), ['color', 'compact']);
   assert.deepEqual(commandHints('/f').map(h => h.cmd), ['fork']);
+  assert.deepEqual(commandHints('/s').map(h => h.cmd), ['stop']);
   assert.deepEqual(commandHints('/color ').map(h => h.color), CHAT_COLORS);
   assert.deepEqual(commandHints('/color s').map(h => h.color), ['sun', 'stormlight']);
   assert.deepEqual(commandHints('/rename x'), []);
@@ -346,6 +347,19 @@ test('commandHints: /effort offers the levels the chat\'s model has', () => {
   assert.equal(commandHints('/effort h', [], levels)[0].on, true);
   assert.deepEqual(commandHints('/effort ', []), []);
   assert.deepEqual(parseCommand('/effort  max '), { cmd: 'effort', arg: 'max' });
+});
+
+test('commandHints: /model offers the models the chat can switch to', () => {
+  const models = { list: [{ id: 'default', name: 'Default', resolved: 'claude-opus-5-5' }, { id: 'sonnet' }, { id: 'opus[1m]' }], on: 'sonnet' };
+  assert.deepEqual(commandHints('/mo', [], undefined, models).map(h => h.cmd), ['model']);
+  // Without models to choose from there's no /model to offer.
+  assert.deepEqual(commandHints('/mo'), []);
+  assert.deepEqual(commandHints('/model ', [], undefined, models).map(h => h.model), ['default', 'sonnet', 'opus[1m]']);
+  assert.deepEqual(commandHints('/model o', [], undefined, models), [{ cmd: 'model', model: 'opus[1m]', desc: 'opus', on: false }]);
+  assert.deepEqual(commandHints('/model ', [], undefined, models)[0], { cmd: 'model', model: 'default', desc: 'Opus 5.5', on: false });
+  assert.equal(commandHints('/model s', [], undefined, models)[0].on, true);
+  assert.deepEqual(commandHints('/model x y', [], undefined, models), []);
+  assert.deepEqual(parseCommand('/model  sonnet '), { cmd: 'model', arg: 'sonnet' });
 });
 
 test('currentEffort: chosen, then reported, then the model\'s default, among its levels', () => {
