@@ -50,6 +50,11 @@ type Broker interface {
 	CA(ctx context.Context) ([]byte, error)
 }
 
+// GitHub reads path within repo ("owner/name") on GitHub's API.
+type GitHub interface {
+	GitHubGet(ctx context.Context, repo, path string, out any) error
+}
+
 // Minted is a new session token.
 type Minted struct {
 	ID      string
@@ -73,6 +78,8 @@ type Deps struct {
 	Usage *usage.Store
 	// Browser, if set, adjusts how assistants' browsers start.
 	Browser func(*browser.Options)
+	// GitHub reads chats' pull requests as the GitHub App; nil follows none.
+	GitHub GitHub
 	// ProjectInstructions are a project's own instructions, after every
 	// agent's: an assistant's personality and memories. Nil is none.
 	ProjectInstructions func(project string) string
@@ -92,6 +99,7 @@ type App struct {
 	store     *store.Store
 	sandbox   *sandbox.Manager
 	broker    Broker
+	github    GitHub
 	hookKey   []byte
 	notify    notify.Notifier
 	uiURL     string
@@ -107,6 +115,9 @@ type App struct {
 
 	chat *chat.Manager
 	bg   sync.WaitGroup // background sandbox starts and container stops
+
+	pullErrMu sync.Mutex
+	pullErr   map[string]string // per project: the last GitHub read error logged
 
 	sweptMu sync.Mutex
 	swept   map[string]bool // projects whose inner containers were stopped this quiet spell
@@ -155,7 +166,7 @@ func New(d Deps) (*App, error) {
 		d.ProjectInstructions = func(string) string { return "" }
 	}
 	a := &App{
-		cfg: d.Config, store: d.Store, sandbox: d.Sandbox, broker: d.Broker, hookKey: d.HookKey,
+		cfg: d.Config, store: d.Store, sandbox: d.Sandbox, broker: d.Broker, github: d.GitHub, hookKey: d.HookKey,
 		notify: d.Notify, uiURL: strings.TrimSuffix(d.UIURL, "/"), now: time.Now, readyPoll: time.Second, subs: map[chan Event]struct{}{},
 		locks: map[string]*sync.Mutex{}, spawn: d.Spawn, usage: d.Usage, projectInstructions: d.ProjectInstructions, browserOpts: d.Browser,
 		dial: func(ctx context.Context, addr string) (net.Conn, error) {

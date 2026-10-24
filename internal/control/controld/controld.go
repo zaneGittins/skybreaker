@@ -188,7 +188,7 @@ func Run(ctx context.Context, o Options) error {
 		Config: cfg, Store: st, Sandbox: sandboxes, Broker: tokens{brk},
 		HookKey: hookKey, Notify: n, UIURL: cfg.UIURL,
 		ChatDir: filepath.Join(cfg.DataDir, "chats"), Spawn: o.Spawn, Usage: tokensUsed,
-		Browser: o.Browser,
+		Browser: o.Browser, GitHub: brk,
 		ProjectInstructions: func(project string) string {
 			if !cfg.Assistant(project) {
 				return ""
@@ -413,6 +413,18 @@ func Run(ctx context.Context, o Options) error {
 				return
 			case <-t.C:
 				within(ctx, 4*time.Minute, a.EndMerged)
+			}
+		}
+	}()
+	go func() {
+		t := time.NewTicker(2 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				within(ctx, 90*time.Second, a.FollowPulls)
 			}
 		}
 	}()

@@ -361,7 +361,10 @@ func (a *App) ChatSend(ctx context.Context, id, text string, files ...chat.File)
 	if _, err := a.reopen(id); err != nil {
 		return err
 	}
-	a.store.UpdateSession(id, func(x *store.Session) { x.Seen = time.Now().UTC() })
+	a.store.UpdateSession(id, func(x *store.Session) {
+		x.Seen = time.Now().UTC()
+		x.Pull.Rounds, x.Pull.Paused = 0, false
+	})
 	return a.chat.Send(ctx, id, text, files...)
 }
 

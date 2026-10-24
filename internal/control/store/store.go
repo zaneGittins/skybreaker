@@ -83,6 +83,20 @@ type Session struct {
 	Branch       string `json:"branch,omitempty"`
 	BranchFrom   string `json:"branch_from,omitempty"`
 	WorktreeGone bool   `json:"worktree_gone,omitempty"`
+	// Pull is the open pull request its branch has on GitHub, as followed.
+	Pull Pull `json:"pull,omitzero"`
+}
+
+// Pull is a chat's pull request, and how far its checks and comments have
+// been passed on to the chat. Rounds counts follow-ups sent since your last
+// message; Paused is set once they stop for you.
+type Pull struct {
+	Number  int       `json:"number"`
+	URL     string    `json:"url,omitempty"`
+	Checked string    `json:"checked,omitempty"` // the head commit whose checks were handled
+	Since   time.Time `json:"since,omitzero"`    // comments up to here were handled
+	Rounds  int       `json:"rounds,omitempty"`
+	Paused  bool      `json:"paused,omitempty"`
 }
 
 const (
