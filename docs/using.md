@@ -42,6 +42,22 @@ Each project has a board of bugs, features and chores. Agents pick up, claim and
 claude mcp add --transport http --scope user skybreaker https://skybreaker.<your-tailnet>.ts.net/mcp
 ```
 
+## Assistants
+
+An assistant is an agent for everything that isn't a repo. Make one with **New assistant**, under Assistants, and give it the bundles it should reach.
+
+**Look.** Its name, its mark (a shape, a colour and how lively it moves), its agents and its personality. Every saved personality is kept, so you can go back.
+
+**Agents.** Claude, Codex or pi, or several. The **preferred** one answers its message box and runs routines that don't name one; switch it any time, and its memory and personality come along. A code project made in the app has the same choice under **Agents** in its menu. Admins change these, and a change applies when Skybreaker restarts.
+
+**Memory.** It suggests things to remember as you talk. Nothing is kept until you choose **Remember**, and you can edit or forget anything.
+
+**Routines.** Scheduled work, such as a weekday morning brief. Admins add them, or approve one it suggests. A change applies when Skybreaker restarts, once no agent is working. Routines and chats share the assistant's files, so give routines their own folders.
+
+**Today.** Its brief: what needs you, what it did lately, and what it can reach.
+
+**Its browser.** It browses with logins of its own, which it never sees. When a site wants a password, a code or a CAPTCHA, it asks you to **Take over**: you drive the page live and it waits. Give it accounts of its own, not yours, and make writes `ask` in its bundles.
+
 ## Terminal
 
 The `skybreaker` client attaches to sessions in each agent's own terminal UI, over your tailnet, with nothing to sign in to. [Install it](getting-started.md#optional) on Linux or macOS.

@@ -42,6 +42,20 @@ Agents may push only to `feature/*`, `fix/*`, `docs/*` and `chore/*` by default,
 
 If Settings says your App lacks permissions, add them on GitHub, accept them on the installation, then add the two `actions` rules from the example config above `GET /repos/{repo}/**` in your `github` bundle.
 
+## Assistants
+
+An assistant made in the app needs nothing here. In the config file, it's a project with `kind: assistant` and no repo:
+
+```yaml
+projects:
+  pip:
+    kind: assistant
+    harnesses: [claude, codex]
+    capabilities: [tools]
+```
+
+Its routines are made in the app and kept in `<data_dir>/settings/routines.json`.
+
 ## Sandbox limits
 
 Each sandbox gets up to 4 CPUs and 8 GB, or the whole host if it's smaller:

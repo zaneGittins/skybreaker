@@ -18,7 +18,8 @@ import (
 // access.json (see Access), where they are checked as the app's; env and
 // subnets stay in the file you edit.
 type Added struct {
-	Repo         string   `json:"repo"`
+	Kind         string   `json:"kind,omitempty"`
+	Repo         string   `json:"repo,omitempty"`
 	Branch       string   `json:"branch,omitempty"`
 	Harnesses    []string `json:"harnesses"`
 	Key          string   `json:"key,omitempty"`
@@ -31,6 +32,12 @@ type addedFile struct {
 
 // Added reports whether a project was created in the app.
 func (c *Config) Added(name string) bool { return c.added[name] }
+
+// Assistant reports whether a project is an assistant.
+func (c *Config) Assistant(name string) bool {
+	p := c.Projects[name]
+	return p != nil && p.Kind == KindAssistant
+}
 
 func readAdded(path string) (addedFile, error) {
 	var f addedFile
@@ -70,8 +77,17 @@ func (c *Config) merge(f addedFile, path string) error {
 		if !names.Project(name) {
 			return fmt.Errorf("%s: invalid project name %q", path, name)
 		}
-		if !names.Repo(a.Repo) {
-			return fmt.Errorf("%s: project %q: invalid repo %q (owner/name)", path, name, a.Repo)
+		switch a.Kind {
+		case "":
+			if !names.Repo(a.Repo) {
+				return fmt.Errorf("%s: project %q: invalid repo %q (owner/name)", path, name, a.Repo)
+			}
+		case KindAssistant:
+			if a.Repo != "" {
+				return fmt.Errorf("%s: project %q: an assistant has no repo", path, name)
+			}
+		default:
+			return fmt.Errorf("%s: project %q: unknown kind %q", path, name, a.Kind)
 		}
 		if len(a.Harnesses) == 0 {
 			return fmt.Errorf("%s: project %q: choose at least one agent", path, name)
@@ -82,7 +98,7 @@ func (c *Config) merge(f addedFile, path string) error {
 		if c.added == nil {
 			c.added = map[string]bool{}
 		}
-		c.Projects[name] = &Project{Repo: a.Repo, Branch: a.Branch, Harnesses: a.Harnesses, Key: a.Key, Capabilities: slices.Clone(a.Capabilities)}
+		c.Projects[name] = &Project{Kind: a.Kind, Repo: a.Repo, Branch: a.Branch, Harnesses: a.Harnesses, Key: a.Key, Capabilities: slices.Clone(a.Capabilities)}
 		c.added[name] = true
 	}
 	return nil
@@ -128,3 +144,33 @@ func writeTemp(path string, b []byte) (string, error) {
 	}
 	return tmp.Name(), nil
 }
+
+// mergeRoutines adds assistants' routines to the jobs. The app makes them
+// for assistants only, as prompts; one whose assistant is gone is left
+// unused rather than stopping Skybreaker starting.
+func (c *Config) mergeRoutines(routines []*Job, path string) error {
+	c.appJobs = map[string]bool{}
+	for i, j := range routines {
+		if j == nil {
+			return fmt.Errorf("%s: routine %d is empty", path, i)
+		}
+		// One whose assistant is gone, or is no longer one, waits unused
+		// until the next change drops it.
+		if p := c.Projects[j.Project]; p == nil || p.Kind != KindAssistant {
+			continue
+		}
+		switch {
+		case j.Kind != "" && j.Kind != JobPrompt:
+			return fmt.Errorf("%s: routine %s: an assistant's routine is a prompt", path, j.Name)
+		}
+		if c.appJobs[j.Name] {
+			return fmt.Errorf("%s: routine %s is defined twice", path, j.Name)
+		}
+		c.appJobs[j.Name] = true
+		c.Jobs = append(c.Jobs, j)
+	}
+	return nil
+}
+
+// AppJob reports whether a job is an assistant's routine, made in the app.
+func (c *Config) AppJob(name string) bool { return c.appJobs[name] }

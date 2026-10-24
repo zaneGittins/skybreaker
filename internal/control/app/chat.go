@@ -167,6 +167,9 @@ func (a *App) placeSession(ctx context.Context, s *store.Session, opts NewOption
 	if !opts.OwnBranch {
 		return nil
 	}
+	if _, err := a.repoProject(s.Project); err != nil {
+		return err
+	}
 	if st, err := a.sandbox.Status(ctx, s.Project); err == nil && st.Running && !a.holdsWorktrees(ctx, s.Project) {
 		// Started by an earlier Skybreaker: restart it onto one that can,
 		// unless that would interrupt something.
@@ -671,7 +674,7 @@ const maxReviewDiff = 2 << 20
 // Review is what the project's workspace has changed. It runs git in the
 // sandbox, never on the host.
 func (a *App) Review(ctx context.Context, project string) (Review, error) {
-	p, err := a.project(project)
+	p, err := a.repoProject(project)
 	if err != nil {
 		return Review{}, err
 	}
@@ -685,7 +688,7 @@ func (a *App) ReviewSession(ctx context.Context, id string) (Review, error) {
 	if err != nil {
 		return Review{}, err
 	}
-	p, err := a.project(s.Project)
+	p, err := a.repoProject(s.Project)
 	if err != nil {
 		return Review{}, err
 	}

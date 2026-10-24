@@ -115,7 +115,13 @@ func TestInvalid(t *testing.T) {
 		"runtime is not a choice": func(s string) string {
 			return strings.Replace(s, `"image": "ghcr`, `"runtime": "runc", "image": "ghcr`, 1)
 		},
-		"unknown harness":  func(s string) string { return strings.Replace(s, `["claude", "codex"]`, `["claude", "gemini"]`, 1) },
+		"unknown harness": func(s string) string { return strings.Replace(s, `["claude", "codex"]`, `["claude", "gemini"]`, 1) },
+		"assistant with a repo": func(s string) string {
+			return strings.Replace(s, `"repo": "zaneGittins/bifract"`, `"kind": "assistant", "repo": "zaneGittins/bifract"`, 1)
+		},
+		"unknown project kind": func(s string) string {
+			return strings.Replace(s, `"repo": "zaneGittins/bifract"`, `"kind": "robot", "repo": "zaneGittins/bifract"`, 1)
+		},
 		"job bad schedule": func(s string) string { return strings.Replace(s, `0 2 * * *`, `0 25 * * *`, 1) },
 		"job unknown proj": func(s string) string {
 			return strings.Replace(s, `"project": "orbit", "schedule"`, `"project": "nope", "schedule"`, 1)

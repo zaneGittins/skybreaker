@@ -90,6 +90,7 @@ async function go() {
   clearTimers();
   closeTerminal();
   closeChat();
+  closeAssistant();
   closeSheet();
   closeMenu();
   state.route = route(location.pathname);
@@ -100,6 +101,7 @@ async function go() {
     switch (state.route.name) {
       case 'home': await renderHome(seq); break;
       case 'project': await renderProject(seq, state.route.project, state.route.tab); break;
+      case 'assistant': await renderAssistant(seq, state.route.project, state.route.tab); break;
       case 'session': await renderSession(seq, state.route.id); break;
       case 'run': await renderRun(seq, state.route.id); break;
       case 'activity': await renderActivity(seq); break;
@@ -125,7 +127,9 @@ function busy() {
 // refresh re-renders the current view in place after a live event, except
 // the terminal, which streams on its own. A focused link stays focused.
 const refresh = debounce(() => {
-  if (!state.route || state.route.name === 'session') return;
+  // A chat streams on its own; a browser you've taken over must not be
+  // closed and handed back by a redraw.
+  if (!state.route || state.route.name === 'session' || state.route.tab === 'browser') return;
   if (busy()) { state.stale = true; return }
   const y = scrollY;
   const focused = document.activeElement?.closest('a[href]')?.getAttribute('href');
@@ -159,11 +163,13 @@ async function renderHome(seq) {
   const orphans = d.pending.filter(a => !d.sessions.some(s => s.id === a.session));
   // Earlier is what has ended, and chats resting a day.
   const earlier = g.ended;
-  const needs = g.forYou.length + requests.length + review.length + orphans.length;
+  const asking = d.projects.filter(p => p.kind === 'assistant' && p.asks);
+  const needs = g.forYou.length + requests.length + review.length + orphans.length + asking.reduce((n, p) => n + p.asks, 0);
   const parts = [
     requests.length + orphans.length ? plural(requests.length + orphans.length, 'approval') : '',
     g.forYou.length ? plural(g.forYou.length, 'chat') : '',
     review.length ? `${review.length} to review` : '',
+    ...asking.map(p => `${plural(p.asks, 'thing')} from ${p.look?.name || p.name}`),
   ].filter(Boolean);
   const summary = needs ? listing(parts) : g.working.length ? `${plural(g.working.length, 'agent')} working on their own` : 'Nothing is waiting on you.';
 
@@ -173,13 +179,18 @@ async function renderHome(seq) {
   const forYou = [...g.forYou.map(row), ...reviewRows];
   const main = el('div.home-main', null,
     requests.length || orphans.length ? el('div.approvals', null, requests.map(a => requestCard(a, tints[a.project])), orphans.map(a => approvalCard(a, tints[a.project]))) : null,
+    asking.length ? el('div.row-list', null, asking.map(asstHomeRow)) : null,
     forYou.length ? el('div.row-list' + (g.forYou.length ? '' : '.phone-only'), null, forYou) : null,
     g.forYou.some(s => pendingFor(s.id).length) ? el('div.approvals', null, d.pending.filter(a => g.forYou.some(s => s.id === a.session)).map(a => approvalCard(a, tints[a.project]))) : null,
     g.working.length ? el('section.list-sec', null, secHead('Working', g.working.length), el('div.row-list', null, g.working.map(row))) : null,
     g.recent.length ? el('section.list-sec', null, secHead('Open', g.recent.length), el('div.row-list', null, g.recent.map(row))) : null,
     !d.sessions.some(s => s.status === 'running' && !resting(s)) ? el('button.empty-add', { type: 'button', onclick: () => newSessionSheet(d.projects) }, svg(ICON.plus), 'Start a chat') : null,
+    el('section.list-sec.phone-only', null, secHead('Assistants'),
+      el('div.tiles', null, d.projects.filter(p => p.kind === 'assistant').map(asstTile),
+        el('button.tile.np-tile', { type: 'button', onclick: newAssistantSheet },
+          el('span.tile-name', null, svg(ICON.plus), 'New assistant'), el('span.tile-sub', null, 'For everything that isn\u2019t code')))),
     el('section.list-sec.phone-only', null, secHead('Projects'),
-      el('div.tiles', null, d.projects.map(p => projectTile(p, review, openCount(d.sessions, p.name))),
+      el('div.tiles', null, d.projects.filter(p => p.kind !== 'assistant').map(p => projectTile(p, review, openCount(d.sessions, p.name))),
         el('button.tile.np-tile', { type: 'button', onclick: newProjectSheet },
           el('span.tile-name', null, svg(ICON.plus), 'New project'), el('span.tile-sub', null, 'From a GitHub repo')))),
     earlier.length ? el('details.earlier', { open: prefs.get('earlierOpen') === '1', ontoggle: e => prefs.set('earlierOpen', e.target.open ? '1' : '0') },
@@ -665,6 +676,7 @@ function sandboxSheet(p, live) {
         act(ICON.window, 'Preview a web page', () => previewSheet(p), { sub: 'A dev server in the sandbox' }),
         act(ICON.code, 'Open in VS Code', () => vscodeSheet(p), { sub: 'Remote - SSH, from your computer' }),
         act(ICON.clock, 'Schedules', go(projectPath(p.name, 'runs'))),
+        act(ICON.agent, 'Agents', () => agentsSheet(p), { sub: p.harnesses.filter(h => h !== 'shell').map(harnessLabel).join(', ') }),
         p.running
           ? act(ICON.stop, 'Stop sandbox', () => { closeSheet(); if (!live || confirm(`Stop ${p.name}'s sandbox? ${plural(live, 'chat')} pause and resume later.`)) sandboxAction(p.name, 'stop') },
             { cls: '.danger', sub: live ? `${plural(live, 'chat')} pause and resume later` : '' })
@@ -772,6 +784,21 @@ async function vscodeSheet(p) {
 // --- new project ----------------------------------------------------------------
 
 // projectNameFrom suggests a project name from a repo: "acme/Web.App" → "web-app".
+// npBox is a checkbox with a label and a line under it; npChecked is the
+// values of those ticked; npSheet shows a making sheet (a new project,
+// a new assistant).
+const npBox = (value, checked, label, sub, reach) => el('label.np-check', null,
+  el('input', { type: 'checkbox', value, checked: checked || null }),
+  el('span.np-check-text', null, el('b', null, label), sub ? el(reach ? 'span.np-reach' : 'span', null, sub) : null));
+const npChecked = boxes => boxes.map(b => b.querySelector('input')).filter(i => i.checked).map(i => i.value);
+function npSheet(title, ...body) {
+  $('#sheet-root').replaceChildren(
+    el('div.backdrop', { onclick: closeSheet }),
+    el('div.picker.np-sheet', { role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+      el('div.picker-grip'), el('div.pv-head', null, el('b', null, title)), ...body,
+      el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Close')));
+}
+
 function projectNameFrom(repo) {
   const n = String(repo).split('/').pop().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
   return n.slice(0, 40);
@@ -790,22 +817,18 @@ async function newProjectSheet() {
   let named = false;
   name.addEventListener('input', () => { named = name.value !== '' });
   repo.addEventListener('input', () => { if (!named) name.value = projectNameFrom(repo.value) });
-  const box = (value, checked, label, sub, reach) => el('label.np-check', null,
-    el('input', { type: 'checkbox', value, checked: checked || null }),
-    el('span.np-check-text', null, el('b', null, label), sub ? el(reach ? 'span.np-reach' : 'span', null, sub) : null));
-  const agentBoxes = agents.map(h => box(h, h === 'claude' || h === 'codex', harnessLabel(h), HARNESS_INFO[h] || ''));
+  const agentBoxes = agents.map(h => npBox(h, h === 'claude' || h === 'codex', harnessLabel(h), HARNESS_INFO[h] || ''));
   const wanted = ['github', 'tools', ...(agents.includes('claude') ? ['claude-login'] : []), ...(agents.includes('codex') ? ['codex-login'] : [])];
-  const capBoxes = caps.map(c => box(c.name, wanted.includes(c.name), c.name, c.reaches.join(', '), true));
+  const capBoxes = caps.map(c => npBox(c.name, wanted.includes(c.name), c.name, c.reaches.join(', '), true));
   const error = el('p.np-error', { role: 'alert', hidden: true });
   const create = el('button.btn.primary', { type: 'submit' }, 'Create project');
-  const checked = boxes => boxes.map(b => b.querySelector('input')).filter(i => i.checked).map(i => i.value);
   const form = el('form.np-form', {
     onsubmit: async e => {
       e.preventDefault();
       error.hidden = true;
       create.disabled = true;
       try {
-        const out = await api('POST', '/api/projects', { name: name.value.trim(), repo: repo.value.trim(), harnesses: checked(agentBoxes), capabilities: checked(capBoxes) });
+        const out = await api('POST', '/api/projects', { name: name.value.trim(), repo: repo.value.trim(), harnesses: npChecked(agentBoxes), capabilities: npChecked(capBoxes) });
         created(out, repo.value.trim());
       } catch (err) {
         error.textContent = err.message;
@@ -820,11 +843,7 @@ async function newProjectSheet() {
     el('fieldset.np-group.np-access', null, el('legend', null, 'Access'), capBoxes.length ? capBoxes : el('p.np-hint', null, 'No bundles yet: make one in Settings.'),
       el('p.np-hint', null, 'What the sandbox may reach. Anything else is denied; add hosts later in Settings.')),
     error, create);
-  const sheet = (...body) => $('#sheet-root').replaceChildren(
-    el('div.backdrop', { onclick: closeSheet }),
-    el('div.picker.np-sheet', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'New project' },
-      el('div.picker-grip'), el('div.pv-head', null, el('b', null, 'New project')), ...body,
-      el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Close')));
+  const sheet = (...body) => npSheet('New project', ...body);
   sheet(form);
   repo.focus();
 
@@ -873,7 +892,7 @@ function harnessPicks(p) {
     busy = true;
     try {
       prefs.set('lastProject', p.name);
-      const s = await api('POST', `/api/projects/${p.name}/sessions`, { harness: h, title: '', own_branch: ownBranch() });
+      const s = await api('POST', `/api/projects/${p.name}/sessions`, { harness: h, title: '', own_branch: p.kind !== 'assistant' && ownBranch() });
       closeSheet();
       navigate('/s/' + s.id);
     } catch (err) { toast(err.message, 'error') } finally { busy = false }
@@ -897,8 +916,8 @@ function pickHarness(p) {
       el('div.picker-grip'),
       el('div.picker-head', null,
         el('h2', null, 'New chat'),
-        el('p', null, p.running ? 'in ' + p.name : `in ${p.name} · starts the sandbox first`)),
-      list, ownBranchBox(),
+        el('p', null, (p.kind === 'assistant' ? 'with ' + (p.look?.name || p.name) : 'in ' + p.name) + (p.running ? '' : ' · starts the sandbox first'))),
+      list, p.kind === 'assistant' ? null : ownBranchBox(),
       el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Cancel')));
   $('.pick', list)?.focus({ preventScroll: true });
 }
@@ -1449,7 +1468,8 @@ const wide = () => matchMedia('(min-width: 1024px)').matches;
 function sidebar(d) {
   state.inbox = d;
   const g = inboxGroups(d.sessions, d.pending);
-  const needs = g.forYou.length + (d.requests || []).length + (d.review || []).length;
+  const asks = d.projects.reduce((n, p) => n + (p.asks || 0), 0);
+  const needs = g.forYou.length + (d.requests || []).length + (d.review || []).length + asks;
   // The logo's ring turns while any agent is working, like the halo in a chat.
   const working = d.sessions.some(s => s.status === 'running' && s.state === 'working');
   for (const b of document.querySelectorAll('.brand')) b.classList.toggle('working', working);
@@ -1458,7 +1478,10 @@ function sidebar(d) {
   count.textContent = String(needs);
   $('#side-user').textContent = state.meta?.user || '';
   const open = name => openCount(d.sessions, name);
-  $('#side-projects').replaceChildren(...d.projects.map(p => el('a.side-link.side-project.tint-' + p.tint + (p.running ? '.running' : ''), {
+  const assistants = d.projects.filter(p => p.kind === 'assistant'), repos = d.projects.filter(p => p.kind !== 'assistant');
+  $('#side-assistants').replaceChildren(...assistants.map(p => sideAssistant(p, d)),
+    el('button.side-link.side-new', { type: 'button', onclick: newAssistantSheet, title: 'New assistant' }, svg(ICON.plus), el('span', null, 'New assistant')));
+  $('#side-projects').replaceChildren(...repos.map(p => el('a.side-link.side-project.tint-' + p.tint + (p.running ? '.running' : ''), {
     href: '/p/' + encodeURIComponent(p.name), 'data-link': true, 'data-project': p.name,
     title: p.name + (p.running ? ' · ' + (open(p.name) ? plural(open(p.name), 'open chat') : 'sandbox running') : ''),
   },
@@ -1466,6 +1489,18 @@ function sidebar(d) {
     p.running ? el('span.side-live', null, el('span.dot'), open(p.name) ? String(open(p.name)) : '') : null)),
     el('button.side-link.side-new', { type: 'button', onclick: newProjectSheet, title: 'New project' }, svg(ICON.plus), el('span', null, 'New project')));
   markSidebar();
+}
+
+// sideAssistant is an assistant in the sidebar: its mark, amber while
+// something waits on you.
+function sideAssistant(p, d) {
+  const look = asstLookOf(p);
+  const needs = p.pending + (p.asks || 0) > 0;
+  const row = el('a.side-link.side-project.side-assistant', { href: asstPath(p.name), 'data-link': true, 'data-project': p.name, title: look.name + (needs ? ' needs you' : '') },
+    avatar(look, { mini: true, state: asstState(needs, d.sessions.filter(s => s.project === p.name)) }), el('span', null, look.name),
+    needs ? el('span.side-needs', null, el('span.sr-only', null, 'needs you')) : null);
+  asstAccent(row, look.color);
+  return row;
 }
 
 // refreshSidebar keeps the sidebar current on pages that don't fetch the
@@ -1479,16 +1514,24 @@ const refreshSidebar = debounce(async () => {
 // you're in.
 function markSidebar() {
   const r = state.route || {};
-  const project = r.name === 'project' ? r.project : r.name === 'session' ? state.chat?.project : null;
+  const project = r.name === 'project' || r.name === 'assistant' ? r.project : r.name === 'session' ? state.chat?.project : null;
   $('#nav-inbox').classList.toggle('on', r.name === 'home');
   $('#nav-activity').classList.toggle('on', r.name === 'activity');
   $('#nav-settings').classList.toggle('on', r.name === 'settings');
   for (const a of document.querySelectorAll('.side-project')) a.classList.toggle('on', a.dataset.project === project);
-  $('#new-chat-label').textContent = project ? 'New chat in ' + project : 'New chat';
+  const asst = (state.inbox?.projects || []).find(p => p.name === project && p.kind === 'assistant');
+  $('#new-chat-label').textContent = asst ? 'Message ' + (asst.look?.name || project) : project ? 'New chat in ' + project : 'New chat';
+  // In an assistant's space the frame takes its colour too.
+  const btn = $('#new-chat');
+  if (asst) asstAccent(btn, asst.look?.color);
+  else for (const v of ['--sun', '--working', '--working-bg']) btn.style.removeProperty(v);
   state.newChatIn = project;
 }
 
 function startNewChat() {
+  // On an assistant's Today, its message box is right there.
+  const box = $('.a-composer .composer-input');
+  if (box) { box.focus(); return }
   const projects = state.inbox?.projects || state.projects || [];
   const p = projects.find(x => x.name === state.newChatIn);
   p ? pickHarness(p) : newSessionSheet(projects);
@@ -1558,3 +1601,59 @@ async function boot() {
 }
 
 boot();
+
+// --- a project's agents ------------------------------------------------------------
+
+// agentsEditor picks a project's agents and which comes first: the one its
+// message box and routines use unless told otherwise. Enabling Claude or
+// Codex offers its sign-in bundle too. It applies when Skybreaker restarts.
+function agentsEditor(p, { onSaved } = {}) {
+  const all = (state.meta?.harnesses || []).filter(h => h !== 'shell');
+  const had = p.harnesses.filter(h => h !== 'shell');
+  let list = [...had];
+  const canEdit = !!state.meta?.admin && p.added;
+  const rows = el('div.ag-rows', { role: 'list' });
+  const bundles = el('div.ag-bundles');
+  const error = el('p.np-error', { role: 'alert', hidden: true });
+  const save = el('button.btn.primary.sm', { type: 'button', disabled: true }, 'Save');
+  let caps = null;
+  const draw = () => {
+    const order = [...list, ...all.filter(h => !list.includes(h))];
+    rows.replaceChildren(...order.map(h => {
+      const on = list.includes(h), first = list[0] === h;
+      return el('div.ag-row' + (on ? '.on' : ''), { role: 'listitem' },
+        el('label.np-check', null,
+          el('input', { type: 'checkbox', checked: on || null, disabled: !canEdit || (on && list.length === 1) || null,
+            onchange: e => { list = e.target.checked ? [...list, h] : list.filter(x => x !== h); draw() } }),
+          el('span.np-check-text', null, el('b', null, harnessLabel(h)), el('span', null, HARNESS_INFO[h] || h))),
+        first ? el('span.ag-first', null, 'Preferred')
+          : on && canEdit ? el('button.btn.ghost.sm', { type: 'button', onclick: () => { list = [h, ...list.filter(x => x !== h)]; draw() } }, 'Make preferred') : null);
+    }));
+    // A newly added agent can bring the bundle it signs in with.
+    const offers = (caps || []).filter(c => list.some(h => !had.includes(h) && c.name === h + '-login'));
+    bundles.replaceChildren(...offers.map(c => npBox(c.name, true, 'Also give it ' + c.name, 'So ' + harnessLabel(c.name.replace(/-login$/, '')) + ' can sign in: ' + c.reaches.join(', '), true)));
+    save.disabled = !canEdit || list.join() === had.join();
+  };
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    error.hidden = true;
+    try {
+      const out = await api('PUT', `/api/projects/${encodeURIComponent(p.name)}/harnesses`, { harnesses: list, add_bundles: npChecked([...bundles.children]) });
+      toast(out.restart === 'now' ? 'Saved: Skybreaker is restarting to apply it' : 'Saved: it applies once no agent is working');
+      onSaved?.();
+    } catch (e) {
+      error.textContent = e.message;
+      error.hidden = false;
+      save.disabled = false;
+    }
+  });
+  if (canEdit) api('GET', '/api/capabilities').then(c => { caps = c; draw() }).catch(() => { });
+  draw();
+  const note = !p.added ? 'Set in the config file.' : !state.meta?.admin ? 'Only admins change these.' : 'Applies when Skybreaker restarts, once no agent is working.';
+  return el('div.ag', null, rows, bundles, error, el('div.ag-foot', null, el('span.np-hint', null, note), canEdit ? save : null));
+}
+
+// agentsSheet is agentsEditor for a code project, from its menu.
+function agentsSheet(p) {
+  sheet('Agents', el('div.ag-sheet', null, agentsEditor(p, { onSaved: closeSheet })));
+}

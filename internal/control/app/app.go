@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zaneGittins/skybreaker/internal/control/browser"
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/harness"
@@ -36,6 +37,9 @@ import (
 )
 
 var ErrNotFound = errors.New("not found")
+
+// ErrNoRepo is asking an assistant for something that needs a repository.
+var ErrNoRepo = errors.New("an assistant has no repository")
 
 // Broker mints and revokes the session tokens sandboxes use as proxy
 // credentials, and holds the CA they trust.
@@ -67,6 +71,11 @@ type Deps struct {
 	Spawn Spawn
 	// Usage counts the tokens chats report; nil counts nothing.
 	Usage *usage.Store
+	// Browser, if set, adjusts how assistants' browsers start.
+	Browser func(*browser.Options)
+	// ProjectInstructions are a project's own instructions, after every
+	// agent's: an assistant's personality and memories. Nil is none.
+	ProjectInstructions func(project string) string
 }
 
 // Event is what the UI's live stream carries.
@@ -110,8 +119,13 @@ type App struct {
 	sshKeys []byte // authorized_keys for every sandbox's sshd
 
 	instrMu      sync.Mutex
-	instructions string // every agent's, set in the app
-	dial         func(ctx context.Context, addr string) (net.Conn, error)
+	instructions string     // every agent's, set in the app
+	etcMu        sync.Mutex // serialises RefreshInstructions
+	browsers     browsers   // assistants' browsers, by project
+	browserOpts  func(*browser.Options)
+	// projectInstructions is Deps.ProjectInstructions, never nil.
+	projectInstructions func(project string) string
+	dial                func(ctx context.Context, addr string) (net.Conn, error)
 }
 
 const (
@@ -137,10 +151,13 @@ func New(d Deps) (*App, error) {
 	if d.Spawn == nil {
 		d.Spawn = SpawnExec
 	}
+	if d.ProjectInstructions == nil {
+		d.ProjectInstructions = func(string) string { return "" }
+	}
 	a := &App{
 		cfg: d.Config, store: d.Store, sandbox: d.Sandbox, broker: d.Broker, hookKey: d.HookKey,
 		notify: d.Notify, uiURL: strings.TrimSuffix(d.UIURL, "/"), now: time.Now, readyPoll: time.Second, subs: map[chan Event]struct{}{},
-		locks: map[string]*sync.Mutex{}, spawn: d.Spawn, usage: d.Usage,
+		locks: map[string]*sync.Mutex{}, spawn: d.Spawn, usage: d.Usage, projectInstructions: d.ProjectInstructions, browserOpts: d.Browser,
 		dial: func(ctx context.Context, addr string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", addr)
 		},
@@ -162,6 +179,15 @@ func (a *App) project(name string) (*config.Project, error) {
 		return nil, fmt.Errorf("project %q: %w", name, ErrNotFound)
 	}
 	return p, nil
+}
+
+// repoProject is project for what works on its repository.
+func (a *App) repoProject(name string) (*config.Project, error) {
+	p, err := a.project(name)
+	if err == nil && p.Kind == config.KindAssistant {
+		err = ErrNoRepo
+	}
+	return p, err
 }
 
 // ProjectDir is the host directory holding a project's workspace, home,
@@ -490,7 +516,11 @@ func (a *App) writeEtc(ctx context.Context, project string, p *config.Project) e
 	} else if err := os.Remove(filepath.Join(etc, piModels)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	for name, b := range instructionFiles(a.currentInstructions()) {
+	// Under etcMu, so a refresh can't land between reading the text and
+	// writing it, and be undone.
+	a.etcMu.Lock()
+	defer a.etcMu.Unlock()
+	for name, b := range instructionFiles(a.instructionsFor(project)) {
 		files[name] = b
 	}
 	for name, b := range files {
@@ -559,6 +589,7 @@ func (a *App) StopSandbox(ctx context.Context, project string) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), startTimeout)
 	defer cancel()
 	a.stopChats(project)
+	a.StopBrowser(project)
 	defer a.lockProject(project)()
 	if err := a.sandbox.Stop(ctx, project); err != nil {
 		return err
@@ -853,7 +884,7 @@ func GitArgs(dir string, args ...string) []string {
 // Diff shows uncommitted changes in the project's workspace. It runs inside
 // the sandbox, never with host git.
 func (a *App) Diff(ctx context.Context, project string) (string, error) {
-	if _, err := a.project(project); err != nil {
+	if _, err := a.repoProject(project); err != nil {
 		return "", err
 	}
 	out, err := a.sandbox.Exec(ctx, project, GitArgs("/workspace", "diff", "--no-ext-diff", "--no-textconv", "--no-color", "HEAD")...)

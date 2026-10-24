@@ -16,25 +16,47 @@ import (
 // so running sessions keep what they had.
 func (a *App) SetInstructions(text string) error {
 	a.instrMu.Lock()
-	defer a.instrMu.Unlock()
 	a.instructions = text
+	a.instrMu.Unlock()
 	var errs []error
 	for project := range a.cfg.Projects {
-		etc := filepath.Join(a.ProjectDir(project), "etc")
-		if _, err := os.Stat(etc); err != nil {
-			continue // never started; writeEtc will write it
-		}
-		for name, b := range instructionFiles(text) {
-			errs = append(errs, writeInPlace(filepath.Join(etc, name), b))
-		}
+		errs = append(errs, a.RefreshInstructions(project))
 	}
 	return errors.Join(errs...)
 }
 
-func (a *App) currentInstructions() string {
+// RefreshInstructions rewrites a project's instructions, after its own
+// (an assistant's personality or memories) changed. A project never
+// started has none yet: writeEtc writes them when it starts.
+func (a *App) RefreshInstructions(project string) error {
+	// One rewrite at a time, each with the latest text, so a slower one
+	// can't put back what a newer change replaced.
+	a.etcMu.Lock()
+	defer a.etcMu.Unlock()
+	etc := filepath.Join(a.ProjectDir(project), "etc")
+	if _, err := os.Stat(etc); err != nil {
+		return nil
+	}
+	var errs []error
+	for name, b := range instructionFiles(a.instructionsFor(project)) {
+		errs = append(errs, writeInPlace(filepath.Join(etc, name), b))
+	}
+	return errors.Join(errs...)
+}
+
+// instructionsFor is every agent's instructions, then the project's own.
+func (a *App) instructionsFor(project string) string {
 	a.instrMu.Lock()
-	defer a.instrMu.Unlock()
-	return a.instructions
+	text := a.instructions
+	a.instrMu.Unlock()
+	own := a.projectInstructions(project)
+	switch {
+	case own == "":
+		return text
+	case text == "":
+		return own
+	}
+	return text + "\n\n" + own
 }
 
 // instructionFiles are the instructions as each harness reads them.

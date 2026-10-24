@@ -21,9 +21,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zaneGittins/skybreaker/internal/assistant"
 	"github.com/zaneGittins/skybreaker/internal/board"
 	"github.com/zaneGittins/skybreaker/internal/control/api"
 	"github.com/zaneGittins/skybreaker/internal/control/app"
+	"github.com/zaneGittins/skybreaker/internal/control/browser"
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/hooks"
@@ -62,6 +64,9 @@ type Options struct {
 	// OnBroker, if set, sees the broker once it is open (TestUIDev
 	// scripts requests through it).
 	OnBroker func(*broker.Broker)
+	// Browser, if set, adjusts how assistants' browsers start (TestUIDev
+	// runs a local Chromium).
+	Browser func(*browser.Options)
 }
 
 // tokens is the broker as the app sees it.
@@ -174,13 +179,46 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	defer tokensUsed.Flush()
+	// Each assistant's look, personality and memories, on the host only.
+	assistants, err := assistant.Open(filepath.Join(cfg.DataDir, "assistants.json"))
+	if err != nil {
+		return err
+	}
 	a, err := app.New(app.Deps{
 		Config: cfg, Store: st, Sandbox: sandboxes, Broker: tokens{brk},
 		HookKey: hookKey, Notify: n, UIURL: cfg.UIURL,
 		ChatDir: filepath.Join(cfg.DataDir, "chats"), Spawn: o.Spawn, Usage: tokensUsed,
+		Browser: o.Browser,
+		ProjectInstructions: func(project string) string {
+			if !cfg.Assistant(project) {
+				return ""
+			}
+			return assistant.Instructions(assistants.Get(project))
+		},
 	})
 	if err != nil {
 		return err
+	}
+	assistants.OnChange = func(name string) {
+		if err := a.RefreshInstructions(name); err != nil {
+			log.Printf("skybreaker: %s's instructions: %v", name, err)
+		}
+		a.Publish(app.Event{Type: "assistant", Project: name})
+	}
+	assistants.OnPropose = func(name string, p assistant.Proposal) {
+		// Content-free, like every push: the agent's words stay in the app.
+		page, title := "memory", "A suggestion is waiting"
+		switch p.Kind {
+		case assistant.ProposeRoutine:
+			page = "routines"
+		case assistant.ProposeTakeover:
+			page, title = "today", "The browser needs you"
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			n.Notify(ctx, notify.Message{ID: "proposal-" + name + "-" + p.ID, Title: title, Body: "From assistant " + name + ".", Click: cfg.UIURL + "/a/" + name + "/" + page})
+		}()
 	}
 	// Every agent's instructions, set in the app.
 	if text, err := config.ReadInstructions(cfg.Instructions()); err != nil {
@@ -218,8 +256,11 @@ func Run(ctx context.Context, o Options) error {
 
 	// One MCP server for agents and for you: the board, showing files and
 	// images in a chat, and previews of a sandbox's web server.
-	tools := &mcp.Server{Name: "skybreaker", Version: o.Version, Instructions: board.Instructions + "\n\n" + preview.Instructions,
-		Tools: []func(mcp.Caller) []mcp.Tool{board.Tools(boards), show.Tools(a), preview.Tools(previews, a)}}
+	host := browserHost{a, assistants}
+	tools := &mcp.Server{Name: "skybreaker", Version: o.Version,
+		Instructions: board.Instructions + "\n\n" + preview.Instructions + "\n\n" + assistant.ToolInstructions + "\n\n" + browser.ToolInstructions,
+		Tools: []func(mcp.Caller) []mcp.Tool{board.Tools(boards), show.Tools(a), preview.Tools(previews, a),
+			assistant.Tools(assistants, cfg.Assistant), browser.Tools(host, cfg.Assistant)}}
 
 	hk := hooks.New(a.CheckHookToken, a.HookEvent)
 	// Chats answer their harness's prompts in the conversation.
@@ -262,7 +303,7 @@ func Run(ctx context.Context, o Options) error {
 	changes := &settings{configPath: o.ConfigPath, secrets: cfg.SecretsFile, instructions: cfg.Instructions(), prompts: cfg.Prompts(), chatModes: cfg.ChatModes(), app: a, broker: brk, boards: boards, restart: requestRestart}
 	apiHandler, err := api.New(api.Deps{
 		Config: cfg, Self: self, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews, SSHKeys: sshKeys,
-		Projects: changes, Settings: changes, Usage: tokensUsed,
+		Projects: changes, Settings: changes, Usage: tokensUsed, Assistants: assistants, Browsers: a,
 		Static: web.Skybreaker(), Version: o.Version,
 		Upgrade: func(w http.ResponseWriter, r *http.Request) (terminal.Conn, error) { return wsock.Accept(w, r) },
 		Bridge: func(ctx context.Context, c terminal.Conn, argv []string) error {
@@ -524,4 +565,16 @@ func within(ctx context.Context, d time.Duration, f func(context.Context)) {
 	ctx, cancel := context.WithTimeout(ctx, d)
 	defer cancel()
 	f(ctx)
+}
+
+// browserHost gives the browser's tools what they need: the app, and the
+// assistant's proposals for a take-over request.
+type browserHost struct {
+	*app.App
+	assistants *assistant.Store
+}
+
+func (h browserHost) RequestTakeover(project, session, reason string) error {
+	_, err := h.assistants.Propose(project, assistant.Proposal{Kind: assistant.ProposeTakeover, Title: reason, Session: session})
+	return err
 }

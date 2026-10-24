@@ -12,16 +12,47 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/zaneGittins/skybreaker/internal/assistant"
+	"github.com/zaneGittins/skybreaker/internal/control/browser"
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
+	"github.com/zaneGittins/skybreaker/internal/control/store"
 	"github.com/zaneGittins/skybreaker/internal/proxy/broker"
 )
+
+// devBrowser runs assistants' browsers as a local Chromium, straight to the
+// web, when $SKYBREAKER_CHROMIUM names one; otherwise they fail to start.
+func devBrowser(dir string) func(*browser.Options) {
+	bin := os.Getenv("SKYBREAKER_CHROMIUM")
+	if bin == "" {
+		return nil
+	}
+	return func(o *browser.Options) {
+		o.Proxy, o.CASPKI = "", ""
+		o.Profile, o.Downloads = filepath.Join(dir, "browser-profile"), filepath.Join(dir, "browser-downloads")
+		o.Launch = func(ctx context.Context, args []string) (io.ReadCloser, io.WriteCloser, func(), error) {
+			inR, inW, _ := os.Pipe()
+			outR, outW, _ := os.Pipe()
+			cmd := exec.Command(bin, args...)
+			cmd.ExtraFiles = []*os.File{inR, outW}
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := cmd.Start(); err != nil {
+				return nil, nil, nil, err
+			}
+			inR.Close()
+			outW.Close()
+			return outR, inW, func() { syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); cmd.Wait() }, nil
+		}
+	}
+}
 
 // TestUIDev serves the real control plane in development mode with a
 // scripted docker and scripted harnesses, for working on the UI without a
@@ -48,7 +79,7 @@ func TestUIDev(t *testing.T) {
 	    "skybreaker": {"repo": "zaneGittins/skybreaker", "harnesses": ["claude", "codex"], "capabilities": ["github"]},
 	    "bifract": {"repo": "zaneGittins/bifract", "harnesses": ["claude", "codex"], "capabilities": ["github"]}
 	  },
-	  "capabilities": {"github": [{"host": "api.github.com", "mode": "mitm", "rules": [
+	  "capabilities": {"codex-login": [{"host": "chatgpt.com", "mode": "tunnel"}], "github": [{"host": "api.github.com", "mode": "mitm", "rules": [
 	    {"match": "GET /repos/{repo}/**", "action": "auto"},
 	    {"match": "PUT /repos/{repo}/pulls/*/merge", "action": "ask"}
 	  ]}]}
@@ -56,11 +87,12 @@ func TestUIDev(t *testing.T) {
 	path := filepath.Join(dir, "skybreaker.json")
 	os.WriteFile(path, []byte(cfg), 0o600)
 	devUsage(filepath.Join(dir, "data"))
+	devAssistant(filepath.Join(dir, "data"))
 	// A change saved in Settings restarts Skybreaker, as serve does.
 	for {
 		err := Run(context.Background(), Options{
 			ConfigPath: path, Version: "uidev", Runner: &devDocker{}, Spawn: devSpawn,
-			OnBroker: devRequests,
+			OnBroker: devRequests, Browser: devBrowser(dir),
 		})
 		if !errors.Is(err, ErrRestart) {
 			t.Fatal(err)
@@ -405,4 +437,38 @@ func devCodex(m map[string]any, say func(any)) {
 		say(map[string]any{"id": id, "result": map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 		say(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "dev-thread", "turn": map[string]any{"id": "turn-1", "status": "failed", "error": map[string]any{"message": "unexpected status 401 Unauthorized", "codexErrorInfo": map[string]any{"httpConnectionFailed": map[string]any{"httpStatusCode": 401}}}}}})
 	}
+}
+
+// devAssistant gives pip a look, a personality, memories and some things
+// waiting on you, and a routine, so its pages have something to show.
+func devAssistant(dataDir string) {
+	s, err := assistant.Open(filepath.Join(dataDir, "assistants.json"))
+	if err != nil {
+		panic(err)
+	}
+	s.SetLook("pip", assistant.Look{Name: "Pip", Shape: "crescent", Color: "ink", Temper: "calm"})
+	s.SetPersonality("pip", "dev@example.com", "Warm but brief. Dry humor is fine.\nLead with what needs me. Skip the pleasantries.\nBatch updates into the morning and 1 PM check-ins.")
+	s.AddMemory("pip", "dev@example.com", "Pip's Google account is its own", "Not yours. Used for NotebookLM and Drive only.")
+	s.AddMemory("pip", "dev@example.com", "Never send email without asking", "Every send from Pip's Gmail is held for approval.")
+	s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeMemory, Title: "Interested in home labs and self-hosting", Body: "Especially gVisor, Tailscale and running services from home.", Session: "s-dev"})
+	m, _ := s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeMemory, Title: "Bakes sourdough on weekends", Body: "Fine to include in the podcast."})
+	s.Remember("pip", m.ID, "", "")
+	s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeMemory, Title: "Prefers podcast episodes under 20 minutes", Body: "From Sunday's chat: \"that one was way too long\"", Session: "s-dev"})
+	s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeTakeover, Title: "Google wants a sign-in code for NotebookLM"})
+	s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeRoutine, Title: "weekly-podcast", Body: "Make this week's podcast.",
+		Routine: &assistant.Routine{Name: "weekly-podcast", Schedule: "0 7 * * 0", Prompt: "Make this week's NotebookLM podcast from what I saved, and save the audio."}})
+	s.PostUpdate("pip", "", "Renewed the library hold, due back November 7")
+	s.PostUpdate("pip", "", "Drafted a reply moving Saturday's sourdough class to 10:00; held until you send it")
+	// Pip is made in the app, so its agents can be changed there.
+	os.MkdirAll(filepath.Join(dataDir, "settings"), 0o700)
+	os.WriteFile(filepath.Join(dataDir, "settings", "projects.json"), []byte(`{"projects": {"pip": {"kind": "assistant", "harnesses": ["claude"], "capabilities": []}}}`), 0o600)
+	os.WriteFile(filepath.Join(dataDir, "settings", "access.json"), []byte(`{"projects": {"pip": {"allow": [
+	  {"host": "notebooklm.google.com", "mode": "mitm", "rules": [{"match": "GET /**", "action": "auto"}, {"match": "POST /**", "action": "ask"}]},
+	  {"host": "accounts.google.com", "mode": "tunnel"}, {"host": "tailscale.com", "mode": "tunnel"}, {"host": "gvisor.dev", "mode": "tunnel"}]}}}`), 0o600)
+	st, _ := store.Open(filepath.Join(dataDir, "state.json"))
+	done := time.Now().Add(-90 * time.Minute).UTC()
+	st.CreateRun(store.Run{ID: "r-dev-brief", Job: "morning-brief", Project: "pip", Harness: "claude", Status: store.RunOK, Started: done.Add(-2 * time.Minute), Finished: done,
+		Summary: "Quiet day: two meetings after lunch, and rain from 4, so take the bike early.\n\nCalendar: ..."})
+	b, _ := json.Marshal([]map[string]any{{"name": "morning-brief", "project": "pip", "schedule": "30 7 * * 1-5", "prompt": "Write my morning brief: weather, calendar and anything that needs me."}})
+	os.WriteFile(filepath.Join(dataDir, "settings", "routines.json"), b, 0o600)
 }
