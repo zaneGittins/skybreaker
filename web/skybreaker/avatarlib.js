@@ -64,29 +64,42 @@ function avRingHalf(temper, t, amp, tilt, front) {
 
 const avHas = (o, k) => Object.hasOwn(o, k);
 
+const AV_MOONS = 4;
+
+// avPlanet is a body riding the orbit at angle th.
+function avPlanet(temper, th, t, amp, tilt, r) {
+  const [x, y] = avRingPoint(temper, th, t, amp, tilt);
+  return { x, y, r, front: Math.sin(th) > 0 };
+}
+
 // avFrame is everything to draw at time t (seconds) in a state. A mini
-// mark has no ring, so rings: false skips working it out.
-function avFrame(look, state, t, { rings = true } = {}) {
+// mark has no ring, so rings: false skips working it out. Busy shows the
+// planet and a moon for each other job in flight.
+function avFrame(look, state, t, { rings = true, jobs = 3 } = {}) {
   const temper = avHas(AV_TEMPER, look.temper) ? look.temper : 'calm';
   const pace = AV_TEMPER[temper].pace;
   const s = AV_STATES.includes(state) ? state : 'idle';
   const tp = t * pace;
-  let rot = 0, split = 0, amp = 1, tilt = -16, speed = 0.5, planetR = 3.6, planetColor = null;
+  let rot = 0, lift = 0, amp = 1, tilt = -16, speed = 0.5, planetR = 3.6, planetColor = null;
   if (s === 'thinking') { rot = (tp * 60) % 360; amp = 1.4; tilt += 8 * Math.sin(tp * 1.5); speed = 2.2 }
-  if (s === 'busy') { split = 5 * (0.5 - 0.5 * Math.cos(tp * 2.2)); amp = 0.6; speed = 1.2 }
+  if (s === 'busy') { lift = 1.5 * Math.sin(tp * 2.6); amp = 0.6; speed = 1.3 }
   if (s === 'needs') { speed = 0; amp = 0.3; planetR = 5 + 1.2 * Math.sin(t * 4); planetColor = AV_AMBER }
   if (s === 'done') { speed = 0.3; amp = 0.4 }
   // The planet waits at the top right while it needs you.
   const th = s === 'needs' ? -Math.PI * 0.2 : tp * speed;
-  const [px, py] = avRingPoint(temper, th, s === 'needs' ? 0 : tp, amp, tilt);
+  const wt = s === 'needs' ? 0 : tp;
+  const n = s === 'busy' && rings ? Math.min(AV_MOONS + 1, Math.max(2, Math.floor(jobs) || 2)) : 1;
+  const moons = [];
+  for (let i = 1; i < n; i++) moons.push(avPlanet(temper, th + 2 * Math.PI * i / n, wt, amp, tilt, 3));
   return {
     shape: avHas(AV_SHAPES, look.shape) ? AV_SHAPES[look.shape] : AV_SHAPES.dot,
     color: avHas(AV_COLORS, look.color) ? AV_COLORS[look.color] : AV_COLORS.clay,
-    rot, split,
+    rot, lift,
     back: rings ? avRingHalf(temper, tp, amp, tilt, false) : '',
     front: rings ? avRingHalf(temper, tp, amp, tilt, true) : '',
-    planet: { x: px, y: py, r: planetR, color: planetColor, front: Math.sin(th) > 0 },
+    planet: { ...avPlanet(temper, th, wt, amp, tilt, planetR), color: planetColor },
+    moons,
   };
 }
 
-if (typeof module !== 'undefined') module.exports = { AV_SHAPES, AV_COLORS, AV_TEMPER, AV_STATES, avRibbon, avFrame };
+if (typeof module !== 'undefined') module.exports = { AV_SHAPES, AV_COLORS, AV_TEMPER, AV_STATES, AV_MOONS, avRibbon, avFrame };

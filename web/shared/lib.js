@@ -57,7 +57,7 @@ function route(path) {
     return { name: 'notfound' };
   }
   // An assistant: Today, or another of its pages.
-  const a = /^\/a\/([^/]+)(?:\/(memory|routines|look|browser))?$/.exec(path);
+  const a = /^\/a\/([^/]+)(?:\/(chats|memory|routines|look|browser))?$/.exec(path);
   if (a) {
     let v;
     try { v = decodeURIComponent(a[1]) } catch { return { name: 'notfound' } }
@@ -77,6 +77,10 @@ function route(path) {
   if (m[1] === 'r' && NAME.test(v)) return { name: 'run', id: v };
   return { name: 'notfound' };
 }
+
+// samePage is whether two routes are one page, differing only in its tab
+// or settings section.
+const samePage = (a, b) => !!a && !!b && a.name === b.name && a.project === b.project && a.id === b.id;
 
 // reveal shows characters that would hide or reorder what an approver
 // reads (bidi overrides, zero-width and tag characters, controls, lone
@@ -289,4 +293,4 @@ function limitLabel(l) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-if (typeof module !== 'undefined') module.exports = { activitySeries, usageSeries, compactCount, limitLabel, boardSeries, hostsFromText, ago, until, duration, route, auditRow, dropPosition, columnPage, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal };
+if (typeof module !== 'undefined') module.exports = { activitySeries, usageSeries, compactCount, limitLabel, boardSeries, hostsFromText, ago, until, duration, route, samePage, auditRow, dropPosition, columnPage, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal };

@@ -197,7 +197,7 @@ func TestApproveRoutineProposal(t *testing.T) {
 	}
 }
 
-// Today is the brief: what needs the user, what happened, what it can reach.
+// Today is the brief: what needs the user and what happened.
 func TestAssistantToday(t *testing.T) {
 	f, as := assistantFixture(t)
 	as.PostUpdate("pip", "s1", "Renewed the library hold")
@@ -208,14 +208,16 @@ func TestAssistantToday(t *testing.T) {
 		Updates   []assistant.Update   `json:"updates"`
 		Proposals []assistant.Proposal `json:"proposals"`
 		Runs      []store.Run          `json:"runs"`
-		Reaches   []json.RawMessage    `json:"reaches"`
 		Approvals []json.RawMessage    `json:"approvals"`
 		Requests  []json.RawMessage    `json:"requests"`
 	}
 	if err := json.Unmarshal([]byte(body), &v); err != nil || code != 200 {
 		t.Fatalf("%d %s", code, body)
 	}
-	if len(v.Updates) != 1 || len(v.Proposals) != 1 || len(v.Runs) != 1 || v.Runs[0].Summary != "Three things today." || v.Reaches == nil || v.Approvals == nil || v.Requests == nil {
+	if strings.Contains(body, `"reaches"`) {
+		t.Errorf("today still sends reaches: %s", body)
+	}
+	if len(v.Updates) != 1 || len(v.Proposals) != 1 || len(v.Runs) != 1 || v.Runs[0].Summary != "Three things today." || v.Approvals == nil || v.Requests == nil {
 		t.Fatalf("today %s", body)
 	}
 }

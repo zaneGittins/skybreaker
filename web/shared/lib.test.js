@@ -2,7 +2,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { ago, until, route, toolSummary, toolInput, reveal, duration, messageBytes, termFont, sgrRuns } = require('./lib.js');
+const { ago, until, route, samePage, toolSummary, toolInput, reveal, duration, messageBytes, termFont, sgrRuns } = require('./lib.js');
 
 test('ago', () => {
   const now = Date.parse('2026-10-17T12:00:00Z');
@@ -35,7 +35,7 @@ test('route', () => {
   assert.deepEqual(route('/s/%'), { name: 'notfound' });
   // An assistant's pages.
   assert.deepEqual(route('/a/pip'), { name: 'assistant', project: 'pip', tab: 'today' });
-  for (const tab of ['memory', 'routines', 'look', 'browser']) assert.deepEqual(route('/a/pip/' + tab), { name: 'assistant', project: 'pip', tab });
+  for (const tab of ['chats', 'memory', 'routines', 'look', 'browser']) assert.deepEqual(route('/a/pip/' + tab), { name: 'assistant', project: 'pip', tab });
   assert.deepEqual(route('/a/pip/today'), { name: 'notfound' });
   assert.deepEqual(route('/a/pip/board'), { name: 'notfound' });
   assert.deepEqual(route('/a/Bad%20Name'), { name: 'notfound' });
@@ -257,4 +257,16 @@ test('limitLabel', () => {
   assert.equal(limitLabel({ name: 'seven_day', minutes: 10080 }), 'Weekly');
   assert.equal(limitLabel({ name: 'primary', minutes: 1440 }), 'Daily');
   assert.equal(limitLabel({ name: 'seven_day_opus' }), 'Seven day opus');
+});
+
+test('samePage: a tab or a settings section is the same page, so it redraws without a fade', () => {
+  const same = (a, b) => samePage(route(a), route(b));
+  assert.equal(same('/a/pip', '/a/pip/memory'), true);
+  assert.equal(same('/p/orbit', '/p/orbit/board'), true);
+  assert.equal(same('/settings/rules', '/settings/access/pip'), true);
+  assert.equal(same('/a/pip', '/a/iona'), false);
+  assert.equal(same('/p/orbit', '/a/orbit'), false);
+  assert.equal(same('/s/abc', '/s/def'), false);
+  assert.equal(same('/', '/activity'), false);
+  assert.equal(samePage(undefined, route('/')), false);
 });

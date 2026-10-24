@@ -533,6 +533,21 @@ const resting = (s, now = Date.now(), waiting = new Set()) =>
 const openCount = (sessions, project, now = Date.now()) =>
   sessions.filter(s => s.project === project && s.status === 'running' && !resting(s, now)).length;
 
+// chatGroups sorts a project's sessions for its Chats tab: live ones,
+// those shown as open, and the ended or resting ones, newest first.
+function chatGroups(sessions, waiting = new Set(), now = Date.now()) {
+  const top = sessions.filter(s => !s.parent);
+  const live = top.filter(s => s.status === 'running');
+  const shown = live.filter(s => !resting(s, now, waiting));
+  const ended = top.filter(s => !shown.includes(s)).sort((x, y) => when(y) - when(x));
+  return { live, shown, ended };
+}
+
+// recentChats is an assistant's latest few chats, for under it in the sidebar.
+const recentChats = (sessions, project, n = 3) =>
+  sessions.filter(s => s.project === project && s.mode === 'chat' && s.status === 'running' && !s.parent)
+    .sort((x, y) => when(y) - when(x)).slice(0, n);
+
 // closable is a live chat that isn't busy or waiting on you, so ending it
 // interrupts nothing.
 const closable = s => s.mode === 'chat' && s.status === 'running' && ['idle', 'done', 'bad'].includes(sessionTone(s).tone) && s.state !== 'login';
@@ -795,4 +810,4 @@ function agentActivity(it) {
   return it.children?.length ? 'Thinking' : 'Starting';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, chatGroups, recentChats, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages };

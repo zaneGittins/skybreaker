@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, chatGroups, recentChats, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -210,6 +210,33 @@ test('resting and closable', () => {
   for (const st of ['working', 'waiting', 'login']) assert.equal(closable({ ...idle, state: st }), false, st);
   assert.equal(closable({ ...idle, status: 'killed' }), false);
   assert.equal(closable({ status: 'running', created: t0 }), false, 'a terminal');
+});
+
+test('chatGroups: open chats, then the rest newest first', () => {
+  const day = 24 * 3600e3, t0 = '2026-10-18T10:00:00Z', now = Date.parse(t0) + day + 1;
+  const idle = { mode: 'chat', status: 'running', state: 'idle', updated: t0, seen: t0 };
+  const ss = [
+    { ...idle, id: 'rest' },
+    { ...idle, id: 'new', updated: '2026-10-19T10:00:00Z', seen: '2026-10-19T10:00:00Z' },
+    { ...idle, id: 'sub', parent: 'new', updated: '2026-10-19T10:00:00Z' },
+    { ...idle, id: 'gone', status: 'killed', updated: '2026-10-18T12:00:00Z' },
+  ];
+  const g = chatGroups(ss, new Set(), now);
+  assert.deepEqual(g.live.map(s => s.id), ['rest', 'new']);
+  assert.deepEqual(g.shown.map(s => s.id), ['new']);
+  assert.deepEqual(g.ended.map(s => s.id), ['gone', 'rest']);
+  assert.deepEqual(chatGroups(ss, new Set(['rest']), now).shown.map(s => s.id), ['rest', 'new'], 'an approval keeps it open');
+});
+
+test('recentChats: an assistant\'s latest chats, for the sidebar', () => {
+  const c = (id, project, updated, x = {}) => ({ id, project, updated, mode: 'chat', status: 'running', ...x });
+  const ss = [
+    c('a', 'pip', '2026-10-18T10:00:00Z'), c('b', 'pip', '2026-10-19T10:00:00Z'), c('c', 'pip', '2026-10-17T10:00:00Z'),
+    c('d', 'pip', '2026-10-20T10:00:00Z'), c('e', 'other', '2026-10-21T10:00:00Z'),
+    c('f', 'pip', '2026-10-22T10:00:00Z', { parent: 'b' }), c('g', 'pip', '2026-10-22T10:00:00Z', { mode: 'terminal' }),
+  ];
+  assert.deepEqual(recentChats(ss, 'pip').map(s => s.id), ['d', 'b', 'a']);
+  assert.deepEqual(recentChats(ss, 'nobody'), []);
 });
 
 test('currentModel: chosen, then reported, then the default', () => {

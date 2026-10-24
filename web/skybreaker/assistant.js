@@ -51,13 +51,16 @@ Object.assign(ICON, {
   hand: ['M8 13V5.5a1.5 1.5 0 0 1 3 0V12', 'M11 11.5V4a1.5 1.5 0 0 1 3 0v8', 'M14 11.5V6a1.5 1.5 0 0 1 3 0v8a7 7 0 0 1-7 7h-.5A6.5 6.5 0 0 1 4 14.5V11a1.5 1.5 0 0 1 3 0v2'],
 });
 
-// asstState is how the mark moves: amber while something waits on you,
-// turning while a chat works, at rest otherwise.
-function asstState(needs, sessions) {
-  if (needs) return 'needs';
-  if ((sessions || []).some(s => s.status === 'running' && s.state === 'working')) return 'thinking';
-  return 'idle';
+// asstMotion is how the mark moves: amber while something waits on you,
+// turning while one job works, with a moon for each when several do.
+function asstMotion(needs, jobs) {
+  if (needs) return { state: 'needs' };
+  if (jobs > 1) return { state: 'busy', jobs };
+  return { state: jobs ? 'thinking' : 'idle' };
 }
+
+const asstState = (needs, sessions) =>
+  asstMotion(needs, (sessions || []).filter(s => s.status === 'running' && s.state === 'working').length);
 
 // asstAccent gives a page the assistant's colour in place of Skybreaker's
 // yellow: its spinner, its send button, its working line.
@@ -86,17 +89,19 @@ async function renderAssistant(seq, name, tab) {
   const memoryAsks = a.proposals.filter(x => x.kind === 'memory').length;
   const routineAsks = a.proposals.filter(x => x.kind === 'routine').length;
   const head = el('header.a-head', null,
-    avatar(look, { state: asstState(needs, d.sessions), cls: 'a-head-mark' }),
+    // Today's greeting carries the mark; the other tabs show it here.
+    tab === 'today' ? null : avatar(look, { ...asstState(needs, d.sessions), cls: 'a-head-mark' }),
     el('div.a-title', null, el('h1', null, look.name),
       el('span.a-sub', null, (p.harnesses || []).filter(h => h !== 'shell').map(harnessLabel).join(' · '),
-        el('span.sep', null, '·'), asstMemories(a.memories?.length || 0))),
-    tab === 'today' ? null : el('button.btn.primary.sm.a-new', { type: 'button', onclick: () => pickHarness(p) }, svg(ICON.plus), 'Message ' + look.name));
-  const tabs = [['today', 'Today', 0], ['memory', 'Memory', memoryAsks], ['routines', 'Routines', routineAsks], ['look', 'Look', 0]];
+        el('span.sep', null, '·'), asstMemories(a.memories?.length || 0),
+        el('span.sep', null, '·'), el('a.a-access', { href: '/settings/access/' + enc, 'data-link': true }, 'Access'))));
+  const tabs = [['today', 'Today', 0], ['chats', 'Chats', 0], ['memory', 'Memory', memoryAsks], ['routines', 'Routines', routineAsks], ['look', 'Look', 0]];
   const tabBar = tab === 'browser' ? null : el('nav.p-tabs.a-tabs', { 'aria-label': look.name }, tabs.map(([k, label, n]) =>
     el('a.p-tab' + (k === tab ? '.on' : ''), { href: asstPath(name, k), 'data-link': true, 'aria-current': k === tab ? 'page' : null },
       el('span', null, label), n ? el('span.n.warn', null, String(n)) : null)));
   let body;
   switch (tab) {
+    case 'chats': body = asstChats(p, d); break;
     case 'memory': body = asstMemory(name, a); break;
     case 'routines': body = await asstRoutines(seq, name, a); break;
     case 'look': body = asstLook(name, a); break;
@@ -106,7 +111,10 @@ async function renderAssistant(seq, name, tab) {
   if (seq !== state.seq) return;
   const page = el('div.page.assistant.a-tab-' + tab, null, tab === 'browser' ? null : head, tabBar, body);
   asstAccent(page, look.color);
-  $('#app').replaceChildren(page);
+  // On a phone, which has no sidebar, the + starts a chat with it.
+  const fab = tab === 'browser' ? null : el('button.fab', { type: 'button', onclick: () => pickHarness(p), 'aria-label': 'Message ' + look.name }, svg(ICON.plus));
+  if (fab) asstAccent(fab, look.color);
+  $('#app').replaceChildren(page, fab);
 }
 
 // asstHomeRow is an assistant on the inbox, with what it asks of you.
@@ -134,39 +142,56 @@ const asstGreeting = () => {
 const ASST_WORDS = ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten'];
 const asstCount = n => ASST_WORDS[n] || String(n);
 
-// asstSummary says the brief in a sentence: what happened, what waits.
-function asstSummary(done, needs) {
-  const lately = done ? `${asstCount(done)} thing${done === 1 ? '' : 's'} from the last day` : 'Nothing new from the last day';
-  if (!needs) return lately + '.';
-  return `${lately}, and ${asstCount(needs).toLowerCase()} need${needs === 1 ? 's' : ''} you.`;
+// asstSummary says in a sentence what it has done lately.
+const asstSummary = done => done ? `${asstCount(done)} thing${done === 1 ? '' : 's'} done in the last day.` : 'Nothing new in the last day.';
+
+// asstNeeds is what waits on you, as cards: a sign-in first, since it
+// holds the assistant up.
+function asstNeeds(name, p, t) {
+  return [
+    ...t.proposals.filter(x => x.kind === 'takeover').map(x => asstTakeoverCard(name, x)),
+    ...t.requests.map(r => requestCard(r, p.tint)),
+    ...t.approvals.map(r => approvalCard(r, p.tint)),
+    ...t.proposals.filter(x => x.kind === 'memory' || x.kind === 'routine').map(x => x.kind === 'routine' ? asstRoutineAsk(name, x) : asstMemoryAsk(name, x)),
+  ];
 }
 
+// asstNeedsSheet shows what waits on you, and keeps up as you answer it.
+function asstNeedsSheet(name, p) {
+  const body = el('div.a-asks');
+  const load = async () => {
+    try {
+      const cards = asstNeeds(name, p, await api('GET', asstAPI(name) + '/today'));
+      if (!cards.length) { closeSheet(); return }
+      body.replaceChildren(...cards);
+    } catch (e) { toast(e.message, 'error') }
+  };
+  sheet('For you', body);
+  state.sheetReload = load;
+  load();
+}
+
+// Today leads with what the assistant did; what waits on you is one quiet
+// pill that opens it.
 async function asstToday(seq, name, p, a, d) {
   const t = await api('GET', asstAPI(name) + '/today');
   if (seq !== state.seq) return null;
   const takeovers = t.proposals.filter(x => x.kind === 'takeover');
-  const asks = t.proposals.filter(x => x.kind !== 'takeover');
-  const needs = takeovers.length + asks.length + t.approvals.length + t.requests.length;
+  const needs = asstNeeds(name, p, t).length;
   const finished = t.runs.filter(r => r.status !== 'running');
   const lately = finished.length + t.updates.length;
   const brief = asstBrief(finished);
-  const composer = asstComposer(p, t.look);
+  const site = asstBrowsing(name, t.browser, takeovers.length > 0);
+  const pill = needs ? el('button.a-needs-pill', { type: 'button', onclick: () => asstNeedsSheet(name, p) },
+    el('i'), takeovers.length ? 'Sign-in needed' : needs + ' for you') : null;
   const hero = el('div.a-hero', null,
-    avatar(t.look, { state: asstState(needs, d.sessions), cls: 'a-hero-mark' }),
+    avatar(t.look, { ...asstState(needs, d.sessions), cls: 'a-hero-mark' }),
     el('div.a-hero-text', null, el('h2.a-greeting', null, asstGreeting()),
       brief ? el('p.a-brief', null, brief.text, ' ', el('a.a-brief-from', { href: '/r/' + encodeURIComponent(brief.run.id), 'data-link': true }, brief.run.job + ', ' + ago(brief.run.finished))) : null,
-      el('p', null, asstSummary(lately, needs))));
-  const needCards = [
-    ...takeovers.map(x => asstTakeoverCard(name, x)),
-    ...t.requests.map(r => requestCard(r, p.tint)),
-    ...t.approvals.map(r => approvalCard(r, p.tint)),
-    ...asks.map(x => x.kind === 'routine' ? asstRoutineAsk(name, x) : asstMemoryAsk(name, x)),
-  ];
-  const live = d.sessions.filter(s => s.status === 'running' && !s.parent).slice(0, 5);
-  return el('div.a-today', null, hero, composer,
-    needCards.length ? el('section.a-sec', null, el('h2.a-label', null, 'Needs you'), el('div.a-cards', null, needCards)) : null,
-    lately ? el('section.a-sec', null, el('h2.a-label', null, 'Lately'),
-      el('div.a-card.a-rows', null,
+      el('p', null, asstSummary(lately), site ? [' ', site] : null, pill)));
+  return el('div.a-today', null, hero,
+    lately ? el('section.a-sec', null, el('h2.a-label', null, 'What ' + t.look.name + ' did'),
+      el('div.a-done', null,
         ...finished.map(r => el('a.a-row', { href: '/r/' + encodeURIComponent(r.id), 'data-link': true },
           el('span.a-ic', null, svg(r.status === 'ok' ? ICON.check : ICON.clock)),
           el('span.a-row-text', null, el('b', null, r.job), el('span.a-row-sub', null, oneLine(r.summary) || runWord(r))),
@@ -174,27 +199,16 @@ async function asstToday(seq, name, p, a, d) {
         ...t.updates.map(u => el('div.a-row', null,
           el('span.a-ic', null, svg(ICON.note)),
           el('span.a-row-text', null, el('b', null, u.text)),
-          el('span.a-row-end', null, ago(u.at)))))) : null,
-    live.length ? el('section.a-sec', null, el('h2.a-label', null, 'Chats'), el('div.row-list', null, live.map(s => sessionRow(s)))) : null,
-    asstReach(t.look.name, t.reaches, t.browser, takeovers.length > 0));
+          el('span.a-row-end', null, ago(u.at)))))) : null);
+}
+
+// asstChats is every chat with the assistant, open ones first.
+function asstChats(p, d) {
+  const { shown, ended } = chatGroups(d.sessions, new Set(d.pending.map(a => a.session)));
+  return el('div.a-chats', null, ...chatList(p, shown, ended));
 }
 
 const runWord = r => r.status === 'ok' ? 'Finished' : r.status === 'running' ? 'Running' : r.status === 'failed' ? 'Failed' + (r.error ? ': ' + r.error : '') : r.status;
-
-// asstReach is what the assistant can reach, from the broker's policy:
-// the safety it has, said plainly.
-function asstReach(name, reaches, browser, waiting) {
-  const targets = [...new Set(reaches.map(r => r.target))];
-  const held = reaches.some(r => (r.rules || []).some(x => /\bask\b/i.test(x)));
-  const shown = targets.slice(0, 8);
-  return el('footer.a-reach', null,
-    el('span.a-reach-label', null, 'What ' + name + ' can reach'),
-    shown.length ? shown.map(x => el('span.chip', null, x)) : el('span.chip', null, 'Nothing outside yet'),
-    targets.length > shown.length ? el('span.chip', null, '+' + (targets.length - shown.length)) : null,
-    held ? el('span.chip.a-held', null, 'Some actions held for you') : null,
-    el('span.a-browser-line', null, svg(ICON.globe), asstBrowserWords(browser, waiting)),
-    el('a.a-reach-link', { href: '/activity', 'data-link': true }, 'Activity'));
-}
 
 function asstTakeoverCard(name, x) {
   return el('div.a-card.a-need', null,
@@ -409,7 +423,7 @@ function asstRoutineSheet(name, j) {
 
 const ASST_CAPS = {
   idle: 'A slow orbit. Nothing needs you.', thinking: 'The shape turns and the orbit quickens.',
-  busy: 'Splits apart while it juggles a few things, then rejoins.', needs: 'The planet stops and glows amber until you look.',
+  busy: 'A moon joins the orbit for each thing it has on the go.', needs: 'The planet stops and glows amber until you look.',
   done: 'The orbit settles and slows.',
 };
 
@@ -704,40 +718,10 @@ function asstBrief(runs) {
   return text ? { text, run } : null;
 }
 
-// asstBrowserWords is how its browser is, by site only.
-function asstBrowserWords(b, waiting) {
-  if (waiting) return 'Browser: waiting for you';
-  if (!b) return 'Browser: closed';
-  if (b.taken) return 'Browser: you have it';
-  return 'Browser: ' + (b.site ? 'on ' + b.site : 'open') + ', idle';
-}
-
-// asstComposer is a message box on Today: sending starts a chat with the
-// assistant and carries you into it.
-function asstComposer(p, look) {
-  const input = el('textarea.composer-input', { rows: '1', 'aria-label': 'Message ' + look.name, placeholder: 'Message ' + look.name, enterkeyhint: coarse() ? 'enter' : 'send' });
-  const send = el('button.send-btn', { type: 'submit', 'aria-label': 'Send', disabled: true }, svg(ICON.send));
-  let busy = false;
-  const fit = () => { send.disabled = !input.value.trim() };
-  // A draft outlives the page redrawing around it.
-  input.value = state.asstDraft?.[p.name] || '';
-  fit();
-  input.addEventListener('input', () => { fit(); state.asstDraft = { ...state.asstDraft, [p.name]: input.value } });
-  const submit = async () => {
-    const text = input.value.trim();
-    if (!text || busy) return;
-    busy = true;
-    send.disabled = true;
-    try {
-      const chat = h => !!state.meta?.chat?.[h];
-      const harness = p.harnesses.find(chat) || p.harnesses.find(h => h !== 'shell');
-      const s = await api('POST', `/api/projects/${encodeURIComponent(p.name)}/sessions`, { harness, title: '' });
-      await api('POST', `/api/sessions/${encodeURIComponent(s.id)}/messages`, { text });
-      input.value = '';
-      delete state.asstDraft?.[p.name];
-      navigate('/s/' + s.id);
-    } catch (e) { toast(e.message, 'error'); send.disabled = false } finally { busy = false }
-  };
-  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !coarse() && !e.isComposing) { e.preventDefault(); submit() } });
-  return el('form.composer.a-composer', { onsubmit: e => { e.preventDefault(); submit() } }, input, send);
+// asstBrowsing says where its browser is, while it's open and nothing
+// waits on you there: the Needs you card covers that.
+function asstBrowsing(name, b, waiting) {
+  if (!b || waiting) return null;
+  const where = b.taken ? 'You have its browser.' : b.site ? 'Its browser is on ' + b.site + '.' : 'Its browser is open.';
+  return el('a.a-browsing', { href: asstPath(name, 'browser'), 'data-link': true }, where);
 }
