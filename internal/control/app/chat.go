@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
+	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
@@ -206,7 +207,7 @@ func (a *App) NewChat(ctx context.Context, project, harnessName string, opts New
 	}
 	now := time.Now().UTC()
 	s := store.Session{ID: newSessionID(), Project: project, Harness: harnessName, Created: now, Status: store.StatusRunning,
-		Mode: store.ModeChat, State: store.ChatIdle, PermMode: chat.ModeAsk, Updated: now, Seen: now}
+		Mode: store.ModeChat, State: store.ChatIdle, PermMode: a.startMode(project, m.Chat), Updated: now, Seen: now}
 	if err := a.placeSession(ctx, &s, opts); err != nil {
 		return store.Session{}, err
 	}
@@ -380,6 +381,21 @@ func (a *App) MarkSeen(id string) error {
 		return err
 	}
 	return a.store.UpdateSession(id, func(x *store.Session) { x.Seen = time.Now().UTC() })
+}
+
+// startMode is the permission mode a new chat starts in: the one set in
+// the app for its project, else the default, else ask. One its harness
+// lacks falls back to the harness's safest.
+func (a *App) startMode(project, driver string) string {
+	set, err := config.ReadChatModes(a.cfg.ChatModes())
+	if err != nil {
+		log.Printf("skybreaker: chat modes: %v", err)
+	}
+	modes := chat.New(driver).Modes()
+	if mode := set.For(project); slices.Contains(modes, mode) {
+		return mode
+	}
+	return modes[0]
 }
 
 // ChatModes lists the permission modes a harness's chat has.

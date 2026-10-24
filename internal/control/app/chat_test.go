@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
+	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
@@ -105,6 +107,41 @@ func TestNewChat(t *testing.T) {
 	}
 	if f.app.ChatModes("shell") != nil {
 		t.Error("shell has chat modes")
+	}
+}
+
+// A new chat starts in its project's mode, else the default; a mode its
+// harness lacks starts it in the harness's safest instead.
+func TestNewChatMode(t *testing.T) {
+	f, _ := chatFixture(t)
+	ctx := context.Background()
+	path := config.ChatModesIn(f.app.cfg.DataDir)
+	for _, c := range []struct {
+		modes            config.ChatModes
+		project, h, want string
+	}{
+		{config.ChatModes{Default: chat.ModeAuto}, "orbit", "claude", chat.ModeAuto},
+		{config.ChatModes{Default: chat.ModeAuto, Projects: map[string]string{"orbit": chat.ModeEdits}}, "orbit", "claude", chat.ModeEdits},
+		{config.ChatModes{Default: chat.ModePlan}, "orbit", "claude", chat.ModePlan},
+		{config.ChatModes{Default: chat.ModePlan}, "orbit", "codex", chat.ModeAsk},
+	} {
+		if _, err := config.EditChatModes(path, func(m *config.ChatModes) error { *m = c.modes; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		s, err := f.app.NewChat(ctx, c.project, c.h, NewOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.PermMode != c.want {
+			t.Errorf("%+v %s: mode %q, want %q", c.modes, c.h, s.PermMode, c.want)
+		}
+	}
+	// A file that won't read starts chats in the safest mode.
+	if err := os.WriteFile(path, []byte(`{"default":"yolo"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := f.app.NewChat(ctx, "orbit", "claude", NewOptions{}); err != nil || s.PermMode != chat.ModeAsk {
+		t.Errorf("bad file: %q %v", s.PermMode, err)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -563,6 +564,84 @@ func TestPromptsAPI(t *testing.T) {
 		t.Errorf("kim: %v %v", ps, editable)
 	}
 	if code, _ := f.do(t, "PUT", "/api/prompts", `{"prompts":[]}`, nil); code != 403 {
+		t.Errorf("kim saved: %d", code)
+	}
+}
+
+func (s *fakeSettings) ChatModes() (config.ChatModes, error) {
+	return config.ReadChatModes(config.ChatModesIn(filepath.Dir(s.path)))
+}
+func (s *fakeSettings) ChangeChatModes(by, what string, change func(*config.ChatModes) error) (config.ChatModes, error) {
+	m, err := config.EditChatModes(config.ChatModesIn(filepath.Dir(s.path)), change)
+	if err == nil {
+		s.log = append(s.log, by+": "+what)
+	}
+	return m, err
+}
+
+// The modes new chats start in: anyone may read them, admins change one at
+// a time, and only for projects that exist. A project that's gone loses
+// its own mode at the next change.
+func TestChatModesAPI(t *testing.T) {
+	s := &fakeSettings{}
+	f := newFixture(t, you, withSettings(t, s, ""))
+	type view struct {
+		Default  string            `json:"default"`
+		Projects map[string]string `json:"projects"`
+		Editable bool              `json:"editable"`
+	}
+	read := func(code int, body string) view {
+		t.Helper()
+		var v view
+		if err := json.Unmarshal([]byte(body), &v); err != nil || code != 200 {
+			t.Fatalf("%d %s", code, body)
+		}
+		return v
+	}
+	if v := read(f.do(t, "GET", "/api/chat-modes", "", nil)); v.Default != "" || len(v.Projects) != 0 || !v.Editable {
+		t.Fatalf("%+v", v)
+	}
+	gone := func(m *config.ChatModes) error { m.Projects = map[string]string{"gone": "auto"}; return nil }
+	if _, err := config.EditChatModes(config.ChatModesIn(filepath.Dir(s.path)), gone); err != nil {
+		t.Fatal(err)
+	}
+	if v := read(f.do(t, "PUT", "/api/chat-modes/default", `{"mode":"auto"}`, nil)); v.Default != "auto" || len(v.Projects) != 0 || !v.Editable {
+		t.Fatalf("default: %+v", v)
+	}
+	if v := read(f.do(t, "PUT", "/api/chat-modes/projects/orbit", `{"mode":"ask"}`, nil)); v.Default != "auto" || v.Projects["orbit"] != "ask" {
+		t.Fatalf("orbit: %+v", v)
+	}
+	if v := read(f.do(t, "GET", "/api/chat-modes", "", nil)); v.Projects["orbit"] != "ask" {
+		t.Fatalf("saved: %+v", v)
+	}
+	want := []string{"zane@example.com: set new chats to start in auto", "zane@example.com: set new chats in orbit to start in ask"}
+	if !slices.Equal(s.log, want) {
+		t.Fatalf("log %q", s.log)
+	}
+	if v := read(f.do(t, "PUT", "/api/chat-modes/projects/orbit", `{"mode":""}`, nil)); len(v.Projects) != 0 || s.log[2] != "zane@example.com: set new chats in orbit to start in the default" {
+		t.Fatalf("clear: %+v %q", v, s.log)
+	}
+	for name, c := range map[string][2]string{
+		"bad default": {"/api/chat-modes/default", `{"mode":"yolo"}`},
+		"bad project": {"/api/chat-modes/projects/orbit", `{"mode":"never"}`},
+		"no project":  {"/api/chat-modes/projects/nope", `{"mode":"ask"}`},
+		"unknown":     {"/api/chat-modes/default", `{"mode":"ask","extra":1}`},
+	} {
+		if code, _ := f.do(t, "PUT", c[0], c[1], nil); code != 400 {
+			t.Errorf("%s: %d", name, code)
+		}
+	}
+	if len(s.log) != 3 {
+		t.Errorf("a refused save was recorded: %q", s.log)
+	}
+
+	kim := you
+	kim.Login = "kim@example.com"
+	f = newFixture(t, kim, withSettings(t, s, `"admins": ["zane@example.com"],`))
+	if v := read(f.do(t, "GET", "/api/chat-modes", "", nil)); v.Editable {
+		t.Errorf("kim: %+v", v)
+	}
+	if code, _ := f.do(t, "PUT", "/api/chat-modes/default", `{"mode":"ask"}`, nil); code != 403 {
 		t.Errorf("kim saved: %d", code)
 	}
 }

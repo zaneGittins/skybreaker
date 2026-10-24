@@ -25,6 +25,7 @@ const SETTINGS = [
     { id: 'instructions', label: 'Instructions', icon: 'file', sum: c => oneLine(c.ins?.text) || 'None yet' },
     { id: 'prompts', label: 'Prompts', icon: 'prompt', n: c => c.pr?.prompts.length, sum: c => c.pr?.prompts.length ? plural(c.pr.prompts.length, 'prompt') : 'None yet' },
     { id: 'rules', label: 'Commit rules', icon: 'rules', sum: c => rulesSummary(c.d.content_rules) },
+    { id: 'modes', label: 'Chat mode', icon: 'shield', sum: c => c.cm ? MODE_INFO[c.cm.default || 'ask'].label : 'Not available' },
   ]],
   ['Access', [
     { id: 'github', label: 'GitHub', icon: 'git', sum: c => c.d.github.state === 'app' || c.d.github.state === 'file' ? c.d.github.slug || 'App ' + c.d.github.app_id : 'Not set up' },
@@ -42,8 +43,8 @@ function rulesSummary(c) {
 }
 
 async function renderSettings(seq, r = { section: null }) {
-  const [d, ins, pr, projects] = await Promise.all([api('GET', '/api/settings'), api('GET', '/api/instructions').catch(() => null),
-    api('GET', '/api/prompts').catch(() => null), api('GET', '/api/projects').catch(() => [])]);
+  const [d, ins, pr, cm, projects] = await Promise.all([api('GET', '/api/settings'), api('GET', '/api/instructions').catch(() => null),
+    api('GET', '/api/prompts').catch(() => null), api('GET', '/api/chat-modes').catch(() => null), api('GET', '/api/projects').catch(() => [])]);
   if (seq !== state.seq) return;
   crumb(null);
   // GitHub sends you back here after creating the App.
@@ -52,11 +53,11 @@ async function renderSettings(seq, r = { section: null }) {
   if (q.has('github_error')) toast(q.get('github_error'), 'error');
   if (q.has('github') || q.has('github_error')) history.replaceState(null, '', location.pathname);
 
-  const c = { d, ins, pr, ed: d.editable, tints: Object.fromEntries(projects.map(p => [p.name, p.tint])) };
+  const c = { d, ins, pr, cm, ed: d.editable, tints: Object.fromEntries(projects.map(p => [p.name, p.tint])) };
   const section = r.section || 'instructions';
   const body = r.item !== undefined
     ? (section === 'bundles' ? bundlePage(c, r.item) : accessPage(c, r.item))
-    : { instructions: instructionsSection, prompts: promptsSection, rules: rulesSection, github: githubSection, secrets: secretsSection, bundles: bundlesSection, access: accessSection }[section](c);
+    : { instructions: instructionsSection, prompts: promptsSection, rules: rulesSection, modes: modesSection, github: githubSection, secrets: secretsSection, bundles: bundlesSection, access: accessSection }[section](c);
   // On a phone a section is its own page, back to the index; an item, back
   // to its section.
   const label = s => SETTINGS.flatMap(([, x]) => x).find(x => x.id === s)?.label;
@@ -505,6 +506,40 @@ function bundlePage(c, name) {
     fresh ? el('label.set-field', null, el('span.np-label', null, 'Name'), nameInput, el('span.set-hint', null, 'Lowercase letters, digits, dashes and underscores. Projects take it by this name.')) : null,
     b ? el('p.set-hint', null, b.used_by.length ? ['Used by ', projectDots(b.used_by, c.tints)] : 'No project uses it yet.') : null,
     hosts.node, error, readOnly ? null : bar.node);
+}
+
+// --- chat mode ---------------------------------------------------------------------
+
+const MODE_ORDER = ['ask', 'edits', 'plan', 'auto'];
+
+// modesSection sets the mode new chats start in, for every project and in
+// place of that for one. A pick saves that one choice at once.
+function modesSection(c) {
+  const cm = c.cm;
+  if (!cm) return setSection('Chat mode', null, null, el('div.set-empty', null, 'Chat modes aren\'t available.'));
+  const save = async (path, mode, what) => {
+    try {
+      await api('PUT', '/api/chat-modes/' + path, { mode });
+      toast(what);
+      go();
+    } catch (err) { toast(err.message, 'error'); throw err }
+  };
+  const def = cm.default || 'ask';
+  const pick = seg(MODE_ORDER.map(m => [m, MODE_INFO[m].label]), def,
+    m => save('default', m, 'Saved. New chats start in ' + MODE_INFO[m].label + '.'), { disabled: !cm.editable, cls: '.set-modes' });
+  pick.setAttribute('aria-label', 'Every project');
+  const rows = c.d.projects.map(p => {
+    const own = cm.projects[p.name] || '';
+    const box = el('select.np-input.set-mode', { 'aria-label': 'Mode for ' + p.name, disabled: !cm.editable || null, onchange: async () => {
+      try { await save('projects/' + encodeURIComponent(p.name), box.value, 'Saved for ' + p.name + '.') } catch { box.value = own }
+    } },
+      el('option', { value: '' }, 'Default (' + MODE_INFO[def].label + ')'), MODE_ORDER.map(m => el('option', { value: m }, MODE_INFO[m].label)));
+    box.value = own;
+    return el('div.set-row.static', null, el('span.set-row-main', null, projectDots([p.name], c.tints)), box);
+  });
+  return setSection('Chat mode', 'The mode new chats start in. Anyone can still switch a chat\'s mode as they work. A harness without the mode starts in its safest.', null,
+    el('div.set-field', null, el('span.np-label', null, 'Every project'), pick, el('span.set-hint', null, MODE_INFO[def].desc)),
+    el('div.set-field', null, el('span.np-label', null, 'Projects'), setList(rows, 'No projects yet.', 'projects')));
 }
 
 // --- project access -----------------------------------------------------------------

@@ -150,6 +150,7 @@ Most of it can also be changed in the app, by the users in `admins` (everyone in
 - **New project** on the home page creates a project from the bundles there are.
 - **Instructions** in Settings are what every agent in every project is told, in Markdown: Claude Code reads them as its managed `CLAUDE.md`, Codex as developer instructions and pi as part of its system prompt. A project's own `CLAUDE.md` or `AGENTS.md` still applies. They're saved in `settings/instructions.md`, mounted read-only into each sandbox, and reach sessions started after a save, with no restart.
 - **Prompts** in Settings are reusable prompts for every chat in every project, sent with `/prompt <name>`. Each is sent as your own message, so it works the same with every agent. They're saved in `settings/prompts.json` and need no restart.
+- **Chat mode** in Settings picks the mode new chats start in, such as Full auto, for every project, with an override per project. A chat's mode can still be switched as it runs. It's saved in `settings/chat-modes.json` and needs no restart.
 
 The app saves in the data directory, in `settings/` (`projects.json`, `access.json` and `app-secrets.json`), and only ever adds to the config file: what the file says is shown read-only, and a name in both is an error. Changes apply when Skybreaker restarts itself, once no agent is working. `app_settings: false` in the config file turns changes in the app off.
 

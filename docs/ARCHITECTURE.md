@@ -94,6 +94,8 @@ Every agent's instructions are `settings/instructions.md`, set in Settings by ad
 
 Canned prompts are `settings/prompts.json`, set in Settings by admins (`PUT /api/prompts`, audited) and read by anyone (`GET /api/prompts`). They never reach a sandbox: the chat page expands `/prompt <name>` into the prompt's text and sends it as an ordinary message, so no harness needs to know about them.
 
+The modes new chats start in are `settings/chat-modes.json`, a default and per-project overrides set in Settings by admins one at a time (`PUT /api/chat-modes/default` and `/api/chat-modes/projects/{p}`, audited; a project that is gone loses its mode at the next change). `app.NewChat` reads it for each new chat; a mode the harness lacks starts the chat in the harness's first (safest) mode.
+
 The chat drivers report tokens (`Out.Usage`: Claude's per-model result usage as it grows, Codex's `thread/tokenUsage/updated`) and plan limits (`Out.Limits`: Claude's `rate_limit_event`, Codex's `account/rateLimits/read` and updates). `usage.Store` keeps them by UTC hour for a month in `usage.json`, with scheduled runs' totals from their logs, and `/api/usage` serves the home page's rail.
 
 ## Boards and MCP
