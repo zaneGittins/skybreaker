@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -306,6 +306,66 @@ test('commandHints: /prompt offers the saved prompts, like /color offers colours
   assert.deepEqual(commandHints('/prompt ', []), []);
   // Once you add to it, the hints go.
   assert.deepEqual(commandHints('/prompt review and ', PROMPTS), []);
+});
+
+test('commandHints: /effort offers the levels the chat\'s model has', () => {
+  const levels = { list: ['low', 'medium', 'high', 'max'], on: 'high' };
+  assert.deepEqual(commandHints('/ef', [], levels).map(h => h.cmd), ['effort']);
+  // Without levels to choose from there's no /effort to offer.
+  assert.deepEqual(commandHints('/ef'), []);
+  assert.deepEqual(commandHints('/effort x y', [], levels), []);
+  assert.ok(commandHints('/effort ', [], { list: levels.list, on: '' }).every(h => !h.on));
+  assert.deepEqual(commandHints('/effort ', [], levels).map(h => h.effort), ['low', 'medium', 'high', 'max']);
+  assert.deepEqual(commandHints('/effort m', [], levels), [
+    { cmd: 'effort', effort: 'medium', on: false }, { cmd: 'effort', effort: 'max', on: false }]);
+  assert.equal(commandHints('/effort h', [], levels)[0].on, true);
+  assert.deepEqual(commandHints('/effort ', []), []);
+  assert.deepEqual(parseCommand('/effort  max '), { cmd: 'effort', arg: 'max' });
+});
+
+test('currentEffort: chosen, then reported, then the model\'s default, among its levels', () => {
+  const m = { id: 'gpt-6-sol', efforts: ['low', 'medium', 'high', 'ultra'], default_effort: 'medium' };
+  assert.equal(currentEffort(m, 'ultra', 'low'), 'ultra');
+  assert.equal(currentEffort(m, '', 'low'), 'low');
+  assert.equal(currentEffort(m, '', ''), 'medium');
+  // A level the model lacks is passed over.
+  assert.equal(currentEffort(m, 'max', 'xhigh'), 'medium');
+  assert.equal(currentEffort({ id: 'x', efforts: ['low', 'high'] }, '', ''), '');
+  // One level, or none, is nothing to choose.
+  assert.equal(currentEffort({ id: 'plain', efforts: ['off'] }, '', 'off'), '');
+  assert.equal(currentEffort({ id: 'old' }, 'high', 'high'), '');
+  assert.equal(currentEffort(null, 'high'), '');
+});
+
+test('effortName: short for the picker, whole for the header', () => {
+  assert.equal(effortName('high'), 'High');
+  assert.equal(effortName('xhigh'), 'Extra high');
+  assert.equal(effortName('xhigh', true), 'XHigh');
+  assert.equal(effortName('medium', true), 'Med');
+  assert.equal(effortName('medium'), 'Medium');
+  assert.equal(effortName('ultra', true), 'Ultra');
+  assert.equal(effortName(''), '');
+  assert.equal(effortName('minimal', true), 'Min');
+  assert.equal(effortName('off'), 'Off');
+  assert.equal(effortName('constructor'), 'Constructor');
+});
+
+test('effortChoice: the levels to offer and the one on, the same for picker, hints and /effort', () => {
+  const m = { id: 'gpt-6-sol', efforts: ['low', 'medium', 'high'] };
+  assert.deepEqual(effortChoice(m, true, 'high', 'low'), { list: ['low', 'medium', 'high'], on: 'high' });
+  // Levels with none known to be on are still offered, none marked.
+  assert.deepEqual(effortChoice(m, true, '', ''), { list: ['low', 'medium', 'high'], on: '' });
+  assert.deepEqual(effortChoice({ ...m, default_effort: 'ultra' }, true, '', ''), { list: ['low', 'medium', 'high'], on: '' });
+  assert.deepEqual(effortChoice(m, false, 'high'), { list: [], on: '' });
+  assert.deepEqual(effortChoice({ id: 'plain', efforts: ['off'] }, true, '', 'off'), { list: [], on: '' });
+  assert.deepEqual(effortChoice(null, true), { list: [], on: '' });
+});
+
+test('modelLine: the model, and its level when there is one', () => {
+  const m = { id: 'opus', name: 'Opus 5.5' };
+  assert.equal(modelLine(m, 'xhigh'), 'Opus 5.5 · Extra high');
+  assert.equal(modelLine(m, ''), 'Opus 5.5');
+  assert.equal(modelLine(null, 'high'), '');
 });
 
 test('promptText: the saved prompt, with anything after its name added', () => {

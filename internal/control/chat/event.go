@@ -148,6 +148,7 @@ type Turn struct {
 // it shows the one the harness reports and offers the ones it lists.
 type Info struct {
 	Model    string   `json:"model,omitempty"`
+	Effort   string   `json:"effort,omitempty"` // the effort level the harness says it runs at
 	Mode     string   `json:"mode,omitempty"`
 	Version  string   `json:"version,omitempty"`
 	Commands []string `json:"commands,omitempty"`
@@ -207,6 +208,12 @@ type Model struct {
 	// Resolved is the model an alias stands for, when the harness says.
 	Resolved string `json:"resolved,omitempty"`
 	Default  bool   `json:"default,omitempty"`
+	// Efforts are the effort levels it takes, least first, and
+	// DefaultEffort the one it runs at unless told. EffortsKnown: the
+	// harness has said, so no Efforts means it has none.
+	Efforts       []string `json:"efforts,omitempty"`
+	DefaultEffort string   `json:"default_effort,omitempty"`
+	EffortsKnown  bool     `json:"-"`
 }
 
 // How a shown file is drawn.

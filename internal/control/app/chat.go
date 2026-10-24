@@ -250,7 +250,7 @@ func (a *App) ChatFork(ctx context.Context, id string) (store.Session, error) {
 	}
 	now := time.Now().UTC()
 	f := store.Session{ID: newSessionID(), Project: s.Project, Harness: s.Harness, Created: now, Status: store.StatusRunning,
-		Mode: store.ModeChat, State: store.ChatIdle, PermMode: s.PermMode, ChosenModel: s.ChosenModel, Model: s.Model,
+		Mode: store.ModeChat, State: store.ChatIdle, PermMode: s.PermMode, ChosenModel: s.ChosenModel, ChosenEffort: s.ChosenEffort, Model: s.Model,
 		Resume: s.Resume, Fork: true, Color: s.Color, Goal: s.Goal, Updated: now, Seen: now}
 	if s.Title != "" {
 		f.Title = s.Title + " (fork)"
@@ -333,11 +333,25 @@ func (a *App) ChatMode(ctx context.Context, id, mode string) error {
 }
 
 // ChatModel switches a chat to one of the models its harness lists.
-func (a *App) ChatModel(ctx context.Context, id, model string) error {
+func (a *App) ChatModel(ctx context.Context, id, model string) (store.Session, error) {
 	if _, err := a.chatSession(id); err != nil {
-		return err
+		return store.Session{}, err
 	}
-	return a.chat.SetModel(ctx, id, model)
+	if err := a.chat.SetModel(ctx, id, model); err != nil {
+		return store.Session{}, err
+	}
+	return a.chatSession(id)
+}
+
+// ChatEffort switches a chat to one of the effort levels its model lists.
+func (a *App) ChatEffort(ctx context.Context, id, effort string) (store.Session, error) {
+	if _, err := a.chatSession(id); err != nil {
+		return store.Session{}, err
+	}
+	if err := a.chat.SetEffort(ctx, id, effort); err != nil {
+		return store.Session{}, err
+	}
+	return a.chatSession(id)
 }
 
 // ChatLogin starts the harness's sign-in. Harnesses that sign in only in

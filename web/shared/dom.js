@@ -138,6 +138,28 @@ function liveEvents(onEvent) {
   connect();
 }
 
+// seg is a row of buttons of which one is on. A pick shows at once; if
+// onPick returns a promise, other picks wait for it and a failed one is
+// undone.
+function seg(options, value, onPick, { disabled = false, cls = '' } = {}) {
+  const node = el('div.seg' + cls, { role: 'radiogroup' });
+  const draw = v => node.querySelectorAll('button').forEach(b => { const on = b.dataset.v === v; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)) });
+  const pick = async v => {
+    if (node.dataset.busy) return;
+    const was = node.dataset.v;
+    node.dataset.v = v;
+    draw(v);
+    node.dataset.busy = '1';
+    try { await onPick(v) } catch { node.dataset.v = was; draw(was) } finally { delete node.dataset.busy }
+  };
+  for (const [v, label] of options) {
+    node.append(el('button.v-' + v, { type: 'button', role: 'radio', 'data-v': v, disabled: disabled || null, onclick: () => pick(v) }, label));
+  }
+  node.dataset.v = value;
+  draw(value);
+  return node;
+}
+
 // debounce collapses bursts of events into one refresh.
 function debounce(fn, ms) {
   let t;

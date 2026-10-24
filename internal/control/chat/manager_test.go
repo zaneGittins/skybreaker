@@ -44,7 +44,10 @@ func (f *fakeClaude) run(script func(f *fakeClaude, m map[string]any)) {
 		f.mu.Unlock()
 		if m["type"] == "control_request" && m["request"].(map[string]any)["subtype"] == "initialize" {
 			f.say(`{"type":"control_response","response":{"subtype":"success","request_id":"` + m["request_id"].(string) + `","response":{"models":[` +
-				`{"value":"default","displayName":"Default"},{"value":"sonnet","displayName":"Sonnet"},{"value":"fable","displayName":"Fable"}]}}}`)
+				`{"value":"default","displayName":"Default","supportsEffort":true,"supportedEffortLevels":["low","medium","high"]},` +
+				`{"value":"sonnet","displayName":"Sonnet","supportsEffort":true,"supportedEffortLevels":["low","medium","high"]},` +
+				`{"value":"fable","displayName":"Fable","supportsEffort":true,"supportedEffortLevels":["low","max"]},` +
+				`{"value":"plain","displayName":"Plain"}]}}}`)
 			continue
 		}
 		script(f, m)
@@ -369,7 +372,7 @@ func TestManagerModel(t *testing.T) {
 	if !slices.Contains(argv, "--model=sonnet") {
 		t.Errorf("argv = %q", argv)
 	}
-	if ms := models(h.events(s.ID)); len(ms) != 3 {
+	if ms := models(h.events(s.ID)); len(ms) != 4 {
 		t.Errorf("listed models = %+v", ms)
 	}
 	// Running, only a model the harness listed is taken, and at once.

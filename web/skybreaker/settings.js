@@ -573,18 +573,6 @@ function accessPage(c, name) {
 const RULE_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', '*'];
 const RULE_ACTIONS = [['auto', 'Allow'], ['ask', 'Ask'], ['deny', 'Deny']];
 
-// seg is a row of buttons of which one is on.
-function seg(options, value, onPick, disabled) {
-  const node = el('div.seg.set-seg', { role: 'radiogroup' });
-  const draw = v => node.querySelectorAll('button').forEach(b => { const on = b.dataset.v === v; b.classList.toggle('on', on); b.setAttribute('aria-checked', String(on)) });
-  for (const [v, label] of options) {
-    node.append(el('button.v-' + v, { type: 'button', role: 'radio', 'data-v': v, disabled: disabled || null, onclick: () => { node.dataset.v = v; draw(v); onPick(v) } }, label));
-  }
-  node.dataset.v = value;
-  draw(value);
-  return node;
-}
-
 // hostEditor edits a list of hosts: each passed through unread or
 // inspected, with rules for its requests and a secret to send. The app adds
 // hosts only; routes stay in the config file. A rule keeps what its row
@@ -598,7 +586,7 @@ function hostEditor(initial, secrets, readOnly, changed) {
     const host = el('input.np-input.host-name', { type: 'text', placeholder: 'api.example.com', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', value: e.host || null, 'aria-label': 'Host', disabled: readOnly || null });
     const hint = el('p.host-hint');
     const body = el('div.host-body');
-    const modeSeg = seg([['mitm', 'Inspect'], ['tunnel', 'Pass through']], mode, v => { mode = v; sync(); changed() }, readOnly);
+    const modeSeg = seg([['mitm', 'Inspect'], ['tunnel', 'Pass through']], mode, v => { mode = v; sync(); changed() }, { disabled: readOnly, cls: '.set-seg' });
 
     // Rules, one row each: method, path, and what happens.
     const rules = el('div.rules');
@@ -614,7 +602,7 @@ function hostEditor(initial, secrets, readOnly, changed) {
       const extra = [r.refs?.length ? 'refs' : '', r.graphql ? 'GraphQL' : '', r.follow_redirects?.length ? 'redirects' : ''].filter(Boolean);
       const row = { r, method, path, action: () => action };
       row.node = el('div.rule', null, method, path,
-        seg(RULE_ACTIONS, action, v => { action = v; touch() }, readOnly),
+        seg(RULE_ACTIONS, action, v => { action = v; touch() }, { disabled: readOnly, cls: '.set-seg' }),
         extra.length ? el('span.tag.rule-extra', { title: 'Also limits ' + extra.join(', ') + '; kept as it is' }, '+' + extra.join(', ')) : null,
         readOnly ? null : el('button.icon-btn.bare.sm', { type: 'button', 'aria-label': 'Remove rule', title: 'Remove', onclick: () => { row.node.remove(); rows.splice(rows.indexOf(row), 1); touch() } }, svg(ICON.x)));
       rows.push(row);

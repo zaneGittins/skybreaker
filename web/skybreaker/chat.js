@@ -380,13 +380,13 @@ async function renderChat(seq, d) {
     // Who, on what, where: agent, model, project, branch. The same on a
     // phone and a desktop; the model opens the model menu.
     mark.replaceChildren(agentMark(session.harness, '.sm'));
-    const model = modelLabel(chatModel());
+    const model = modelLine(chatModel(), effortNow().on);
     const dot = () => el('span.sep', null, '·');
     const models = session.status === 'running' && chat.info.models?.length;
     sub.replaceChildren();
     append(sub, [
       el('span.sub-agent', null, harnessLabel(session.harness)),
-      model ? [dot(), models ? el('button.sub-model', { type: 'button', title: 'Change the model', onclick: e => modelMenu(e.currentTarget) }, model) : el('span.sub-model', null, model)] : null,
+      model ? [dot(), models ? el('button.sub-model', { type: 'button', title: 'Change the model or its effort', onclick: e => modelMenu(e.currentTarget) }, model) : el('span.sub-model', null, model)] : null,
       dot(), el('span.proj.tint-' + (project.tint ?? 0), null, el('span.pdot'), project.name),
       dot(), session.worktree
         ? el('span.sub-branch', { title: session.worktree_gone ? 'Its copy of the repository was tidied away; the branch stays' : 'Its own branch, in its own copy of the repository' }, svg(ICON.branch), el('span.bname', null, session.branch || 'its own branch'))
@@ -406,10 +406,15 @@ async function renderChat(seq, d) {
       el('button.btn.sm', { type: 'button', onclick: () => newChatIn(project.name, session.harness) }, svg(ICON.plus), 'New chat'));
     syncComposer();
   };
+  // saved takes the session as a change here left it; a refresh begun
+  // before then would bring back what it replaced, so it is dropped.
+  let saves = 0;
+  const saved = s => { saves++; session = s; head() };
   v.refreshMeta = debounce(async () => {
     try {
+      const at = saves;
       const x = await api('GET', '/api/sessions/' + id);
-      if (v.closed) return;
+      if (v.closed || at !== saves) return;
       session = x.session;
       project = x.project;
       head();
@@ -628,7 +633,7 @@ async function renderChat(seq, d) {
     if (!composer.hidden) addFiles([...e.dataTransfer.files]);
   });
 
-  // --- Skybreaker's own commands: /rename, /color, /goal, /clear, /fork, /compact, /prompt ---
+  // --- Skybreaker's own commands: /rename, /color, /goal, /clear, /fork, /compact, /prompt, /effort ---
   api('GET', '/api/prompts').then(r => { prompts = r.prompts || []; showHints() }).catch(() => { });
   const edit = async body => {
     session = await api('PATCH', '/api/sessions/' + encodeURIComponent(id), body);
@@ -657,6 +662,11 @@ async function renderChat(seq, d) {
       } else if (c.cmd === 'fork') {
         const f = await api('POST', `/api/sessions/${id}/fork`, {});
         navigate('/s/' + f.id);
+      } else if (c.cmd === 'effort') {
+        const { list } = effortNow();
+        if (!list.length) { toast('This model has no effort levels to choose from.'); return false }
+        if (!list.includes(c.arg)) { toast('Effort levels: ' + list.join(', ')); return false }
+        await setEffort(c.arg);
       } else if (c.cmd === 'clear') {
         if (chat.working) { toast('Stop the agent first, then clear.'); return false }
         await clearChat();
@@ -672,6 +682,7 @@ async function renderChat(seq, d) {
     const mode = session.perm_mode || 'ask';
     if (mode !== 'ask') await api('POST', `/api/sessions/${n.id}/mode`, { mode }).catch(() => { });
     if (session.chosen_model) await api('POST', `/api/sessions/${n.id}/model`, { model: session.chosen_model }).catch(() => { });
+    if (session.chosen_effort) await api('POST', `/api/sessions/${n.id}/effort`, { effort: session.chosen_effort }).catch(() => { });
     await api('DELETE', '/api/sessions/' + id);
     navigate('/s/' + n.id);
   };
@@ -683,9 +694,13 @@ async function renderChat(seq, d) {
     syncComposer();
   };
   const showHints = () => {
-    const hs = commandHints(input.value, prompts);
+    const hs = commandHints(input.value, prompts, effortNow());
     hints.hidden = !hs.length;
-    hints.replaceChildren(...hs.map(h => h.color
+    hints.replaceChildren(...hs.map(h => h.effort
+      ? el('button.cmd-hint' + (h.on ? '.on' : ''), { type: 'button', title: h.on ? 'Current' : null, 'aria-current': h.on ? 'true' : null,
+        onmousedown: e => e.preventDefault(), onclick: async () => { if (await runCommand({ cmd: 'effort', arg: h.effort })) clearInput() } },
+        el('b', null, h.effort))
+      : h.color
       ? el('button.cmd-hint.swatch-hint.sc-' + h.color, { type: 'button', onmousedown: e => e.preventDefault(),
         onclick: async () => { if (await runCommand({ cmd: 'color', arg: h.color })) clearInput() } }, el('span.swatch'), h.color)
       : h.prompt
@@ -698,7 +713,7 @@ async function renderChat(seq, d) {
   };
   // complete fills in a hint, leaving you to add to it before sending.
   const complete = h => {
-    input.value = h.color ? '/color ' + h.color : h.prompt ? '/prompt ' + h.prompt + ' ' : '/' + h.cmd + ' ';
+    input.value = h.color ? '/color ' + h.color : h.effort ? '/effort ' + h.effort : h.prompt ? '/prompt ' + h.prompt + ' ' : '/' + h.cmd + ' ';
     input.focus();
     grow();
     showHints();
@@ -707,7 +722,7 @@ async function renderChat(seq, d) {
   };
   input.addEventListener('keydown', e => {
     if (e.key === 'Tab' && !e.shiftKey && !hints.hidden) {
-      const h = commandHints(input.value, prompts)[0];
+      const h = commandHints(input.value, prompts, effortNow())[0];
       if (h) { e.preventDefault(); complete(h) }
       return;
     }
@@ -820,19 +835,38 @@ async function renderChat(seq, d) {
 
   // chatModel is the model this chat runs, from the list its harness gave.
   const chatModel = () => currentModel(chat.info.models, session.chosen_model, chat.info.model || session.model);
+  // effortNow is the effort levels the chat offers and the one it runs at.
+  const effortNow = () => effortChoice(chatModel(), session.status === 'running', session.chosen_effort, chat.info.effort);
 
+  // The server answers a model or effort change with the session as
+  // saved, which may have fitted the effort to a new model.
+  const setEffort = async level => saved((await api('POST', `/api/sessions/${id}/effort`, { effort: level })).session);
+
+  // The model menu lists the models once; the effort levels of the one
+  // the chat runs sit below them.
   const modelMenu = anchor => {
     const cur = chatModel();
-    menu(anchor, (chat.info.models || []).map(m => ({
+    const effort = effortNow();
+    menu(anchor, [...(chat.info.models || []).map(m => ({
       label: m.name || m.id, desc: m.description, on: cur?.id === m.id,
       run: async () => {
-        try {
-          await api('POST', `/api/sessions/${id}/model`, { model: m.id });
-          session.chosen_model = m.id;
-          head();
-        } catch (e) { toast(e.message, 'error') }
+        try { saved((await api('POST', `/api/sessions/${id}/model`, { model: m.id })).session) } catch (e) { toast(e.message, 'error') }
       },
-    })));
+    })), effort.list.length ? { node: effortPicker(cur, effort) } : null].filter(Boolean));
+  };
+
+  // effortPicker stays open as you pick, a group of menu radios.
+  const effortPicker = (model, { list, on }) => {
+    const pick = seg(list.map(l => [l, effortName(l, true)]), on, async l => {
+      try { await setEffort(l) } catch (e) { toast(e.message, 'error'); throw e }
+    });
+    pick.setAttribute('role', 'group');
+    pick.setAttribute('aria-label', 'Effort');
+    for (const b of pick.children) { b.setAttribute('role', 'menuitemradio'); b.title = effortName(b.dataset.v) }
+    return el('div.menu-effort', null,
+      el('div.effort-top', null, el('b', null, 'Effort'), el('span', null, modelLabel(model))),
+      pick,
+      el('p.effort-note', null, 'Higher levels think longer on hard problems, and take more time and more of your limits.'));
   };
 
   // sessionMenu is the ring's: how full the context is, and what to do
@@ -846,7 +880,7 @@ async function renderChat(seq, d) {
       running && session.resume ? { label: 'Compact', desc: 'Summarise the conversation to free up context', run: () => runCommand({ cmd: 'compact', arg: '' }) } : null,
       { label: 'New chat', desc: 'Start fresh; this one stays as it is', run: () => newChatIn(project.name, session.harness) },
       session.resume ? { label: 'Fork', desc: 'Copy this conversation into a new chat', run: () => runCommand({ cmd: 'fork', arg: '' }) } : null,
-      running && chat.info.models?.length ? { label: 'Model', desc: chatModel()?.name, run: () => modelMenu(anchor) } : null,
+      running && chat.info.models?.length ? { label: 'Model', desc: modelLine(chatModel(), effortNow().on), run: () => modelMenu(anchor) } : null,
       { label: 'Project ' + project.name, run: () => navigate('/p/' + project.name) },
       session.status === 'running' ? {
         label: 'End session', danger: true, run: async () => {
@@ -1231,7 +1265,7 @@ function closeChat() {
 function menu(anchor, items) {
   closeMenu();
   const r = anchor.getBoundingClientRect();
-  const box = el('div.menu', { role: 'menu' }, items.map(it => it.note
+  const box = el('div.menu', { role: 'menu' }, items.map(it => it.node ? it.node : it.note
     ? el('div.menu-note', null, el('b', null, it.note), it.desc ? el('span', null, it.desc) : null)
     : el('button.menu-item' + (it.danger ? '.danger' : '') + (it.on ? '.on' : ''), {
       type: 'button', role: 'menuitem', onclick: () => { closeMenu(); it.run() },

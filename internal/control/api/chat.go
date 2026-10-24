@@ -226,11 +226,31 @@ func (s *server) chatModel(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, http.StatusBadRequest, "which model?")
 		return
 	}
-	if err := s.Backend.ChatModel(r.Context(), r.PathValue("id"), in.Model); err != nil {
+	sess, err := s.Backend.ChatModel(r.Context(), r.PathValue("id"), in.Model)
+	if err != nil {
 		chatFail(w, err)
 		return
 	}
-	webutil.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"session": sess})
+}
+
+func (s *server) chatEffort(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Effort string `json:"effort"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if in.Effort == "" {
+		webutil.Error(w, http.StatusBadRequest, "which effort?")
+		return
+	}
+	sess, err := s.Backend.ChatEffort(r.Context(), r.PathValue("id"), in.Effort)
+	if err != nil {
+		chatFail(w, err)
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"session": sess})
 }
 
 func (s *server) chatLogin(w http.ResponseWriter, r *http.Request) {
