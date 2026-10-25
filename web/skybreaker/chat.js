@@ -321,7 +321,7 @@ async function renderChat(seq, d) {
   const title = el('span.title');
   const sub = el('span.sub');
   const mark = el('span.chat-mark');
-  const log = el('div.chat-log');
+  const log = el('div.chat-log', { 'data-gallery': '' });
   // The agents chip shows while subagents run, which can outlast the turn;
   // it takes you to the newest.
   const agentsBtn = el('button.wagents', { type: 'button', hidden: true, onclick: () => showAgent() });
@@ -955,7 +955,7 @@ async function renderChat(seq, d) {
       let fellBack = !a.thumb;
       const img = el('img', { src: url(a.thumb || a.kept), alt: reveal(a.name), loading: 'lazy',
         onerror: () => { if (!fellBack) { fellBack = true; img.src = url(a.kept) } } });
-      return el('a.att.att-img', { href: url(a.kept), target: '_blank', rel: 'noopener noreferrer', title: reveal(a.name) }, img);
+      return el('a.att.att-img', { href: url(a.kept), target: '_blank', rel: 'noopener noreferrer', title: reveal(a.name), 'data-view': '', 'data-name': a.name }, img);
     }));
   }
 
@@ -1036,7 +1036,7 @@ async function renderChat(seq, d) {
     const note = s.truncated ? el('div.show-note', null, 'Cut short. The agent can show the rest as a range of lines.') : null;
     if (image) {
       return el('figure.show-card', null, head, caption,
-        el('a.show-img', { href: url, target: '_blank', rel: 'noopener noreferrer' }, el('img', { src: url, alt: s.title || s.path, loading: 'lazy' })));
+        el('a.show-img', { href: url, target: '_blank', rel: 'noopener noreferrer', 'data-view': '', 'data-name': s.path.split('/').pop() }, el('img', { src: url, alt: s.title || s.path, loading: 'lazy' })));
     }
     const body = el('div.show-body', null, el('span.spinner'));
     fetch(url, { credentials: 'same-origin' })
@@ -1349,9 +1349,9 @@ function shotsStrip(chatId) {
   const shots = chatId && state.chat?.id === chatId ? state.chat.shots() : [];
   if (!shots.length) return null;
   return el('section.review-sec', null, el('h3', null, 'Shown by the agent'),
-    el('div.review-shots', null, shots.map(s => {
+    el('div.review-shots', { 'data-gallery': '' }, shots.map(s => {
       const url = `/api/sessions/${encodeURIComponent(chatId)}/shown/${encodeURIComponent(s.file)}`;
-      return el('a.review-shot', { href: url, target: '_blank', rel: 'noopener noreferrer', title: reveal(s.path) },
+      return el('a.review-shot', { href: url, target: '_blank', rel: 'noopener noreferrer', title: reveal(s.path), 'data-view': '', 'data-name': s.path.split('/').pop() },
         el('img', { src: url, alt: s.title || s.path, loading: 'lazy' }),
         s.title ? el('span', null, reveal(s.title)) : null);
     })));
