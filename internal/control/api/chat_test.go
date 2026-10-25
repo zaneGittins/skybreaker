@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -93,6 +94,9 @@ func (b *fakeBackend) ChatMode(_ context.Context, id, mode string) error {
 func (b *fakeBackend) ChatShown(id, name string) ([]byte, error) {
 	if id == "c1" && name == "0123456789abcdef0123456789abcdef.png" {
 		return []byte("\x89PNG"), nil
+	}
+	if id == "c1" && name == "0123456789abcdef0123456789abcdef.mp3" {
+		return []byte("ID3 a podcast's bytes"), nil
 	}
 	if id == "c1" && name == "0123456789abcdef0123456789abcdef.bin" {
 		return []byte("<html>a log</html>"), nil
@@ -519,6 +523,26 @@ func TestChatShownIsInert(t *testing.T) {
 		if code, _ := f.do(t, "GET", p, "", nil); code != 404 {
 			t.Errorf("%s: %d", p, code)
 		}
+	}
+}
+
+// Shared audio plays in the page, and seeks: it's served in ranges.
+func TestChatShownAudio(t *testing.T) {
+	f := newFixture(t, you)
+	req, _ := http.NewRequest("GET", f.ts.URL+"/api/sessions/c1/shown/0123456789abcdef0123456789abcdef.mp3", nil)
+	req.Header.Set("Range", "bytes=4-6")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	h := resp.Header
+	if resp.StatusCode != 206 || string(b) != "a p" || h.Get("Content-Type") != "audio/mpeg" || h.Get("Content-Disposition") != "inline" || h.Get("Accept-Ranges") != "bytes" {
+		t.Errorf("%d %q %q %q", resp.StatusCode, b, h.Get("Content-Type"), h.Get("Content-Disposition"))
+	}
+	if csp := h.Get("Content-Security-Policy"); !strings.Contains(csp, "sandbox") {
+		t.Errorf("CSP = %q", csp)
 	}
 }
 

@@ -292,6 +292,7 @@ func TestManagerAttachmentQuota(t *testing.T) {
 // Shown files and attachments have a quota each, so neither crowds out
 // the other; Kept finds both, and a fork copies both.
 func TestLogShelves(t *testing.T) {
+	smallShelf(t)
 	l, _ := OpenLog(t.TempDir())
 	big := bytes.Repeat([]byte("x"), int(shownShelf.maxBytes))
 	if _, err := l.Keep("s1", big, ".txt"); err != nil {

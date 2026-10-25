@@ -2,13 +2,16 @@ package controld
 
 import (
 	"bufio"
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http/httptest"
 	"net/netip"
 	"os"
@@ -457,6 +460,8 @@ func devAssistant(dataDir string) {
 	s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeTakeover, Title: "Google wants a sign-in code for NotebookLM"})
 	s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeRoutine, Title: "weekly-podcast", Body: "Make this week's podcast.",
 		Routine: &assistant.Routine{Name: "weekly-podcast", Schedule: "0 7 * * 0", Prompt: "Make this week's NotebookLM podcast from what I saved, and save the audio."}})
+	s.ShareFile("pip", "", "This week's podcast: sourdough, home labs and the week ahead", assistant.File{Name: "weekly-podcast.wav", Kind: "audio"}, devTone(), ".wav")
+	s.ShareFile("pip", "", "Your reading list, as a PDF", assistant.File{Name: "reading-list.pdf", Kind: "file"}, []byte("%PDF-1.4\n% a stand-in for the real thing\n"), ".bin")
 	s.PostUpdate("pip", "", "Renewed the library hold, due back November 7")
 	s.PostUpdate("pip", "", "Drafted a reply moving Saturday's sourdough class to 10:00; held until you send it")
 	// Pip is made in the app, so its agents can be changed there.
@@ -471,4 +476,29 @@ func devAssistant(dataDir string) {
 		Summary: "Quiet day: two meetings after lunch, and rain from 4, so take the bike early.\n\nCalendar: ..."})
 	b, _ := json.Marshal([]map[string]any{{"name": "morning-brief", "project": "pip", "schedule": "30 7 * * 1-5", "prompt": "Write my morning brief: weather, calendar and anything that needs me."}})
 	os.WriteFile(filepath.Join(dataDir, "settings", "routines.json"), b, 0o600)
+}
+
+// devTone is three seconds of a soft tone as a WAV, for a shared podcast
+// the UI can really play.
+func devTone() []byte {
+	const rate, secs = 8000, 3
+	n := rate * secs
+	var b bytes.Buffer
+	le := func(v any) { binary.Write(&b, binary.LittleEndian, v) }
+	b.WriteString("RIFF")
+	le(uint32(36 + n*2))
+	b.WriteString("WAVEfmt ")
+	le(uint32(16))
+	le(uint16(1))
+	le(uint16(1))
+	le(uint32(rate))
+	le(uint32(rate * 2))
+	le(uint16(2))
+	le(uint16(16))
+	b.WriteString("data")
+	le(uint32(n * 2))
+	for i := range n {
+		le(int16(3000 * math.Sin(2*math.Pi*440*float64(i)/rate)))
+	}
+	return b.Bytes()
 }

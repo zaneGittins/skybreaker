@@ -34,6 +34,10 @@ func TestLogKeepsShownFiles(t *testing.T) {
 		if _, err := l.Keep("s1", []byte("x"), ".exe"); err == nil {
 			t.Error("an unknown extension was kept")
 		}
+		// Audio a chat shared is kept as itself, to be played.
+		if name, err := l.Keep("s1", []byte("ID3 podcast"), ".mp3"); err != nil || !strings.HasSuffix(name, ".mp3") {
+			t.Errorf("audio: %q, %v", name, err)
+		}
 		l.Delete("s1")
 		if _, err := l.Kept("s1", name); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("after delete: %v", err)
@@ -47,6 +51,7 @@ func TestLogKeepsShownFiles(t *testing.T) {
 }
 
 func TestLogShownQuota(t *testing.T) {
+	smallShelf(t)
 	l, _ := OpenLog(t.TempDir())
 	big := bytes.Repeat([]byte("x"), int(shownShelf.maxBytes/2+1))
 	if _, err := l.Keep("s1", big, ".txt"); err != nil {
@@ -98,4 +103,12 @@ func TestManagerShow(t *testing.T) {
 	if _, err := h.m.Shown(s.ID, ev[0].ID); err == nil {
 		t.Error("a forgotten session's file is still served")
 	}
+}
+
+// smallShelf lowers the shown-file quota for a test, so filling it doesn't
+// take half a gigabyte.
+func smallShelf(t *testing.T) {
+	was := shownShelf.maxBytes
+	shownShelf.maxBytes = 1 << 20
+	t.Cleanup(func() { shownShelf.maxBytes = was })
 }

@@ -146,7 +146,7 @@ func TestShowEndToEnd(t *testing.T) {
 		}
 	})
 	f.app.store.CreateSession(store.Session{ID: "c1", Project: "orbit", Harness: "claude", Mode: store.ModeChat, Status: store.StatusRunning})
-	srv := &mcp.Server{Name: "skybreaker", Tools: []func(mcp.Caller) []mcp.Tool{show.Tools(f.app)}}
+	srv := &mcp.Server{Name: "skybreaker", Tools: []func(mcp.Caller) []mcp.Tool{show.Tools(noAssistants{f.app})}}
 	h := srv.Handler(f.app.MCPCaller)
 	from := func(project string) string { return f.app.cfg.Subnet(project).Addr().Next().Next().String() + ":40000" }
 	rpc := func(path, remote, sid, body string) (*httptest.ResponseRecorder, map[string]any) {
@@ -210,3 +210,11 @@ func TestShowEndToEnd(t *testing.T) {
 		t.Errorf("bifract naming orbit's chat: %d", w.Code)
 	}
 }
+
+// noAssistants is the app as show's backend with no assistants: the
+// server's own host adds them.
+type noAssistants struct{ *App }
+
+func (noAssistants) IsAssistant(string) bool { return false }
+
+func (noAssistants) AssistantShare(string, chat.Show, []byte, string) error { return nil }

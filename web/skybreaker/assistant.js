@@ -194,10 +194,19 @@ async function asstToday(seq, name, p, a, d) {
           el('span.a-ic', null, svg(r.status === 'ok' ? ICON.check : ICON.clock)),
           el('span.a-row-text', null, el('b', null, r.job), el('span.a-row-sub', null, oneLine(r.summary) || runWord(r))),
           el('span.a-row-end', null, ago(r.finished || r.started)))),
-        ...t.updates.map(u => el('div.a-row', null,
-          el('span.a-ic', null, svg(ICON.note)),
+        ...t.updates.map(u => [el('div.a-row' + (u.file ? '.a-row-shared' : ''), null,
+          el('span.a-ic', null, svg(u.file?.kind === 'audio' ? ICON.music : u.file ? ICON.file : ICON.note)),
           el('span.a-row-text', null, el('b', null, u.text)),
-          el('span.a-row-end', null, ago(u.at)))))) : null);
+          el('span.a-row-end', null, ago(u.at))),
+          u.file ? asstShared(name, u.file) : null]))) : null);
+}
+
+// asstShared is a file a routine shared, under its update: an image to
+// see, audio to play, anything else to download.
+function asstShared(name, f) {
+  const url = asstAPI(name) + '/files/' + encodeURIComponent(f.kept);
+  if (f.kind === 'image') return el('a.a-shared.show-img', { href: url, target: '_blank', rel: 'noopener noreferrer' }, el('img', { src: url, alt: f.name, loading: 'lazy' }));
+  return el('div.a-shared', null, sharedFile(url, { name: f.name, kind: f.kind, size: f.size }));
 }
 
 // asstChats is every chat with the assistant, open ones first.

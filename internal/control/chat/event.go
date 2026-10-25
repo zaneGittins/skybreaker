@@ -221,6 +221,8 @@ const (
 	ShowImage    = "image"
 	ShowText     = "text"
 	ShowMarkdown = "markdown"
+	ShowAudio    = "audio"
+	ShowDownload = "file" // anything else, offered as a download
 )
 
 // Show is a file from the sandbox the agent put in front of the user, read

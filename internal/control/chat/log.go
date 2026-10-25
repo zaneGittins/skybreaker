@@ -208,7 +208,8 @@ type shelf struct {
 }
 
 var (
-	shownShelf    = shelf{".shown", "shown files", 64 << 20, 500}
+	// Room for what agents share: a few podcasts, not only screenshots.
+	shownShelf    = shelf{".shown", "shown files", 512 << 20, 500}
 	attachedShelf = shelf{".attached", "attachments", 256 << 20, 500}
 	thumbShelf    = shelf{".thumbs", "thumbnails", 32 << 20, 1000}
 	shelves       = []*shelf{&shownShelf, &attachedShelf, &thumbShelf}
@@ -222,8 +223,8 @@ func keptFailed(err error) error {
 }
 
 var (
-	keptPattern = regexp.MustCompile(`^[0-9a-f]{32}\.(png|jpg|gif|webp|txt|bin)$`)
-	keptExt     = map[string]bool{".png": true, ".jpg": true, ".gif": true, ".webp": true, ".txt": true, ".bin": true}
+	keptPattern = regexp.MustCompile(`^[0-9a-f]{32}\.(png|jpg|gif|webp|txt|bin|mp3|wav|ogg|m4a)$`)
+	keptExt     = map[string]bool{".png": true, ".jpg": true, ".gif": true, ".webp": true, ".txt": true, ".bin": true, ".mp3": true, ".wav": true, ".ogg": true, ".m4a": true}
 )
 
 // keptName is the name data is kept under.

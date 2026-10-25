@@ -748,6 +748,11 @@ pre.dc-detail { padding: 10px 12px; font: 500 12.5px/1.5 var(--mono); white-spac
 .sl .st { padding: 0 14px 0 6px; white-space: pre; color: var(--text); }
 .show-md { max-height: 70vh; overflow: auto; padding: 4px 16px 12px; }
 .show-note { padding: 8px 12px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--border); }
+.sf-name { direction: ltr; font-family: var(--font); font-size: 13.5px; }
+.sf-audio { padding: 10px 12px 12px; border-top: 1px solid var(--border); background: var(--bg); }
+.sf-audio audio { display: block; width: 100%; height: 40px; }
+.sf-get { flex-shrink: 0; }
+.sf-get svg { width: 15px; height: 15px; }
 
 .diffs { display: grid; gap: 8px; }
 .diff-file { border-radius: 14px; border: 1px solid var(--border); background: var(--surface); overflow: hidden; }
