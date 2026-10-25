@@ -277,9 +277,19 @@ func (b *Browser) events() {
 			go b.paused(ctx, e)
 		case "Page.loadEventFired":
 			go b.cuePage(ctx)
-			select {
-			case b.loaded <- struct{}{}:
-			default:
+			b.signalLoaded()
+		case "Page.frameNavigated":
+			// A page back from the back/forward cache fires no load event.
+			var p struct {
+				Frame struct {
+					ParentID string `json:"parentId"`
+				} `json:"frame"`
+				Type string `json:"type"`
+			}
+			json.Unmarshal(e.Params, &p)
+			if e.Session == b.page && p.Frame.ParentID == "" && p.Type == "BackForwardCacheRestore" {
+				go b.cuePage(ctx)
+				b.signalLoaded()
 			}
 		case "Page.screencastFrame":
 			b.frame(ctx, e)
@@ -615,6 +625,13 @@ func (b *Browser) navigate(ctx context.Context, u string) error {
 	}
 	b.waitLoad(ctx)
 	return nil
+}
+
+func (b *Browser) signalLoaded() {
+	select {
+	case b.loaded <- struct{}{}:
+	default:
+	}
 }
 
 func (b *Browser) drainLoaded() {
