@@ -164,10 +164,14 @@ func TestTriggerRun(t *testing.T) {
 		t.Fatalf("new-window calls %d", len(win))
 	}
 	w := win[0]
-	for _, want := range []string{"-p", "--bare", "--max-budget-usd", "5.00", "Bash,Edit", "--mcp-config", "/etc/skybreaker/mcp.json"} {
+	for _, want := range []string{"-p", "--max-budget-usd", "5.00", "Bash,Edit", "--mcp-config", "/etc/skybreaker/mcp.json"} {
 		if !slices.Contains(w, want) {
 			t.Errorf("headless argv lacks %q: %v", want, w)
 		}
+	}
+	// --bare reads no subscription sign-in: a scheduled run would fail.
+	if slices.Contains(w, "--bare") {
+		t.Errorf("headless argv has --bare: %v", w)
 	}
 	if !slices.Contains(w, "=skybreaker-runs:") || !slices.Contains(w, "/skybreaker/runs/"+run.ID+"/work") {
 		t.Errorf("window target/dir wrong: %v", w)

@@ -13,6 +13,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"math/big"
 	"net"
@@ -21,6 +23,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -88,6 +91,12 @@ func site(t *testing.T) *httptest.Server {
 			fmt.Fprint(w, `<!doctype html><title>Next</title><p>Second page</p>`)
 		case "/search":
 			fmt.Fprintf(w, `<!doctype html><title>Results</title><p>You searched for %s</p>`, r.URL.Query().Get("q"))
+		case "/still":
+			fmt.Fprint(w, `<!doctype html><title>Still</title><div style="height:1500px;background:linear-gradient(#fff,#cde)"></div>`)
+		case "/drag":
+			fmt.Fprint(w, `<!doctype html><title>Drag</title><body style="height:600px" onmousemove="document.title='buttons '+event.buttons">`)
+		case "/alert":
+			fmt.Fprint(w, `<!doctype html><title>Alert</title><button onclick="alert('Saved!');document.title='After'">Save</button>`)
 		case "/security":
 			fmt.Fprint(w, `<!doctype html><title>Security</title><p>Change password</p>`)
 		case "/file":
@@ -391,5 +400,125 @@ func TestFitForAPhone(t *testing.T) {
 	b.Release(ctx)
 	if w := width(); w == 390 {
 		t.Error("the agent kept the phone's width")
+	}
+}
+
+// A page's alert or confirm doesn't freeze the browser: it's answered, and
+// the page carries on.
+func TestDialogsDontHang(t *testing.T) {
+	ts := site(t)
+	b := start(t, Options{})
+	ctx := ctxT(t)
+	if err := b.Open(ctx, ts.URL+"/alert"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := b.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var save int
+	for _, e := range p.Elements {
+		if strings.Contains(e.Name, "Save") {
+			save = e.Ref
+		}
+	}
+	quick, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := b.Click(quick, save); err != nil {
+		t.Fatal(err)
+	}
+	if s, err := b.Status(quick); err != nil || s.Title != "After" {
+		t.Fatalf("after the alert: %+v %v", s, err)
+	}
+}
+
+// A move with the button held is a drag, so a slider CAPTCHA or a
+// selection follows you.
+func TestDragHoldsTheButton(t *testing.T) {
+	ts := site(t)
+	b := start(t, Options{})
+	ctx := ctxT(t)
+	b.Open(ctx, ts.URL+"/drag")
+	if _, err := b.Take(ctx, "zane@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	defer b.Release(ctx)
+	title := func() string { s, _ := b.Status(ctx); return s.Title }
+	b.Mouse(ctx, Mouse{Type: "mousePressed", X: 10, Y: 10, Button: "left", ClickCount: 1})
+	b.Mouse(ctx, Mouse{Type: "mouseMoved", X: 40, Y: 10})
+	if got := title(); got != "buttons 1" {
+		t.Fatalf("while held: %q", got)
+	}
+	b.Mouse(ctx, Mouse{Type: "mouseReleased", X: 40, Y: 10, Button: "left", ClickCount: 1})
+	b.Mouse(ctx, Mouse{Type: "mouseMoved", X: 60, Y: 10})
+	if got := title(); got != "buttons 0" {
+		t.Fatalf("after: %q", got)
+	}
+}
+
+// What you see while you have the browser is sharp: frames carry twice
+// the page's pixels, for a Retina screen or a phone; the agent's own
+// screenshots stay at the page's size, so they cost it no more.
+func TestSharpFramesPlainScreenshots(t *testing.T) {
+	ts := site(t)
+	b := start(t, Options{})
+	ctx := ctxT(t)
+	b.Open(ctx, ts.URL+"/")
+	shot, err := b.Screenshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Result struct{ Value float64 } `json:"result"`
+	}
+	b.call(ctx, b.page, "Runtime.evaluate", map[string]any{"expression": "innerWidth", "returnByValue": true}, &out)
+	if cfg, err := png.DecodeConfig(bytes.NewReader(shot)); err != nil || float64(cfg.Width) != out.Result.Value {
+		t.Errorf("screenshot %d wide, page %v: %v", cfg.Width, out.Result.Value, err)
+	}
+	// And again after a take-over, a phone's included, is handed back.
+	for i, fit := range []bool{false, true, false} {
+		frames, err := b.Take(ctx, "zane@example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fit {
+			b.Fit(ctx, 390, 700)
+		}
+		b.Go(ctx, ts.URL+"/next")
+		sharp := false
+		deadline := time.After(10 * time.Second)
+		for !sharp {
+			select {
+			case f := <-frames:
+				cfg, err := jpeg.DecodeConfig(bytes.NewReader(f.JPEG))
+				sharp = err == nil && cfg.Width == 2*f.Width && (!fit || f.Width == 390)
+			case <-deadline:
+				t.Fatalf("take-over %d: no frame at twice the page's pixels", i)
+			}
+		}
+		b.Release(ctx)
+	}
+}
+
+// Chromium keeps its frames out of /dev/shm, which a container gets 64 MB
+// of: a few sharp frames would fill it and hang the browser.
+func TestLaunchKeepsOutOfShm(t *testing.T) {
+	bin := chromium(t)
+	dir := t.TempDir()
+	var got []string
+	inner := localLaunch(bin)
+	o := Options{Profile: filepath.Join(dir, "p"), Downloads: filepath.Join(dir, "d"), Launch: func(ctx context.Context, args []string) (io.ReadCloser, io.WriteCloser, func(), error) {
+		got = args
+		return inner(ctx, args)
+	}}
+	b, err := Start(ctxT(t), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.Close()
+	for _, want := range []string{"--disable-dev-shm-usage", "--force-device-scale-factor=2"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("launched without %s: %v", want, got)
+		}
 	}
 }

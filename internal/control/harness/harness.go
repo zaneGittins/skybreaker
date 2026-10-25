@@ -82,8 +82,10 @@ func Builtins() map[string]Manifest {
 			// terminal's history, which the UI scrolls natively.
 			Env: map[string]string{"CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN": "1"},
 			// The prompt sits right after -p: --allowedTools takes several
-			// values and would swallow a trailing prompt.
-			Headless: []string{"claude", "-p", "{prompt}", "--bare", "--output-format", "stream-json", "--verbose",
+			// values and would swallow a trailing prompt. Not --bare: it
+			// reads no subscription sign-in, no hooks and no CLAUDE.md, so
+			// a scheduled run would fail, unapproved and unbriefed.
+			Headless: []string{"claude", "-p", "{prompt}", "--output-format", "stream-json", "--verbose",
 				"--permission-prompts", "none", "--max-budget-usd", "{budget}", "--allowedTools", "{allowed_tools}",
 				"--mcp-config", "{mcp_config}", "--model", "{model}"},
 			Approval: "claude-hooks",

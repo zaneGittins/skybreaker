@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +76,7 @@ type Browser struct {
 	act     sync.RWMutex
 	mu      sync.Mutex
 	takenBy string
+	held    int // the mouse buttons you hold down, as the buttons field counts them
 	world   int // Skybreaker's isolated world in the page, 0 until made
 	frames  chan Frame
 	loaded  chan struct{}
@@ -96,6 +98,9 @@ type Frame struct {
 	URL           string
 }
 
+// pixelRatio is how many screen pixels Chromium draws each page pixel with.
+const pixelRatio = 2
+
 // Start launches Chromium and opens its page.
 func Start(ctx context.Context, o Options) (*Browser, error) {
 	args := []string{
@@ -103,6 +108,12 @@ func Start(ctx context.Context, o Options) (*Browser, error) {
 		"--remote-debugging-pipe", "--user-data-dir=" + o.Profile,
 		"--disable-background-networking", "--disable-sync", "--disable-component-update",
 		"--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--window-size=1280,900",
+		// Twice the pixels, so what you see as you take over is sharp on a
+		// Retina screen or a phone; the agent's screenshots are scaled back.
+		"--force-device-scale-factor=" + strconv.Itoa(pixelRatio),
+		// Its frames go in /tmp, not /dev/shm: a container gets 64 MB of
+		// that, which a few sharp frames fill, hanging the page.
+		"--disable-dev-shm-usage",
 	}
 	if o.Proxy != "" {
 		args = append(args, "--proxy-server="+o.Proxy, "--proxy-bypass-list=<-loopback>")
@@ -212,6 +223,10 @@ func (b *Browser) events() {
 			}
 		case "Page.screencastFrame":
 			b.frame(ctx, e)
+		case "Page.javascriptDialogOpening":
+			// No one sees a headless page's alert, confirm or "leave this
+			// page?": answer yes, or the page and every action on it hang.
+			go b.call(ctx, e.Session, "Page.handleJavaScriptDialog", map[string]any{"accept": true}, nil)
 		case "Browser.downloadWillBegin":
 			var p struct{ GUID, SuggestedFilename string }
 			json.Unmarshal(e.Params, &p)
@@ -453,7 +468,8 @@ func (b *Browser) Open(ctx context.Context, u string) error {
 	if err != nil || (p.Scheme != "http" && p.Scheme != "https") || p.Host == "" {
 		return fmt.Errorf("open %q: only http and https addresses", u)
 	}
-	if !b.Allowed(u) {
+	// The agent's own steps are held to the deny list even as you take over.
+	if denied(u, b.deny()) {
 		return ErrDenied
 	}
 	return b.navigate(ctx, u)
@@ -690,7 +706,7 @@ func (b *Browser) Back(ctx context.Context) error {
 		return errors.New("there's no page to go back to")
 	}
 	prev := h.Entries[h.CurrentIndex-1]
-	if !b.Allowed(prev.URL) {
+	if denied(prev.URL, b.deny()) {
 		return ErrDenied
 	}
 	b.drainLoaded()
@@ -716,7 +732,17 @@ func (b *Browser) Screenshot(ctx context.Context) ([]byte, error) {
 	var s struct {
 		Data string `json:"data"`
 	}
-	if err := b.call(ctx, b.page, "Page.captureScreenshot", map[string]any{"format": "png"}, &s); err != nil {
+	// At the page's own size: twice the pixels would cost the agent more
+	// and show it nothing it needs.
+	var m struct {
+		CSSVisualViewport struct{ ClientWidth, ClientHeight float64 } `json:"cssVisualViewport"`
+	}
+	if err := b.call(ctx, b.page, "Page.getLayoutMetrics", nil, &m); err != nil {
+		return nil, err
+	}
+	v := m.CSSVisualViewport
+	clip := map[string]any{"x": 0, "y": 0, "width": v.ClientWidth, "height": v.ClientHeight, "scale": 1.0 / pixelRatio}
+	if err := b.call(ctx, b.page, "Page.captureScreenshot", map[string]any{"format": "png", "clip": clip}, &s); err != nil {
 		return nil, err
 	}
 	return base64.StdEncoding.DecodeString(s.Data)

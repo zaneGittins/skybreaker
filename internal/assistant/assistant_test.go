@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func open(t *testing.T) (*Store, string) {
@@ -284,13 +286,20 @@ func TestIndexIsOneLinePerMemory(t *testing.T) {
 	}
 }
 
-// One take-over request waits at a time; asking again doesn't queue more.
+// One take-over request waits at a time. Asking again doesn't queue more,
+// but it's the latest ask that shows, and you hear of it again.
 func TestOneTakeoverWaits(t *testing.T) {
 	s, _ := open(t)
-	a, _ := s.Propose("pip", Proposal{Kind: ProposeTakeover, Title: "Google wants a code"})
-	b, err := s.Propose("pip", Proposal{Kind: ProposeTakeover, Title: "Still waiting"})
-	if err != nil || b.ID != a.ID || len(s.Get("pip").Proposals) != 1 {
-		t.Fatalf("%+v %v %+v", b, err, s.Get("pip").Proposals)
+	var told []string
+	s.OnPropose = func(_ string, p Proposal) { told = append(told, p.Title) }
+	a, _ := s.Propose("pip", Proposal{Kind: ProposeTakeover, Title: "Google wants a code", Session: "s1"})
+	b, err := s.Propose("pip", Proposal{Kind: ProposeTakeover, Title: "Microsoft wants a password", Session: "s2"})
+	ps := s.Get("pip").Proposals
+	if err != nil || b.ID != a.ID || len(ps) != 1 || ps[0].Title != "Microsoft wants a password" || ps[0].Session != "s2" {
+		t.Fatalf("%+v %v %+v", b, err, ps)
+	}
+	if !slices.Equal(told, []string{"Google wants a code", "Microsoft wants a password"}) {
+		t.Errorf("told %v", told)
 	}
 }
 
@@ -306,5 +315,33 @@ func TestRestoreUnderTheLock(t *testing.T) {
 	}
 	if got := s.Get("pip").Current(); got != "v0" {
 		t.Fatalf("restored %q", got)
+	}
+}
+
+// Suggestions left waiting never stop the agent asking you to take over.
+func TestTakeoverPastTheCap(t *testing.T) {
+	s, _ := open(t)
+	for i := range maxPending {
+		if _, err := s.Propose("pip", Proposal{Kind: ProposeMemory, Title: fmt.Sprint("m", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Propose("pip", Proposal{Kind: ProposeMemory, Title: "one more"}); !errors.Is(err, ErrTooMany) {
+		t.Fatalf("over the cap: %v", err)
+	}
+	if _, err := s.Propose("pip", Proposal{Kind: ProposeTakeover, Title: "Google wants a code"}); err != nil {
+		t.Fatalf("take-over: %v", err)
+	}
+}
+
+// A take-over reason the agent wrote long, or over lines, still asks.
+func TestClipLine(t *testing.T) {
+	long := strings.Repeat("Google wants a sign-in code for NotebookLM ", 4) + "é"
+	got := ClipLine("  "+long+"\nsecond line", MaxTitle)
+	if len(got) > MaxTitle || !utf8.ValidString(got) || strings.ContainsAny(got, "\r\n") || !strings.HasSuffix(got, "…") {
+		t.Fatalf("%q (%d)", got, len(got))
+	}
+	if got := ClipLine("Short one", MaxTitle); got != "Short one" {
+		t.Errorf("%q", got)
 	}
 }

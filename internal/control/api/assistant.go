@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"slices"
@@ -333,8 +334,23 @@ func (s *server) approveProposal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := routineIn{Name: p.Routine.Name, Schedule: p.Routine.Schedule, Prompt: p.Routine.Prompt, Harness: p.Routine.Harness}
+	// The agent can't know every job's name, nor be sure of its agents: a
+	// taken name gets a number, and an agent it doesn't have its default.
+	if pc := s.Config.Projects[name]; pc == nil || !slices.Contains(pc.Harnesses, in.Harness) {
+		in.Harness = ""
+	}
 	rec := &statusRecorder{ResponseWriter: w}
 	s.changeRoutines(rec, r, "approved routine "+in.Name+" for assistant "+name, func(f *config.AppFiles) error {
+		taken := map[string]bool{}
+		for _, j := range append(slices.Clone(s.Config.Jobs), f.Routines...) {
+			if j != nil {
+				taken[j.Name] = true
+			}
+		}
+		base := in.Name
+		for i := 2; taken[in.Name]; i++ {
+			in.Name = fmt.Sprintf("%s-%d", base, i)
+		}
 		f.Routines = append(f.Routines, in.job(name))
 		return nil
 	})
@@ -439,14 +455,33 @@ func (s *server) browserLive(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close(1000, "")
 	p, _ := tsauth.FromContext(r.Context())
 	by := cmp.Or(p.Name(), "you")
-	if err := browser.Live(r.Context(), conn, b, by); err != nil {
+	done, err := browser.Live(r.Context(), conn, b, by)
+	if err != nil {
 		m, _ := json.Marshal(map[string]string{"t": "error", "error": err.Error()})
 		conn.Write(r.Context(), false, m)
 		return
 	}
-	for _, p := range s.Assistants.Get(name).Proposals {
-		if p.Kind == assistant.ProposeTakeover {
-			s.Assistants.Dismiss(name, p.ID)
+	// Going away or quiet leaves the ask waiting: only Done answers it.
+	if done {
+		takeoverDone(context.WithoutCancel(r.Context()), s.Assistants, s.Store, s.Backend, name)
+	}
+}
+
+// takeoverDoneMessage tells the chat that asked that you've finished.
+const takeoverDoneMessage = "I'm done in the browser. Check where it is now with browser_status, and carry on."
+
+// takeoverDone answers an assistant's take-over requests, and sends the
+// chat that asked on its way, if it's waiting rather than working.
+func takeoverDone(ctx context.Context, as *assistant.Store, st *store.Store, b Backend, name string) {
+	for _, p := range as.Get(name).Proposals {
+		if p.Kind != assistant.ProposeTakeover {
+			continue
+		}
+		as.Dismiss(name, p.ID)
+		if sess, ok := st.Session(p.Session); ok && sess.Project == name && sess.Mode == store.ModeChat && sess.Status == store.StatusRunning && sess.State == store.ChatIdle {
+			if err := b.ChatSend(ctx, sess.ID, takeoverDoneMessage); err != nil {
+				log.Printf("skybreaker: telling %s the take-over is done: %v", sess.ID, err)
+			}
 		}
 	}
 }

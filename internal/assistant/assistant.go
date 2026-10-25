@@ -15,14 +15,12 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 var (
 	ErrNotFound = errors.New("not found")
 	ErrTooMany  = errors.New("too many")
-
-	// errDuplicate leaves the store as it was: what's asked for waits already.
-	errDuplicate = errors.New("already waiting")
 )
 
 const (
@@ -266,6 +264,21 @@ func (s *Store) save() error {
 }
 
 // line checks one line of text a person or agent gave.
+// ClipLine makes v one line of at most max bytes, cut short with an
+// ellipsis, for text an agent wrote that only needs to be read at a glance.
+func ClipLine(v string, max int) string {
+	v = strings.Join(strings.Fields(v), " ")
+	if len(v) <= max {
+		return v
+	}
+	const more = "\u2026"
+	cut := max - len(more)
+	for cut > 0 && !utf8.RuneStart(v[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(v[:cut]) + more
+}
+
 func line(what, v string, max int) error {
 	switch {
 	case strings.TrimSpace(v) == "":
@@ -354,21 +367,22 @@ func (s *Store) Propose(name string, p Proposal) (Proposal, error) {
 		return Proposal{}, fmt.Errorf("unknown proposal kind %q", p.Kind)
 	}
 	err := s.edit(name, func(a *Assistant) error {
-		// One take-over request at a time: asking again changes nothing.
+		// One take-over request at a time: asking again replaces it, so
+		// what shows is the latest ask, from the chat that made it.
 		if i := slices.IndexFunc(a.Proposals, func(x Proposal) bool { return x.Kind == ProposeTakeover }); i >= 0 && p.Kind == ProposeTakeover {
-			p = a.Proposals[i]
-			return errDuplicate
+			p.ID, p.At = a.Proposals[i].ID, s.now()
+			a.Proposals[i] = p
+			return nil
 		}
-		if len(a.Proposals) >= maxPending {
+		// There's only ever one take-over request, so it's never held up by
+		// suggestions left waiting.
+		if p.Kind != ProposeTakeover && len(a.Proposals) >= maxPending {
 			return fmt.Errorf("%d proposals are waiting for the user: %w", maxPending, ErrTooMany)
 		}
 		p.ID, p.At = s.id("p"), s.now()
 		a.Proposals = append(a.Proposals, p)
 		return nil
 	})
-	if errors.Is(err, errDuplicate) {
-		return p, nil
-	}
 	if err == nil && s.OnPropose != nil {
 		s.OnPropose(name, p)
 	}

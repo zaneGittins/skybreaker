@@ -498,6 +498,9 @@ async function renderChat(seq, d) {
     if (e.kind === 'info') head();
     if (e.kind === 'turn' && e.turn?.state !== 'working') { markSeen(); v.refreshMeta() }
     if (e.kind === 'tool' && e.tool?.kind === 'agent' && e.tool.status !== 'running' && !chat.working) { markSeen(); v.refreshMeta() }
+    // The agent asking you to take over its browser: show it here at once,
+    // not only when the app's own event comes.
+    if (e.kind === 'tool' && e.tool?.status !== 'running' && /browser_takeover/.test(e.tool?.name || '')) v.refreshTakeover?.();
     if (e.kind === 'turn' && e.turn?.state === 'working') v.refreshMeta();
     if (e.kind === 'ask' || e.kind === 'answered' || e.kind === 'login') v.refreshMeta();
   };

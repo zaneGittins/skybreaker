@@ -26,7 +26,11 @@ function asstPicker(label, cls, values, value, onPick, face) {
     e.preventDefault();
     const next = values[(values.indexOf(value) + step + values.length) % values.length];
     onPick(next);
-    requestAnimationFrame(() => group.querySelector('[aria-checked="true"]')?.focus());
+    // A pick can draw the picker anew: focus goes to the one on the page.
+    requestAnimationFrame(() => {
+      const live = group.isConnected ? group : document.querySelector(`.${cls}[aria-label="${CSS.escape(label)}"]`);
+      live?.querySelector('[aria-checked="true"]')?.focus();
+    });
   });
   draw(value);
   group.draw = draw;
@@ -78,10 +82,13 @@ function closeAssistant() {
 
 async function renderAssistant(seq, name, tab) {
   const enc = encodeURIComponent(name);
-  const [d, a] = await Promise.all([api('GET', '/api/projects/' + enc), api('GET', asstAPI(name))]);
+  const d = await api('GET', '/api/projects/' + enc);
   if (seq !== state.seq) return;
   const p = d.project;
+  // A repository's project has a page of its own.
   if (p.kind !== 'assistant') { navigate('/p/' + enc); return }
+  const a = await api('GET', asstAPI(name));
+  if (seq !== state.seq) return;
   state.asst = { p, a };
   asstCrumb(p);
   const needs = a.proposals.length + d.pending.length + (d.requests || []).length;
@@ -250,8 +257,9 @@ function asstRoutineAsk(name, x) {
     el('div.a-need-text', null, el('div.a-kick', null, 'Suggests a routine'), el('b', null, r.name),
       el('span.a-prov', null, el('span.mono', null, r.schedule), ' · ', asstSchedule(r.schedule)),
       el('p', null, r.prompt)),
+    // Routines are settings: only an admin approves one.
     el('div.a-acts', null,
-      el('button.btn.primary.sm', { type: 'button', onclick: e => asstDo(asstProposal(name, x, 'approve'), 'Saved: it runs once Skybreaker restarts', {}, e) }, svg(ICON.check), 'Approve'),
+      state.meta?.admin ? el('button.btn.primary.sm', { type: 'button', onclick: e => asstDo(asstProposal(name, x, 'approve'), 'Saved: it runs once Skybreaker restarts', {}, e) }, svg(ICON.check), 'Approve') : el('span.np-hint', null, 'An admin approves routines'),
       el('button.btn.ghost.sm', { type: 'button', onclick: e => asstDo(asstProposal(name, x, 'dismiss'), 'Dismissed', {}, e) }, 'Dismiss')));
 }
 
@@ -455,7 +463,9 @@ function asstLook(name, a) {
   drawPicks();
   const temper = seg([['calm', 'Calm'], ['lively', 'Lively'], ['precise', 'Precise']], look.temper, v => save({ temper: v }));
   const nameIn = el('input.np-input', { type: 'text', maxlength: '40', value: look.name, 'aria-label': 'Name' });
-  nameIn.addEventListener('change', () => { if (nameIn.value.trim()) save({ name: nameIn.value.trim() }).catch(() => { nameIn.value = look.name }) });
+  // The name is set when it's committed (Enter, or leaving the field), and
+  // the field let go so the page can show it.
+  nameIn.addEventListener('change', () => { if (nameIn.value.trim()) { nameIn.blur(); save({ name: nameIn.value.trim() }).catch(() => { nameIn.value = look.name }) } });
   return el('div.a-look', null,
     el('div.a-stage', null, mark, el('b.a-stage-name', null, look.name), cap, states),
     el('div.a-opts', null,
@@ -473,6 +483,9 @@ function asstPersonality(name, a) {
   const versions = a.personality || [];
   const text = el('textarea.np-input.a-persona', { rows: '6', 'aria-label': 'Personality', placeholder: 'Warm but brief. Lead with what needs me; skip the pleasantries.' });
   text.value = versions.length ? versions[versions.length - 1].text : '';
+  // Only an admin changes it; everyone else reads it.
+  const admin = !!state.meta?.admin;
+  text.readOnly = !admin;
   const save = el('button.btn.sm.primary', { type: 'button', disabled: true }, 'Save');
   text.addEventListener('input', () => { save.disabled = false; state.dirty = true });
   save.addEventListener('click', async () => {
@@ -500,8 +513,8 @@ function asstPersonality(name, a) {
       versions.length > 1 ? el('details.a-versions', null, el('summary', null, plural(versions.length, 'version')),
         versions.map((v, i) => i === versions.length - 1 ? null : el('div.a-version', null,
           el('span', null, new Date(v.at).toLocaleString(), ' · ', (v.by || '').split('@')[0]),
-          el('button.btn.ghost.sm', { type: 'button', onclick: () => restore(i) }, 'Restore'))).reverse()) : el('span.np-hint', null, 'Every saved version is kept.'),
-      save));
+          admin ? el('button.btn.ghost.sm', { type: 'button', onclick: () => restore(i) }, 'Restore') : null)).reverse()) : el('span.np-hint', null, 'Every saved version is kept.'),
+      admin ? save : null));
 }
 
 // --- browser ------------------------------------------------------------------
@@ -515,7 +528,7 @@ function asstBrowser(name, look) {
   const canvas = el('canvas.a-screen', { tabindex: touch ? null : '0', width: '1280', height: '900', 'aria-label': look.name + '\u2019s browser. Escape leaves the page.' });
   // A phone's keyboard comes up for a field, not a canvas: this one passes
   // what you type to the page.
-  const keys = el('input.a-keys', { type: 'text', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Type into the page' });
+  const keys = el('input.a-keys', { type: 'text', autocomplete: 'off', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', 'aria-label': 'Type into the page' });
   const status = el('span.a-live-status', null, el('span.spinner'), 'Starting the browser\u2026');
   const url = el('input.np-input.a-url', { type: 'url', placeholder: 'https://', 'aria-label': 'Address' });
   const wrap = el('div.a-screen-wrap', null, canvas, keys);
@@ -552,14 +565,24 @@ function asstBrowser(name, look) {
     if (m.t === 'size') size = { w: m.w, h: m.h };
     if (m.t === 'error') toast(m.error, 'error');
     if (m.t === 'state' && m.taken === false && m.why === 'idle') { toast('Handed back after a quiet while'); navigate(asstPath(name)) }
+    if (m.t === 'state' && m.taken === false && m.why === 'elsewhere') gone = 'Opened on another screen.';
   };
-  ws.onclose = () => { if (state.asstLive) status.replaceChildren(el('span.dot.bad'), 'Disconnected.') };
+  // A dropped connection (a phone asleep, a network change) leaves the ask
+  // waiting: you can pick up where you were.
+  let gone = '';
+  ws.onclose = () => {
+    if (!state.asstLive) return;
+    status.replaceChildren(el('span.dot.bad'), gone || 'Disconnected.', ' ',
+      el('button.btn.ghost.sm', { type: 'button', onclick: () => moveTo() }, 'Reconnect'));
+  };
   // Where on the page a pointer is, in the page's own pixels.
   const at = e => {
     const r = canvas.getBoundingClientRect();
     return { x: (e.clientX - r.left) * size.w / r.width, y: (e.clientY - r.top) * size.h / r.height };
   };
-  const mods = e => (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+  // The browser runs on Linux, where a Mac's Command shortcuts are Control's.
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const mods = e => (e.altKey ? 1 : 0) | (e.ctrlKey || mac && e.metaKey ? 2 : 0) | (e.metaKey && !mac ? 4 : 0) | (e.shiftKey ? 8 : 0);
   const buttons = ['left', 'middle', 'right'];
   // Pointer events count no clicks: a press soon after one near it is a
   // double (or triple) click.
@@ -569,17 +592,49 @@ function asstBrowser(name, look) {
     last = { t: e.timeStamp, x: e.clientX, y: e.clientY, n: near && e.timeStamp - last.t < 400 ? last.n % 3 + 1 : 1 };
     return last.n;
   };
+  // A finger taps to click and drags to scroll, as on a phone's own pages;
+  // a mouse presses, drags and hovers.
+  let finger = null;
   canvas.addEventListener('pointerdown', e => {
     canvas.setPointerCapture(e.pointerId);
-    // A touch keeps the keyboard's field focused: no mouse events follow
-    // to move the focus away.
-    if (e.pointerType === 'touch') { e.preventDefault(); keys.focus({ preventScroll: true }) } else canvas.focus();
+    if (e.pointerType === 'touch') {
+      // The keyboard's field keeps the focus: no mouse events follow to
+      // move it away.
+      e.preventDefault();
+      keys.focus({ preventScroll: true });
+      finger = { x: e.clientX, y: e.clientY, at: at(e), scrolling: false };
+      return;
+    }
+    canvas.focus();
     send({ t: 'mouse', type: 'mousePressed', ...at(e), button: buttons[e.button] || 'left', click_count: clicks(e), modifiers: mods(e) });
   });
-  canvas.addEventListener('pointerup', e => send({ t: 'mouse', type: 'mouseReleased', ...at(e), button: buttons[e.button] || 'left', click_count: last.n, modifiers: mods(e) }));
+  canvas.addEventListener('pointerup', e => {
+    if (e.pointerType === 'touch') {
+      if (finger && !finger.scrolling) {
+        const n = clicks(e);
+        send({ t: 'mouse', type: 'mousePressed', ...finger.at, button: 'left', click_count: n });
+        send({ t: 'mouse', type: 'mouseReleased', ...finger.at, button: 'left', click_count: n });
+      }
+      finger = null;
+      return;
+    }
+    send({ t: 'mouse', type: 'mouseReleased', ...at(e), button: buttons[e.button] || 'left', click_count: last.n, modifiers: mods(e) });
+  });
+  canvas.addEventListener('pointercancel', () => { finger = null });
   // Moves go once a frame, so a drag or a hover follows you as you move.
   let moved = null;
   canvas.addEventListener('pointermove', e => {
+    if (e.pointerType === 'touch') {
+      if (!finger) return;
+      const dx = e.clientX - finger.x, dy = e.clientY - finger.y;
+      if (!finger.scrolling && Math.hypot(dx, dy) < 8) return;
+      finger.scrolling = true;
+      finger.x = e.clientX;
+      finger.y = e.clientY;
+      const r = canvas.getBoundingClientRect();
+      send({ t: 'mouse', type: 'mouseWheel', ...finger.at, dx: -dx * size.w / r.width, dy: -dy * size.h / r.height });
+      return;
+    }
     const first = !moved;
     moved = e;
     if (first) requestAnimationFrame(() => { send({ t: 'mouse', type: 'mouseMoved', ...at(moved), modifiers: mods(moved) }); moved = null });
@@ -594,30 +649,63 @@ function asstBrowser(name, look) {
   canvas.addEventListener('click', () => { if (touch) keys.focus({ preventScroll: true }) });
   const keyDown = e => {
     if (e.key === 'Escape') { e.target.blur(); return } // the way out, for the keyboard
-    if ((e.metaKey || e.ctrlKey) && !e.getModifierState('AltGraph') && e.key.toLowerCase() === 'v') return; // paste comes as text
+    // Paste comes as text, into the hidden field: some browsers (Safari)
+    // only paste into something editable, which the canvas isn't.
+    if ((e.metaKey || e.ctrlKey) && !e.getModifierState('AltGraph') && e.key.toLowerCase() === 'v') { keys.focus({ preventScroll: true }); return }
     e.preventDefault();
     const plain = !e.metaKey && (!e.ctrlKey || e.getModifierState('AltGraph'));
     const text = e.key.length === 1 && plain ? e.key : e.key === 'Enter' ? '\r' : '';
     send({ t: 'key', type: text ? 'keyDown' : 'rawKeyDown', key: e.key, code: e.code, text, key_code: e.keyCode, modifiers: mods(e) });
   };
   const keyUp = e => { if (e.key !== 'Escape') { e.preventDefault(); send({ t: 'key', type: 'keyUp', key: e.key, code: e.code, key_code: e.keyCode, modifiers: mods(e) }) } };
-  const paste = e => { const s = e.clipboardData?.getData('text'); if (s) { e.preventDefault(); send({ t: 'text', s }) } };
+  const paste = e => {
+    const s = e.clipboardData?.getData('text');
+    if (s) { e.preventDefault(); send({ t: 'text', s }) }
+    if (!touch && e.target === keys) canvas.focus({ preventScroll: true });
+  };
+  // A phone has no paste key, and no field to hold a finger on: a button
+  // reads the clipboard instead (the phone asks you first).
+  const pasteBtn = touch && navigator.clipboard?.readText ? el('button.btn.ghost.sm.a-paste', { type: 'button', onclick: async () => {
+    try {
+      const s = await navigator.clipboard.readText();
+      if (s) send({ t: 'text', s });
+      else toast('The clipboard is empty');
+    } catch { toast('Couldn\u2019t read the clipboard', 'error') }
+    keys.focus({ preventScroll: true });
+  } }, 'Paste') : null;
   canvas.addEventListener('keydown', keyDown);
   canvas.addEventListener('keyup', keyUp);
   canvas.addEventListener('paste', paste);
-  // A phone's keyboard sends composed text, and often no key events.
-  keys.addEventListener('beforeinput', e => {
+  // A phone's keyboard: some send key events, many only text, some compose
+  // whole words. The field always holds one space, so whatever the keyboard
+  // does shows as a change to it: text added, or the space deleted.
+  const key = k => { send({ t: 'key', type: k.text ? 'keyDown' : 'rawKeyDown', ...k }); send({ t: 'key', type: 'keyUp', key: k.key, code: k.code, key_code: k.key_code }) };
+  const BACK = { key: 'Backspace', code: 'Backspace', key_code: 8 };
+  const keep = () => { keys.value = ' '; keys.setSelectionRange(1, 1) };
+  keys.addEventListener('focus', keep);
+  const changed = () => {
+    const v = keys.value;
+    if (v === '') key(BACK);
+    else if (v !== ' ') send({ t: 'text', s: v.startsWith(' ') ? v.slice(1) : v });
+    keep();
+  };
+  keys.addEventListener('input', e => { if (!e.isComposing) changed() });
+  keys.addEventListener('compositionend', changed);
+  keys.addEventListener('keydown', e => {
+    if (e.isComposing || e.keyCode === 229) return;
+    const special = { Enter: { key: 'Enter', code: 'Enter', text: '\r', key_code: 13 }, Backspace: BACK, Tab: { key: 'Tab', code: 'Tab', key_code: 9 },
+      ArrowLeft: { key: 'ArrowLeft', code: 'ArrowLeft', key_code: 37 }, ArrowRight: { key: 'ArrowRight', code: 'ArrowRight', key_code: 39 },
+      ArrowUp: { key: 'ArrowUp', code: 'ArrowUp', key_code: 38 }, ArrowDown: { key: 'ArrowDown', code: 'ArrowDown', key_code: 40 } }[e.key];
+    if (!special) return;
     e.preventDefault();
-    if (e.inputType === 'insertText' || e.inputType === 'insertReplacementText') send({ t: 'text', s: e.data || '' });
-    if (e.inputType === 'deleteContentBackward') send({ t: 'key', type: 'rawKeyDown', key: 'Backspace', code: 'Backspace', key_code: 8 }), send({ t: 'key', type: 'keyUp', key: 'Backspace', code: 'Backspace', key_code: 8 });
-    if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') send({ t: 'key', type: 'keyDown', key: 'Enter', code: 'Enter', text: '\r', key_code: 13 }), send({ t: 'key', type: 'keyUp', key: 'Enter', code: 'Enter', key_code: 13 });
+    key(special);
   });
   keys.addEventListener('paste', paste);
   const go = el('form.a-urlbar', { onsubmit: e => { e.preventDefault(); if (url.value) send({ t: 'go', url: url.value }) } },
     url, el('button.btn.sm', { type: 'submit' }, 'Go'));
   return el('div.a-browser', null,
     el('div.a-live-bar', null, avatar(look, { state: 'needs', mini: true }), status, el('span.grow'),
-      el('button.btn.primary.sm', { type: 'button', onclick: done }, svg(ICON.check), 'Done')),
+      pasteBtn, el('button.btn.primary.sm', { type: 'button', onclick: done }, svg(ICON.check), 'Done')),
     go,
     wrap,
     el('p.np-hint', null, (touch ? 'Tap' : 'Click') + ' the page to type. What you type goes straight to the browser; ' + look.name + ' never sees it.'));
@@ -625,7 +713,15 @@ function asstBrowser(name, look) {
 
 // --- making one ------------------------------------------------------------------
 
-const asstSlug = s => String(s).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+const asstSlug = s => {
+  const v = String(s).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+  if (v || !String(s).trim()) return v;
+  // A name in another script has no letters an address can take: it gets
+  // one of its own, the same each time for the same name.
+  let h = 0;
+  for (const c of String(s).trim()) h = (h * 31 + c.codePointAt(0)) >>> 0;
+  return 'assistant-' + h.toString(36);
+};
 
 // newAssistantSheet makes an assistant: who it is first (its name and its
 // mark), then what it runs on and may reach. Skybreaker restarts to add
@@ -659,7 +755,7 @@ async function newAssistantSheet() {
       look.name = name.value.trim();
       const slug = asstSlug(look.name);
       error.hidden = true;
-      if (!slug) { error.textContent = 'Give it a name with a letter or digit in it.'; error.hidden = false; return }
+      if (!slug) { error.textContent = 'Give it a name.'; error.hidden = false; return }
       create.disabled = true;
       try {
         const out = await api('POST', '/api/projects', { name: slug, kind: 'assistant', harnesses: npChecked(agentBoxes), capabilities: npChecked(capBoxes) });

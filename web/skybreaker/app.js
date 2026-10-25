@@ -30,7 +30,8 @@ function goBack(want, fallback = '/') {
 
 document.addEventListener('click', e => {
   const a = e.target.closest('a[data-link]');
-  if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+  // A control inside a link that took the click (a pill, a button) keeps it.
+  if (!a || e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
   e.preventDefault();
   navigate(a.getAttribute('href'));
 });
@@ -82,7 +83,9 @@ function crumb(project, extra) {
   const c = $('#crumb');
   c.replaceChildren();
   if (!project) return;
-  c.append(el('span.sep', null, '/'), el('a.crumb-pill.tint-' + project.tint, { href: '/p/' + project.name, 'data-link': true }, el('span.pdot'), el('span', null, project.name)));
+  // An assistant's runs and terminals lead back to its own page.
+  if (project.kind === 'assistant') asstCrumb(project);
+  else c.append(el('span.sep', null, '/'), el('a.crumb-pill.tint-' + project.tint, { href: '/p/' + project.name, 'data-link': true }, el('span.pdot'), el('span', null, project.name)));
   if (extra) c.append(el('span.sep', null, '/'), el('span.crumb-pill', null, el('span', null, extra)));
 }
 
@@ -645,6 +648,7 @@ async function renderProject(seq, name, tab = 'chats') {
   const [d, b] = await Promise.all([api('GET', '/api/projects/' + enc), api('GET', boardAt)]);
   if (seq !== state.seq) return;
   const p = d.project;
+  if (p.kind === 'assistant') { navigate(asstPath(name)); return }
   crumb(p);
   markSidebar();
   const { live, shown, ended } = chatGroups(d.sessions, new Set(d.pending.map(a => a.session)));
@@ -1064,6 +1068,14 @@ function runsTable(runs) {
 // way out.
 const sheetOpen = () => [...$('#sheet-root').children].some(n => !n.classList.contains('leaving'));
 
+// shortcut is whether a bare key is the app's to take: not a key something
+// on the page took already (the assistant's browser takes every key), nor
+// one typed into a field, nor with a sheet open.
+function shortcut(e) {
+  const a = document.activeElement;
+  return !e.defaultPrevented && !e.metaKey && !e.ctrlKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(a?.tagName) && !a?.isContentEditable && !sheetOpen();
+}
+
 // closeSheet takes the sheet away the way it came; one opened meanwhile
 // replaces it at once.
 function closeSheet() {
@@ -1084,6 +1096,8 @@ function leave(nodes, ms) {
 document.addEventListener('focusout', () => setTimeout(() => { if (state.stale && !busy()) refresh() }, 0));
 
 function sheet(title, pre) {
+  // A new sheet takes the place of the old, and of its way to redraw.
+  state.sheetReload = null;
   const close = el('button.icon-btn.bare', { onclick: closeSheet, 'aria-label': 'Close' }, svg(ICON.x));
   $('#sheet-root').replaceChildren(
     el('div.backdrop', { onclick: closeSheet }),
@@ -1639,7 +1653,7 @@ async function boot() {
   activityBadge();
   $('#new-chat').addEventListener('click', startNewChat);
   addEventListener('keydown', e => {
-    if (e.key === 'n' && !e.metaKey && !e.ctrlKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) && !document.activeElement?.isContentEditable && !sheetOpen() && state.route?.name !== 'session') {
+    if (e.key === 'n' && shortcut(e) && state.route?.name !== 'session') {
       e.preventDefault();
       startNewChat();
     }
@@ -1658,6 +1672,9 @@ async function boot() {
     }
     if (ev.type === 'request') { state.chat?.refreshRequests?.(); activityBadge() }
     if (ev.type === 'assistant') state.chat?.refreshTakeover?.();
+    // The Look tab draws its own changes as you make them: a redraw would
+    // take your focus and reset its preview.
+    if (ev.type === 'assistant' && state.route?.name === 'assistant' && state.route.tab === 'look' && ev.project === state.route.project) { refreshSidebar(); return }
     if (ev.type === 'board' && state.itemSheet && state.itemSheet.ref === ev.data) state.itemSheet.reload();
     if (ev.type === 'usage') { if (state.route?.name === 'home') refresh(); return }
     if (here && state.chat) state.chat.refreshMeta();
