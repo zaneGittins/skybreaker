@@ -110,7 +110,12 @@ async function go() {
       case 'settings': await renderSettings(seq, state.route); break;
       default: renderNotFound();
     }
-    if (seq === state.seq) { markSidebar(); enter() }
+    if (seq === state.seq) {
+      markSidebar();
+      enter();
+      // A link to a part of a page lands on it.
+      if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView()
+    }
   } catch (e) {
     if (seq === state.seq) {
       toast(e.message, 'error');
@@ -154,79 +159,179 @@ function renderNotFound() {
 async function renderHome(seq) {
   const [d, use] = await Promise.all([api('GET', '/api/inbox'), api('GET', '/api/usage').catch(() => null)]);
   if (seq !== state.seq) return;
+  const assistants = d.projects.filter(p => p.kind === 'assistant');
+  const todays = await Promise.all(assistants.map(p => api('GET', asstAPI(p.name) + '/today').catch(() => null)));
+  if (seq !== state.seq) return;
   crumb(null);
   state.projects = d.projects;
   sidebar(d);
+  sideUsage(use);
   const tints = Object.fromEntries(d.projects.map(p => [p.name, p.tint]));
   const g = inboxGroups(d.sessions, d.pending);
-  const pendingFor = id => d.pending.filter(a => a.session === id);
-  const row = s => sessionRow(s, { project: true, tint: tints[s.project], pending: pendingFor(s.id).length });
+  const pendingFor = id => d.pending.filter(a => a.session === id).length;
+  const row = s => sessionRow(s, { project: true, tint: tints[s.project], pending: pendingFor(s.id) });
   const requests = d.requests || [];
   const review = d.review || [];
-  const next = d.next || [];
   const orphans = d.pending.filter(a => !d.sessions.some(s => s.id === a.session));
-  // Earlier is what has ended, and chats resting a day.
-  const earlier = g.ended;
-  const asking = d.projects.filter(p => p.kind === 'assistant' && p.asks);
-  const needs = g.forYou.length + requests.length + review.length + orphans.length + asking.reduce((n, p) => n + p.asks, 0);
-  const parts = [
-    requests.length + orphans.length ? plural(requests.length + orphans.length, 'approval') : '',
-    g.forYou.length ? plural(g.forYou.length, 'chat') : '',
-    review.length ? `${review.length} to review` : '',
-    ...asking.map(p => `${plural(p.asks, 'thing')} from ${p.look?.name || p.name}`),
+  const needs = [
+    ...requests.map(a => homeAsk(svg(ICON.globe), a.view?.title || `${a.method} ${a.host}${a.path}`, a.project, tints[a.project], 'wants to reach out',
+      () => sheet('Network request', requestCard(a, tints[a.project], { done: closeSheet })))),
+    ...orphans.map(a => homeAsk(svg(ICON.shield), toolWord(a.tool) || 'A tool', a.project, tints[a.project], 'wants to run',
+      () => sheet('Approval', approvalCard(a, tints[a.project], { done: closeSheet })))),
+    ...g.needs.map(row),
+    ...review.map(it => itemRow(it, tints[it.project])),
+  ];
+  // An assistant's asks count too, though they sit on its own line.
+  const asks = assistants.reduce((n, p, i) => n + (todays[i] ? asstNeeds(p.name, p, todays[i]).length : p.asks || 0), 0);
+  const waiting = needs.length + asks;
+  const words = [
+    g.working.length ? `${asstCount(g.working.length).toLowerCase()} working` : '',
+    waiting ? `${asstCount(waiting).toLowerCase()} need${waiting === 1 ? 's' : ''} you` : '',
+    g.done.length ? `${asstCount(g.done.length).toLowerCase()} done` : '',
   ].filter(Boolean);
-  const summary = needs ? listing(parts) : g.working.length ? `${plural(g.working.length, 'agent')} working on their own` : 'Nothing is waiting on you.';
-
-  // On a phone, review items sit in the one list of what needs you; on a
-  // desktop they have the side rail.
-  const reviewRows = review.map(it => { const r = itemRow(it, tints[it.project]); r.classList.add('phone-only'); return r });
-  const forYou = [...g.forYou.map(row), ...reviewRows];
-  const main = el('div.home-main', null,
-    requests.length || orphans.length ? el('div.approvals', null, requests.map(a => requestCard(a, tints[a.project])), orphans.map(a => approvalCard(a, tints[a.project]))) : null,
-    asking.length ? el('div.row-list', null, asking.map(asstHomeRow)) : null,
-    forYou.length ? el('div.row-list' + (g.forYou.length ? '' : '.phone-only'), null, forYou) : null,
-    g.forYou.some(s => pendingFor(s.id).length) ? el('div.approvals', null, d.pending.filter(a => g.forYou.some(s => s.id === a.session)).map(a => approvalCard(a, tints[a.project]))) : null,
-    g.working.length ? el('section.list-sec', null, secHead('Working', g.working.length), el('div.row-list', null, g.working.map(row))) : null,
-    g.recent.length ? el('section.list-sec', null, secHead('Open', g.recent.length), el('div.row-list', null, g.recent.map(row))) : null,
-    !d.sessions.some(s => s.status === 'running' && !resting(s)) ? el('button.empty-add', { type: 'button', onclick: () => newSessionSheet(d.projects) }, svg(ICON.plus), 'Start a chat') : null,
-    el('section.list-sec.phone-only', null, secHead('Assistants'),
-      el('div.tiles', null, d.projects.filter(p => p.kind === 'assistant').map(asstTile),
-        el('button.tile.np-tile', { type: 'button', onclick: newAssistantSheet },
-          el('span.tile-name', null, svg(ICON.plus), 'New assistant'), el('span.tile-sub', null, 'For everything that isn\u2019t code')))),
-    el('section.list-sec.phone-only', null, secHead('Projects'),
-      el('div.tiles', null, d.projects.filter(p => p.kind !== 'assistant').map(p => projectTile(p, review, openCount(d.sessions, p.name))),
-        el('button.tile.np-tile', { type: 'button', onclick: newProjectSheet },
-          el('span.tile-name', null, svg(ICON.plus), 'New project'), el('span.tile-sub', null, 'From a GitHub repo')))),
-    earlier.length ? el('details.earlier', { open: prefs.get('earlierOpen') === '1', ontoggle: e => prefs.set('earlierOpen', e.target.open ? '1' : '0') },
-      el('summary', null, el('span', null, 'Earlier'), el('span.n', null, String(earlier.length)), svg(ICON.chevron, 'chev')),
-      el('div.row-list', null, earlier.map(row))) : null);
-  const rail = el('aside.home-rail.desk-only', null,
-    review.length ? el('section.rail-card', null, el('h2', null, 'Ready for review'), review.map(it => railItem(it))) : null,
-    next.length ? el('section.rail-card', null, el('h2', null, 'Up next'), next.map(it => railItem(it))) : null,
-    use ? limitsCard(use.limits) : null,
-    use ? tokensCard(use.hours) : null);
-  // The heading spans the page, so the list and the rail start level.
+  const summary = words.length ? words.join(', ').replace(/^./, c => c.toUpperCase()) + '.' : 'All quiet.';
+  const composer = homeComposer(d.projects);
+  const briefs = assistants.map((p, i) => homeBrief(p, todays[i], d)).filter(Boolean);
+  const sec = (title, rows) => rows.length ? el('section.home-sec', null, el('h2.home-label', null, title), el('div.row-list', null, rows)) : null;
   $('#app').replaceChildren(el('div.page.home', null,
-    el('header.page-head', null, el('h1', null, needs ? 'For you' : 'All quiet'), el('p', null, summary)),
-    el('div.home-grid', null, main, rail)),
-    el('button.fab', { type: 'button', onclick: () => newSessionSheet(d.projects), 'aria-label': 'New chat' }, svg(ICON.plus)));
+    d.projects.length ? el('nav.home-places.phone-only', { 'aria-label': 'Assistants and projects' }, homePlaces(d, g)) : null,
+    el('header.home-head', null, el('h1', null, asstGreeting()), el('p', null, summary)),
+    composer ? el('div.home-compose', null, composer) : homeWelcome(),
+    briefs.length ? el('div.home-briefs', null, briefs) : null,
+    sec('Needs you', needs),
+    sec('Working', g.working.map(row)),
+    sec('Done', g.done.map(row)),
+    g.ended.length ? el('details.earlier', { open: prefs.get('earlierOpen') === '1', ontoggle: e => prefs.set('earlierOpen', e.target.open ? '1' : '0') },
+      el('summary', null, el('span', null, 'Earlier'), el('span.n', null, String(g.ended.length)), svg(ICON.chevron, 'chev')),
+      el('div.row-list', null, g.ended.map(row))) : null));
+}
+
+// homeWelcome is home before there's anywhere to send work: the two kinds
+// of place to make.
+function homeWelcome() {
+  const opt = (icon, title, sub, run) => el('button.home-start', { type: 'button', onclick: run },
+    el('span.home-start-ic', null, svg(icon)), el('span.home-start-text', null, el('b', null, title), el('span', null, sub)), svg(ICON.chevron, 'chev'));
+  return el('div.home-welcome', null,
+    opt(ICON.branch, 'Add a project', 'Agents work on a GitHub repository, in a sandbox of its own', newProjectSheet),
+    opt(ICON.sparkle, 'Make an assistant', 'Your own agent for everything that isn\u2019t code', newAssistantSheet));
+}
+
+// homeAsk is something waiting on you that isn't a chat: a network request
+// or a tool to approve. Review opens it in full.
+function homeAsk(icon, title, project, tint, what, open) {
+  return el('div.srow.home-ask', null,
+    el('span.avatar.sm.home-ask-ic', null, icon),
+    el('div.who', null, el('div.title', null, title),
+      el('div.meta', null, el('span.proj.tint-' + (tint ?? 0), null, el('span.pdot'), project), el('span.sep', null, '·'), el('span', null, what))),
+    el('button.btn.sm.primary', { type: 'button', onclick: open }, 'Review'));
+}
+
+// homeBrief is an assistant on the home page, in a line: its mark, what it
+// last told you, and a pill for what waits on you.
+function homeBrief(p, t, d) {
+  const look = asstLookOf(p);
+  const needs = t ? asstNeeds(p.name, p, t).length : p.asks || 0;
+  const finished = (t?.runs || []).filter(r => r.status !== 'running');
+  const brief = asstBrief(finished)?.text || t?.updates?.[0]?.text || 'Nothing new today.';
+  const takeover = (t?.proposals || []).some(x => x.kind === 'takeover');
+  return el('a.home-brief', { href: asstPath(p.name), 'data-link': true },
+    avatar(look, { ...asstState(needs, d.sessions.filter(s => s.project === p.name)) }),
+    el('p', null, el('b', null, look.name), ' · ', brief,
+      needs ? el('button.a-needs-pill', { type: 'button', onclick: e => { e.preventDefault(); asstNeedsSheet(p.name, p) } },
+        el('i'), takeover ? 'Sign-in needed' : needs + ' for you') : null));
+}
+
+// homePlaces is the phone's row of assistants and projects, each a tap
+// away, marked when something there needs you.
+function homePlaces(d, g) {
+  const needy = new Set([...g.needs.map(s => s.project), ...(d.requests || []).map(a => a.project), ...(d.review || []).map(it => it.project)]);
+  const place = (href, mark, name, hot) => el('a.home-place', { href, 'data-link': true },
+    el('span.home-place-o', null, mark, hot ? el('span.home-place-dot', null, el('span.sr-only', null, 'needs you')) : null), el('span', null, name));
+  return [
+    ...d.projects.filter(p => p.kind === 'assistant').map(p => place(asstPath(p.name), avatar(asstLookOf(p)), asstLookOf(p).name, p.asks || p.pending)),
+    ...d.projects.filter(p => p.kind !== 'assistant').map(p => place('/p/' + encodeURIComponent(p.name), el('span.home-place-dot-big.tint-' + p.tint, null, el('span.pdot')), p.name, needy.has(p.name))),
+    el('button.home-place', { type: 'button', onclick: e => menu(e.currentTarget, [
+      { label: 'New project', desc: 'From a GitHub repo', run: newProjectSheet },
+      { label: 'New assistant', desc: 'For everything that isn’t code', run: newAssistantSheet },
+    ]) }, el('span.home-place-o', null, svg(ICON.plus)), el('span', null, 'New')),
+  ];
+}
+
+// homeComposer starts work from the home page: what to do, where, and with
+// which agent. Where and who are remembered for next time.
+function homeComposer(projects) {
+  const chatty = h => !!state.meta?.chat?.[h];
+  const places = projects.filter(p => p.harnesses.some(chatty)).sort((a, b) => (b.kind === 'assistant') - (a.kind === 'assistant'));
+  let place = places.find(p => p.name === prefs.get('lastProject')) || places[0];
+  let harness;
+  const pickHarnessFor = p => { const hs = p.harnesses.filter(chatty); return hs.includes(prefs.get('lastHarness')) ? prefs.get('lastHarness') : hs[0] };
+  const input = el('textarea.composer-input.home-input', { rows: '2', 'aria-label': 'What should we work on?', placeholder: 'What should we work on?', enterkeyhint: coarse() ? 'enter' : 'send' });
+  const send = el('button.send-btn', { type: 'submit', 'aria-label': 'Start', disabled: true }, svg(ICON.send));
+  const placeChip = el('button.home-chip', { type: 'button' });
+  const agentChip = el('button.home-chip', { type: 'button' });
+  const draw = () => {
+    if (!place) return;
+    harness = pickHarnessFor(place);
+    placeChip.replaceChildren(place.kind === 'assistant' ? avatar(asstLookOf(place), { mini: true }) : el('span.pdot.tint-' + place.tint),
+      place.kind === 'assistant' ? asstLookOf(place).name : place.name, svg(ICON.caret));
+    const many = place.harnesses.filter(chatty).length > 1;
+    agentChip.hidden = !many;
+    agentChip.replaceChildren(harnessLabel(harness), svg(ICON.caret));
+    input.placeholder = place.kind === 'assistant' ? 'Message ' + asstLookOf(place).name : 'What should we work on?';
+  };
+  placeChip.onclick = () => menu(placeChip, places.map(p => ({
+    label: p.kind === 'assistant' ? asstLookOf(p).name : p.name, desc: p.kind === 'assistant' ? 'Assistant' : p.repo || 'Project',
+    on: p === place, run: () => { place = p; prefs.set('lastProject', p.name); draw() },
+  })));
+  agentChip.onclick = () => menu(agentChip, place.harnesses.filter(chatty).map(h => ({
+    label: harnessLabel(h), on: h === harness, run: () => { prefs.set('lastHarness', h); draw() },
+  })));
+  input.value = state.homeDraft || '';
+  const fit = () => { send.disabled = !input.value.trim() || !place };
+  fit();
+  input.addEventListener('input', () => { state.homeDraft = input.value; fit() });
+  let busy = false;
+  const submit = async () => {
+    const text = input.value.trim();
+    if (!text || !place || busy) return;
+    busy = true;
+    send.disabled = true;
+    try {
+      const s = await api('POST', `/api/projects/${encodeURIComponent(place.name)}/sessions`, { harness, title: '', own_branch: place.kind !== 'assistant' && ownBranch() });
+      await api('POST', `/api/sessions/${encodeURIComponent(s.id)}/messages`, { text });
+      state.homeDraft = '';
+      navigate('/s/' + s.id);
+    } catch (e) { toast(e.message, 'error'); fit() } finally { busy = false }
+  };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !coarse() && !e.isComposing) { e.preventDefault(); submit() } });
+  if (!place) return null;
+  draw();
+  return el('form.composer.home-composer', { onsubmit: e => { e.preventDefault(); submit() } },
+    input, el('div.home-compose-row', null, placeChip, agentChip, el('span.grow'), send));
+}
+
+// sideUsage is how much of each plan is used, small at the sidebar's foot;
+// Activity has it in full.
+function sideUsage(use) {
+  const box = $('#side-usage');
+  if (!box) return;
+  const rows = [];
+  for (const [h, l] of Object.entries(use?.limits || {})) {
+    // A window past its reset starts over; the fullest one left counts.
+    const used = (l.windows || []).map(w => w.resets && Date.parse(w.resets) <= Date.now() ? 0 : w.used ?? 0);
+    if (used.length) rows.push([harnessName(h), Math.max(...used)]);
+  }
+  box.hidden = !rows.length;
+  box.replaceChildren(...rows.map(([name, used]) => {
+    const fill = el('i' + (used >= 70 ? '.hot' : ''));
+    fill.style.width = Math.min(100, Math.round(used)) + '%';
+    return el('a.su-row', { href: '/activity#usage', 'data-link': true, title: name + ': ' + Math.round(used) + '% of its plan used' },
+      el('span.su-text', null, el('span', null, name), el('span', null, Math.round(used) + '%')),
+      el('span.su-bar', null, fill));
+  }));
 }
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-const listing = parts => parts.length < 2 ? parts.join('') : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
-
-function secHead(title, n) {
-  return el('div.sec-title', null, el('h2', null, title), n ? el('span.n', null, String(n)) : null);
-}
-
-// projectTile is a project on the phone's home: its colour, what's live and
-// what's on its board.
-function projectTile(p, review, open) {
-  const r = review.filter(it => it.project === p.name).length;
-  const sub = [open ? plural(open, 'chat') : p.running ? 'running' : 'stopped', r ? `${r} to review` : p.open ? `${p.open} on the board` : ''].filter(Boolean).join(' · ');
-  return el('a.tile.tint-' + p.tint, { href: '/p/' + encodeURIComponent(p.name), 'data-link': true },
-    el('span.tile-name', null, el('span.pdot'), p.name), el('span.tile-sub', null, sub));
-}
 
 const HARNESS_NAMES = { claude: 'Claude', codex: 'Codex', pi: 'pi' };
 const harnessName = h => HARNESS_NAMES[h] || h;
@@ -283,13 +388,6 @@ function limitsCard(limits) {
             el('span.use-reset', null, w.resets && !over ? until(w.resets).replace(/^in /, '') : ''));
         }));
     }));
-}
-
-// railItem is a board item in the desktop home's side rail.
-function railItem(it) {
-  return el('button.rail-item', { type: 'button', onclick: () => openItem(it.ref) },
-    el('span.ref', null, it.ref), el('span.rail-title', null, it.title),
-    it.priority >= 2 ? el('span.prio-chip.p' + it.priority, null, PRIORITIES[it.priority]) : null);
 }
 
 // sessionRow is one session on one line: who, what it's doing, where and
@@ -412,12 +510,13 @@ function newSessionSheet(projects) {
 // approvalCard is a harness approval: may this agent run this tool inside
 // its own sandbox? requestCard is the other kind: may it reach out of the
 // sandbox with this request?
-function approvalCard(a, tint) {
+function approvalCard(a, tint, opts = {}) {
   const decide = async allow => {
     try {
       await api('POST', '/api/approvals/' + encodeURIComponent(a.id), { allow });
       toast(allow ? 'Allowed' : 'Denied');
       refresh();
+      opts.done?.();
     } catch (e) { toast(e.message, 'error') }
   };
   return el('div.approval.tint-' + (tint ?? 0), null,
@@ -477,7 +576,7 @@ async function renderActivity(seq) {
   if (filter === 'blocked') q.set('blocked', '1');
   else if (filter.startsWith('p:')) q.set('project', filter.slice(2));
   const cq = filter.startsWith('p:') ? '?project=' + encodeURIComponent(filter.slice(2)) : '';
-  const [d, reqs, projects, ch] = await Promise.all([api('GET', '/api/activity?' + q), api('GET', '/api/requests'), api('GET', '/api/projects'), api('GET', '/api/activity/chart' + cq)]);
+  const [d, reqs, projects, ch, use] = await Promise.all([api('GET', '/api/activity?' + q), api('GET', '/api/requests'), api('GET', '/api/projects'), api('GET', '/api/activity/chart' + cq), api('GET', '/api/usage').catch(() => null)]);
   if (seq !== state.seq) return;
   if (filter !== 'all' && filter !== 'blocked' && !projects.some(p => 'p:' + p.name === filter)) {
     prefs.set('activityFilter', 'all'); // a project that's gone
@@ -514,7 +613,7 @@ async function renderActivity(seq) {
 
   $('#app').replaceChildren(el('div.wrap.activity', null,
     el('section.inbox-head', null, el('div', null, el('h1', null, 'Activity'),
-      el('p', null, 'Everything your agents reached outside their sandboxes, and what they asked for.'))),
+      el('p', null, 'Everything your agents reached outside their sandboxes, what they asked for, and how much they used.'))),
     pending.length ? el('section', null,
       el('div.sec-head', null, el('h2', null, 'Waiting for you'), el('span.count', null, String(pending.length))),
       el('div.approvals', null, pending.map(a => requestCard(a, tints[a.project], { full: true })))) : null,
@@ -524,6 +623,9 @@ async function renderActivity(seq) {
         el('span.tag.' + (a.state === 'approved' || a.state === 'used' ? 'ok' : 'bad'), null, REQUEST_STATE[a.state] || a.state),
         targetText(a.view?.title || `${a.method} ${a.host}${a.path}`),
         el('span.when', null, [a.decided_by, ago(a.decided || a.created)].filter(Boolean).join(' · ')))))) : null,
+    use && (limitsCard(use.limits) || tokensCard(use.hours)) ? el('section.inbox-sec', { id: 'usage' },
+      el('div.sec-head', null, el('h2', null, 'Usage')),
+      el('div.use-grid', null, limitsCard(use.limits), tokensCard(use.hours))) : null,
     el('section.inbox-sec', { id: 'net-log' },
       el('div.sec-head', null, el('h2', null, 'Network')),
       el('div.chips', null, chips),
@@ -1477,7 +1579,8 @@ function sidebar(d) {
   state.inbox = d;
   const g = inboxGroups(d.sessions, d.pending);
   const asks = d.projects.reduce((n, p) => n + (p.asks || 0), 0);
-  const needs = g.forYou.length + (d.requests || []).length + (d.review || []).length + asks;
+  // What waits on you, and finished work you haven't seen.
+  const needs = g.needs.length + g.unseen + (d.requests || []).length + (d.review || []).length + asks;
   // The logo's ring turns while any agent is working, like the halo in a chat.
   const working = d.sessions.some(s => s.status === 'running' && s.state === 'working');
   for (const b of document.querySelectorAll('.brand')) b.classList.toggle('working', working);
@@ -1543,6 +1646,9 @@ function markSidebar() {
 }
 
 function startNewChat() {
+  // Home has its own message box: the button goes there.
+  const box = $('.home-input');
+  if (box) { box.focus(); return }
   const projects = state.inbox?.projects || state.projects || [];
   const p = projects.find(x => x.name === state.newChatIn);
   p ? pickHarness(p) : newSessionSheet(projects);

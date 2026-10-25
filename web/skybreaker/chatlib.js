@@ -552,25 +552,26 @@ const recentChats = (sessions, project, n = 3) =>
 // interrupts nothing.
 const closable = s => s.mode === 'chat' && s.status === 'running' && ['idle', 'done', 'bad'].includes(sessionTone(s).tone) && s.state !== 'login';
 
-// inboxGroups sorts sessions into what needs you (approvals, problems,
-// finished work you haven't seen), what's working, the rest, and ended
-// or resting.
+// inboxGroups sorts sessions for the home page: what needs you (waiting
+// on you, then problems), what's working (an open terminal too), what's done (finished work you
+// haven't seen, then open chats you have), and ended or resting.
 function inboxGroups(sessions, pending = [], now = Date.now()) {
   const waiting = new Set(pending.map(p => p.session));
-  const g = { forYou: [], working: [], recent: [], ended: [] };
-  const rank = { wait: 0, bad: 1, done: 2 };
+  const g = { needs: [], working: [], done: [], ended: [], unseen: 0 };
   for (const s of sessions) {
     const { tone } = sessionTone(s);
     if (tone === 'ended' || resting(s, now, waiting)) g.ended.push(s);
-    else if (tone in rank || waiting.has(s.id)) g.forYou.push(s);
-    else if (tone === 'work') g.working.push(s);
-    else g.recent.push(s);
+    else if (tone === 'wait' || tone === 'bad' || waiting.has(s.id)) g.needs.push(s);
+    else if (tone === 'work' || tone === 'live') g.working.push(s);
+    else g.done.push(s);
   }
-  const urgency = s => waiting.has(s.id) ? 0 : rank[sessionTone(s).tone] ?? 3;
   const newest = (a, b) => when(b) - when(a);
-  g.forYou.sort((a, b) => urgency(a) - urgency(b) || newest(a, b));
+  const urgent = s => waiting.has(s.id) || sessionTone(s).tone === 'wait' ? 0 : 1;
+  const fresh = s => sessionTone(s).tone === 'done' ? 0 : 1;
+  g.needs.sort((a, b) => urgent(a) - urgent(b) || newest(a, b));
   g.working.sort(newest);
-  g.recent.sort(newest);
+  g.done.sort((a, b) => fresh(a) - fresh(b) || newest(a, b));
+  g.unseen = g.done.filter(s => !fresh(s)).length;
   g.ended.sort(newest);
   g.ended = g.ended.slice(0, 20);
   return g;

@@ -117,15 +117,6 @@ async function renderAssistant(seq, name, tab) {
   $('#app').replaceChildren(...[page, fab].filter(Boolean));
 }
 
-// asstHomeRow is an assistant on the inbox, with what it asks of you.
-function asstHomeRow(p) {
-  const look = asstLookOf(p);
-  return el('a.srow.a-home-row', { href: asstPath(p.name), 'data-link': true },
-    avatar(look, { state: 'needs', cls: 'a-home-mark' }),
-    el('span.a-row-text', null, el('b', null, look.name), el('span.a-row-sub', null, plural(p.asks, 'thing') + ' waiting on you')),
-    svg(ICON.chevron, 'chev'));
-}
-
 function asstCrumb(p) {
   const c = $('#crumb');
   c.replaceChildren(el('span.sep', null, '/'), el('a.crumb-pill.a-crumb', { href: asstPath(p.name), 'data-link': true },
@@ -633,14 +624,6 @@ function asstBrowser(name, look) {
 }
 
 // --- making one ------------------------------------------------------------------
-
-// asstTile is an assistant on a phone's home page.
-function asstTile(p) {
-  const look = asstLookOf(p);
-  return el('a.tile.a-tile', { href: asstPath(p.name), 'data-link': true },
-    el('span.tile-name', null, avatar(look, { mini: true }), look.name),
-    el('span.tile-sub', null, p.asks ? plural(p.asks, 'thing') + ' for you' : p.running ? 'running' : 'resting'));
-}
 
 const asstSlug = s => String(s).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
