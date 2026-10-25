@@ -40,11 +40,16 @@ const (
 	maxIndexed = 100
 )
 
-// Shapes, Colors and Tempers are what an assistant's mark can be.
+// Shapes, Colors, Tempers, Rings, Eyes and Finishes are what an
+// assistant's mark can be. The first ring, eye and finish are what a look
+// without one gets.
 var (
-	Shapes  = []string{"dot", "square", "triangle", "diamond", "hexagon", "crescent"}
-	Colors  = []string{"clay", "sage", "ink", "ochre", "rose", "slate", "moss", "plum"}
-	Tempers = []string{"calm", "lively", "precise"}
+	Shapes   = []string{"dot", "square", "triangle", "diamond", "hexagon", "crescent"}
+	Colors   = []string{"clay", "sage", "ink", "ochre", "rose", "slate", "moss", "plum"}
+	Tempers  = []string{"calm", "lively", "precise"}
+	Rings    = []string{"fine", "double", "dotted", "arc", "none"}
+	Eyes     = []string{"none", "soft"}
+	Finishes = []string{"paper", "light"}
 )
 
 type Look struct {
@@ -52,6 +57,23 @@ type Look struct {
 	Shape  string `json:"shape"`
 	Color  string `json:"color"`
 	Temper string `json:"temper"`
+	Ring   string `json:"ring"`
+	Eye    string `json:"eye"`
+	Finish string `json:"finish"`
+}
+
+// filled is l with the plain ring, eye and finish where it has none.
+func (l Look) filled() Look {
+	if l.Ring == "" {
+		l.Ring = Rings[0]
+	}
+	if l.Eye == "" {
+		l.Eye = Eyes[0]
+	}
+	if l.Finish == "" {
+		l.Finish = Finishes[0]
+	}
+	return l
 }
 
 // Version is one saved personality.
@@ -164,6 +186,9 @@ func Open(path string) (*Store, error) {
 	if s.st.Assistants == nil {
 		s.st.Assistants = map[string]*Assistant{}
 	}
+	for _, a := range s.st.Assistants {
+		a.Look = a.Look.filled()
+	}
 	return s, nil
 }
 
@@ -186,7 +211,7 @@ func defaultLook(name string) Look {
 	if len(r) > 0 {
 		r[0] = unicode.ToUpper(r[0])
 	}
-	return Look{Name: string(r), Shape: "dot", Color: "clay", Temper: "calm"}
+	return Look{Name: string(r), Shape: "dot", Color: "clay", Temper: "calm"}.filled()
 }
 
 func clone(a *Assistant) Assistant {
@@ -305,6 +330,7 @@ func text(what, v string, max int) error {
 }
 
 func (s *Store) SetLook(name string, l Look) error {
+	l = l.filled()
 	switch {
 	case line("name", l.Name, MaxName) != nil:
 		return line("name", l.Name, MaxName)
@@ -314,6 +340,12 @@ func (s *Store) SetLook(name string, l Look) error {
 		return fmt.Errorf("unknown color %q", l.Color)
 	case !slices.Contains(Tempers, l.Temper):
 		return fmt.Errorf("unknown temper %q", l.Temper)
+	case !slices.Contains(Rings, l.Ring):
+		return fmt.Errorf("unknown ring %q", l.Ring)
+	case !slices.Contains(Eyes, l.Eye):
+		return fmt.Errorf("unknown eye %q", l.Eye)
+	case !slices.Contains(Finishes, l.Finish):
+		return fmt.Errorf("unknown finish %q", l.Finish)
 	}
 	return s.edit(name, func(a *Assistant) error { a.Look = l; return nil })
 }

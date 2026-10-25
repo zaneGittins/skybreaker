@@ -27,9 +27,24 @@ function avatar(look, { state = 'idle', jobs = 3, mini = false, cls = '' } = {})
   // in front, and show whichever side of the orbit they are on.
   const bodies = () => Array.from({ length: AV_MOONS + 1 }, () => avNode('circle', { class: 'av-planet', r: '0' }));
   const behind = bodies(), ahead = bodies();
-  const body = avNode('path', { class: 'av-shape', filter: `url(#${id}g)` });
-  s.append(defs, back, ...behind, body, front, ...ahead);
-  s._av = { look, state, jobs, mini, back, front, behind, ahead, body, born: performance.now() };
+  const body = avNode('path', { class: 'av-shape' });
+  // A light finish: the shape lit from within, a halo behind it, and an
+  // amber flare at the planet while it needs you.
+  const stops = [0, 0.55, 1].map(o => avNode('stop', { offset: String(o) }));
+  const grad = avNode('radialGradient', { id: id + 'r', cx: '46%', cy: '42%', r: '62%' });
+  grad.append(...stops);
+  defs.append(grad, avBlur(id + 'h'));
+  const halo = avNode('path', { class: 'av-halo', filter: `url(#${id}h)` });
+  const flare = avNode('circle', { class: 'av-halo', r: '0', fill: AV_AMBER, opacity: '.55', filter: `url(#${id}h)` });
+  // The eye: its white also clips the iris, so the lids can cover it.
+  const clip = avNode('clipPath', { id: id + 'e' }), lid = avNode('path');
+  clip.append(lid);
+  defs.append(clip);
+  const white = avNode('path', { class: 'av-eye' });
+  const iris = avNode('circle', { class: 'av-eye', r: '0', 'clip-path': `url(#${id}e)` });
+  const lids = avNode('path', { class: 'av-eye' });
+  s.append(defs, halo, flare, back, ...behind, body, white, iris, lids, front, ...ahead);
+  s._av = { look, state, jobs, mini, back, front, behind, ahead, body, eye: { lid, white, iris, lids }, light: { stops, halo, flare }, id, born: performance.now() };
   // Drawn where the clock is now, so a redrawn mark doesn't jump.
   avDraw(s, performance.now() / 1000);
   if (!avStill()) {
@@ -49,17 +64,59 @@ function avGrain(id) {
   return f;
 }
 
+// avBlur softens a halo, with room to spread past the shape.
+function avBlur(id) {
+  const f = avNode('filter', { id, filterUnits: 'userSpaceOnUse', x: '-30', y: '-30', width: '160', height: '160' });
+  f.append(avNode('feGaussianBlur', { stdDeviation: '8' }));
+  return f;
+}
+
 const avStill = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function avDraw(s, t) {
   const a = s._av;
   const showRing = !a.mini;
-  const f = avFrame(a.look, a.state, t, { rings: showRing, jobs: a.jobs });
+  const f = avFrame(a.look, a.state, t, { rings: showRing, jobs: a.jobs, blink: !avStill() });
+  const turn = `translate(0 ${-f.lift}) rotate(${f.rot} 50 50)`;
   a.body.setAttribute('d', f.shape);
-  a.body.setAttribute('fill', f.color);
-  a.body.setAttribute('transform', `translate(0 ${-f.lift}) rotate(${f.rot} 50 50)`);
+  a.body.setAttribute('transform', turn);
+  const g = f.glow, l = a.light;
+  if (g) {
+    a.body.setAttribute('fill', `url(#${a.id}r)`);
+    a.body.removeAttribute('filter');
+    [g.core, g.mid, g.edge].forEach((c, i) => l.stops[i].setAttribute('stop-color', c));
+  } else {
+    a.body.setAttribute('fill', f.color);
+    a.body.setAttribute('filter', `url(#${a.id}g)`);
+  }
+  // A mini mark is too small for a halo.
+  const glowing = g && !a.mini;
+  l.halo.setAttribute('d', glowing ? f.shape : '');
+  l.halo.setAttribute('transform', turn);
+  if (glowing) {
+    l.halo.setAttribute('fill', g.halo);
+    l.halo.setAttribute('opacity', (0.25 + 0.55 * g.level).toFixed(2));
+  }
+  const flaring = glowing && a.state === 'needs';
+  l.flare.setAttribute('r', flaring ? '9' : '0');
+  if (flaring) {
+    l.flare.setAttribute('cx', f.planet.x.toFixed(2));
+    l.flare.setAttribute('cy', f.planet.y.toFixed(2));
+  }
   a.back.setAttribute('d', f.back);
   a.front.setAttribute('d', f.front);
+  const e = f.eye, ae = a.eye;
+  ae.lid.setAttribute('d', e ? e.white : '');
+  ae.white.setAttribute('d', e ? e.white : '');
+  ae.lids.setAttribute('d', e ? e.lids : '');
+  ae.iris.setAttribute('r', e ? e.iris.r.toFixed(2) : '0');
+  if (e) {
+    ae.white.setAttribute('fill', e.tint);
+    ae.lids.setAttribute('fill', e.ink);
+    ae.iris.setAttribute('fill', e.ink);
+    ae.iris.setAttribute('cx', e.iris.x.toFixed(2));
+    ae.iris.setAttribute('cy', e.iris.y.toFixed(2));
+  }
   const all = showRing ? [f.planet, ...f.moons] : [];
   for (let i = 0; i < a.behind.length; i++) {
     const p = all[i];
