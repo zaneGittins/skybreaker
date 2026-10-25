@@ -34,8 +34,8 @@ func TestAssistantHasNoGit(t *testing.T) {
 	if _, err := f.app.NewChat(ctx, "pip", "claude", NewOptions{OwnBranch: true}); !errors.Is(err, ErrNoRepo) {
 		t.Errorf("own branch: %v", err)
 	}
-	if _, err := f.app.NewChat(ctx, "pip", "claude", NewOptions{}); err != nil {
-		t.Errorf("plain chat: %v", err)
+	if _, err := f.app.Thread(ctx, "pip"); err != nil {
+		t.Errorf("its thread: %v", err)
 	}
 	if _, err := f.app.Review(ctx, "pip"); !errors.Is(err, ErrNoRepo) {
 		t.Errorf("review: %v", err)

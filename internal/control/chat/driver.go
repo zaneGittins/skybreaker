@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // Permission modes, from asking about everything to asking about nothing.
@@ -187,6 +188,22 @@ func firstLine(s string) string {
 		return s[:i] + " …"
 	}
 	return s
+}
+
+// Shorten cuts s to at most n bytes on a rune boundary, at a word if one
+// is near, and marks the cut with an ellipsis.
+func Shorten(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	cut := s[:n]
+	if i := strings.LastIndexByte(cut, ' '); i > n/2 {
+		cut = cut[:i]
+	}
+	return strings.TrimSpace(cut) + "…"
 }
 
 // countDiff counts a unified diff's added and removed lines.

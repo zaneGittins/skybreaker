@@ -476,6 +476,39 @@ func devAssistant(dataDir string) {
 		Summary: "Quiet day: two meetings after lunch, and rain from 4, so take the bike early.\n\nCalendar: ..."})
 	b, _ := json.Marshal([]map[string]any{{"name": "morning-brief", "project": "pip", "schedule": "30 7 * * 1-5", "prompt": "Write my morning brief: weather, calendar and anything that needs me."}})
 	os.WriteFile(filepath.Join(dataDir, "settings", "routines.json"), b, 0o600)
+	devThread(dataDir, st)
+}
+
+// devThread gives pip a thread with two tasks, one done and one under
+// way, and the morning brief's card.
+func devThread(dataDir string, st *store.Store) {
+	l, err := chat.OpenLog(filepath.Join(dataDir, "chats"))
+	if err != nil {
+		panic(err)
+	}
+	at := time.Now().Add(-40 * time.Minute).UTC()
+	sess := func(id, task, title, resume string) {
+		st.CreateSession(store.Session{ID: id, Project: "pip", Harness: "claude", Mode: store.ModeChat, Status: store.StatusRunning, State: store.ChatIdle,
+			Task: task, Title: title, Resume: resume, Created: at, Updated: at, Seen: at})
+	}
+	say := func(id string, e chat.Event) {
+		at = at.Add(time.Minute)
+		e.Time = at
+		l.Append(id, e)
+	}
+	sess("s-dev-thread", "", "Weekend in Lisbon", "conv-dev-thread")
+	say("s-dev-thread", chat.Event{Kind: chat.KindUser, ID: "u1", Text: "Can you plan my weekend in Lisbon? Flights for Friday and a dinner spot for Saturday."})
+	say("s-dev-thread", chat.Event{Kind: chat.KindText, ID: "m1", Text: "On it. I've started two tasks, flights and a table for Saturday, and I'll post here as each finishes."})
+	sess("s-dev-flights", "s-dev-thread", "Find flights to Lisbon", "conv-dev-flights")
+	say("s-dev-flights", chat.Event{Kind: chat.KindUser, ID: "u1", Text: "Find direct flights to Lisbon on Friday morning, back Sunday evening, under $450."})
+	say("s-dev-flights", chat.Event{Kind: chat.KindText, ID: "m1", Text: "Three direct flights under $400; TAP at 7:40 is the best.\n\n- TAP 7:40, $372\n- United 9:15, $389\n- Delta 11:05, $398"})
+	sess("s-dev-table", "s-dev-thread", "Book a table for Saturday", "")
+	say("s-dev-table", chat.Event{Kind: chat.KindUser, ID: "u1", Text: "Find a seafood place in Alfama for two, Saturday at 8, and hold a table."})
+	say("s-dev-thread", chat.Event{Kind: chat.KindCard, ID: "task:s-dev-flights", Card: &chat.Card{Kind: chat.CardTask, Ref: "s-dev-flights", Title: "Find flights to Lisbon", Status: chat.CardDone, Summary: "Three direct flights under $400; TAP at 7:40 is the best."}})
+	say("s-dev-thread", chat.Event{Kind: chat.KindCard, ID: "task:s-dev-table", Card: &chat.Card{Kind: chat.CardTask, Ref: "s-dev-table", Title: "Book a table for Saturday", Status: chat.CardWorking}})
+	say("s-dev-thread", chat.Event{Kind: chat.KindCard, ID: "run:r-dev-brief", Card: &chat.Card{Kind: chat.CardRun, Ref: "r-dev-brief", Title: "morning-brief", Status: chat.CardDone, Summary: "Quiet day: two meetings after lunch, and rain from 4, so take the bike early."}})
+	say("s-dev-thread", chat.Event{Kind: chat.KindUser, ID: "u2", Text: "Great, take the TAP one. Window seat if you can."})
+	say("s-dev-thread", chat.Event{Kind: chat.KindText, ID: "m2", Text: "Noted. I'll hold it and ask before paying: booking needs your card, so I'll hand you the browser for that step."})
 }
 
 // devTone is three seconds of a soft tone as a WAV, for a shared podcast

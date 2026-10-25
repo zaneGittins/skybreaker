@@ -498,9 +498,18 @@ function foldChat(c, e) {
     }
     case 'notice':
       return add({ type: 'notice', id: auto(), text: e.text });
+    case 'card': {
+      if (!e.id || !e.card || typeof e.card.ref !== 'string') return { changed: null };
+      const it = c.byId.get(e.id);
+      if (it?.type === 'card') { it.card = e.card; return { changed: it } }
+      return add({ type: 'card', id: e.id, card: e.card, time: e.time });
+    }
   }
   return { changed: null };
 }
+
+// tasksWorking counts the tasks an assistant has under way in its thread.
+const tasksWorking = c => c.items.filter(i => i.type === 'card' && i.card.kind === 'task' && i.card.status === 'working').length;
 
 // --- the inbox --------------------------------------------------------------
 
@@ -542,11 +551,6 @@ function chatGroups(sessions, waiting = new Set(), now = Date.now()) {
   const ended = top.filter(s => !shown.includes(s)).sort((x, y) => when(y) - when(x));
   return { live, shown, ended };
 }
-
-// recentChats is an assistant's latest few chats, for under it in the sidebar.
-const recentChats = (sessions, project, n = 3) =>
-  sessions.filter(s => s.project === project && s.mode === 'chat' && s.status === 'running' && !s.parent)
-    .sort((x, y) => when(y) - when(x)).slice(0, n);
 
 // closable is a live chat that isn't busy or waiting on you, so ending it
 // interrupts nothing.
@@ -848,4 +852,4 @@ function agentActivity(it) {
   return it.children?.length ? 'Thinking' : 'Starting';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, liveGroups, waitingByPlace, dockPlaces, placeKey, resting, closable, openCount, chatGroups, recentChats, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, liveGroups, waitingByPlace, dockPlaces, placeKey, resting, closable, openCount, chatGroups, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages, tasksWorking };

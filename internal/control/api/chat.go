@@ -293,6 +293,16 @@ func (s *server) chatFork(w http.ResponseWriter, r *http.Request) {
 	webutil.WriteJSON(w, http.StatusOK, f)
 }
 
+// chatFresh carries an assistant's thread on afresh.
+func (s *server) chatFresh(w http.ResponseWriter, r *http.Request) {
+	x, err := s.Backend.ThreadFresh(r.Context(), r.PathValue("id"))
+	if err != nil {
+		chatFail(w, err)
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, x)
+}
+
 func (s *server) chatReopen(w http.ResponseWriter, r *http.Request) {
 	x, err := s.Backend.ReopenChat(r.Context(), r.PathValue("id"))
 	if err != nil {

@@ -50,9 +50,11 @@ claude mcp add --transport http --scope user skybreaker https://skybreaker.<your
 
 An assistant is an agent for everything that isn't a repo. Make one with **New assistant**, under Assistants, and give it the bundles it should reach.
 
+**Chat.** You and the assistant have one conversation, which picks up where you left off. Tap the assistant to open it. Work that takes a while runs as a **task** in the background: it shows as a card in the conversation, so you can keep talking, and you can open a card to follow the task. Routine results show there as cards too. **Start fresh**, in the ring's menu, clears what the agent holds in mind but keeps its memories.
+
 **Look.** Its name, its mark (a shape, a colour and how lively it moves), its agents and its personality. Every saved personality is kept, so you can go back.
 
-**Agents.** Claude, Codex or pi, or several. The **preferred** one answers its message box and runs routines that don't name one; switch it any time, and its memory and personality come along. A code project made in the app has the same choice under **Agents** in its menu. Admins change these, and a change applies when Skybreaker restarts.
+**Agents.** Claude, Codex or pi, or several. The **preferred** one answers in its conversation and runs routines that don't name one; switch it any time, and its memory, personality and the conversation so far come along. A code project made in the app has the same choice under **Agents** in its menu. Admins change these, and a change applies when Skybreaker restarts.
 
 **Memory.** It suggests things to remember as you talk. Nothing is kept until you choose **Remember**, and you can edit or forget anything.
 

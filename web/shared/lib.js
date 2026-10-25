@@ -56,12 +56,13 @@ function route(path) {
     if (section === 'access' && PROJECT.test(v)) return { name: 'settings', section, item: v };
     return { name: 'notfound' };
   }
-  // An assistant: Today, or another of its pages.
-  const a = /^\/a\/([^/]+)(?:\/(chats|memory|routines|look|browser))?$/.exec(path);
+  // An assistant: Today, another of its pages, or its one thread.
+  const a = /^\/a\/([^/]+)(?:\/(chats?|memory|routines|look|browser))?$/.exec(path);
   if (a) {
     let v;
     try { v = decodeURIComponent(a[1]) } catch { return { name: 'notfound' } }
-    return PROJECT.test(v) ? { name: 'assistant', project: v, tab: a[2] || 'today' } : { name: 'notfound' };
+    if (!PROJECT.test(v)) return { name: 'notfound' };
+    return a[2]?.startsWith('chat') ? { name: 'thread', project: v } : { name: 'assistant', project: v, tab: a[2] || 'today' };
   }
   const t = /^\/p\/([^/]+)\/(board|runs)$/.exec(path);
   if (t) {
