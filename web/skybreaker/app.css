@@ -65,9 +65,9 @@ details.earlier .live-list { margin-top: 4px; }
 .lrow-mark::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid transparent; }
 .lrow.tone-wait .lrow-mark::after { border-color: var(--needs-dot); }
 .lrow.tone-bad .lrow-mark::after { border-color: var(--danger); }
-/* Working: a soft glow that breathes, so it never reads as an amount. */
-.lrow.tone-work .lrow-mark::after, .lrow.tone-live .lrow-mark::after { inset: 5px; border: 0; box-shadow: 0 0 10px 3px color-mix(in srgb, var(--working) 55%, transparent); animation: lrow-glow 2s ease-in-out infinite; }
-@keyframes lrow-glow { 50% { opacity: .25; transform: scale(.92); } }
+/* Working: a solid dot on the mark that breathes, so it never reads as an amount. */
+.lrow.tone-work .lrow-mark::after, .lrow.tone-live .lrow-mark::after { inset: auto -1px -1px auto; width: 10px; height: 10px; border-color: var(--surface); background: var(--working); animation: lrow-pulse 1.6s ease-in-out infinite; }
+@keyframes lrow-pulse { 50% { opacity: .3; } }
 .lrow-mark:has(.av-mark)::after { inset: 9px; }
 @media (prefers-reduced-motion: reduce) { .lrow-mark::after { animation: none !important; } }
 .lrow-title { grid-area: title; display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 15px; font-weight: 650; }
