@@ -1,12 +1,15 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AV_SHAPES, AV_COLORS, AV_TEMPER, AV_STATES, avRibbon, avFrame } = require('./avatarlib.js');
+const { AV_SHAPES, AV_COLORS, AV_TEMPER, AV_STATES, AV_RINGS, AV_EYES, AV_FINISHES, avRibbon, avFrame } = require('./avatarlib.js');
 
 test('the six shapes and eight colours the server allows', () => {
   assert.deepEqual(Object.keys(AV_SHAPES), ['dot', 'square', 'triangle', 'diamond', 'hexagon', 'crescent']);
   assert.deepEqual(Object.keys(AV_COLORS), ['clay', 'sage', 'ink', 'ochre', 'rose', 'slate', 'moss', 'plum']);
   assert.deepEqual(Object.keys(AV_TEMPER), ['calm', 'lively', 'precise']);
+  assert.deepEqual(AV_RINGS, ['fine', 'double', 'dotted', 'arc', 'none']);
+  assert.deepEqual(AV_EYES, ['none', 'soft']);
+  assert.deepEqual(AV_FINISHES, ['paper', 'light']);
 });
 
 test('every frame is drawable', () => {
@@ -75,4 +78,107 @@ test('a mini mark skips its ring', () => {
 test('a ribbon tapers to both ends', () => {
   const d = avRibbon([[0, 0], [5, 0], [10, 0]], 4);
   assert.match(d, /^M0 0\.24L5 2L10 0\.24L10 -0\.24L5 -2L0 -0\.24Z$/);
+});
+
+const subpaths = d => (d.match(/M/g) || []).length;
+
+test('every ring style is drawable in every state', () => {
+  const finite = s => !/NaN|Infinity|undefined/.test(s);
+  for (const ring of AV_RINGS) for (const state of AV_STATES) for (const t of [0, 0.37, 12.5]) {
+    const f = avFrame({ shape: 'hexagon', color: 'ink', temper: 'lively', ring }, state, t);
+    for (const d of [f.back, f.front]) assert.ok(d === '' || (d.startsWith('M') && d.endsWith('Z') && finite(d)), `${ring} ${state}`);
+    assert.ok(Number.isFinite(f.planet.x) && Number.isFinite(f.planet.y));
+  }
+});
+
+test('ring styles: double, dotted, arc and none', () => {
+  const at = ring => avFrame({ shape: 'dot', color: 'ink', temper: 'calm', ring }, 'idle', 1);
+  assert.equal(subpaths(at('fine').front), 1);
+  assert.equal(subpaths(at('double').back), 2);
+  assert.equal(subpaths(at('double').front), 2);
+  assert.ok(subpaths(at('dotted').back) > 10 && subpaths(at('dotted').front) > 10);
+  // An arc is only the part in front; with none the planet keeps its path.
+  assert.equal(at('arc').back, '');
+  assert.equal(subpaths(at('arc').front), 1);
+  assert.equal(at('none').back + at('none').front, '');
+  assert.deepEqual(at('none').planet, at('fine').planet);
+  // A ring it doesn't know is the fine one.
+  assert.equal(at('saturn').front, at('fine').front);
+});
+
+const soft = { shape: 'dot', color: 'sage', temper: 'calm', eye: 'soft' };
+const eyeAt = (state, t = 1, opts = {}) => avFrame(soft, state, t, { blink: false, ...opts }).eye;
+// gaze is where the iris sits from the eye's centre.
+const gaze = e => [e.iris.x - e.x, e.iris.y - e.y];
+
+test('no eye unless asked, and none on a mini mark', () => {
+  assert.equal(avFrame({ ...soft, eye: 'none' }, 'idle', 1).eye, null);
+  assert.equal(avFrame({ ...soft, eye: 'googly' }, 'idle', 1).eye, null);
+  assert.equal(avFrame(soft, 'idle', 1, { rings: false }).eye, null);
+  for (const shape of Object.keys(AV_SHAPES)) for (const state of AV_STATES) {
+    const e = avFrame({ ...soft, shape }, state, 2.3).eye;
+    assert.ok(Number.isFinite(e.x + e.y + e.open + e.iris.x + e.iris.y + e.iris.r), `${shape} ${state}`);
+    assert.ok(!/NaN|Infinity/.test(e.white + e.lids) && e.white.startsWith('M') && e.lids.startsWith('M'));
+    assert.match(e.ink, /^rgb\(/);
+    assert.match(e.tint, /^rgb\(/);
+  }
+});
+
+test('the eye tells the state', () => {
+  // Idle rests a little down and away; thinking glances up.
+  assert.ok(gaze(eyeAt('idle'))[1] > 0);
+  assert.ok(gaze(eyeAt('thinking'))[1] < 0);
+  // Busy follows the planet round; needs you looks at it, wide open.
+  for (const t of [0.5, 2, 4.5]) {
+    const f = avFrame(soft, 'busy', t, { blink: false });
+    const [gx, gy] = gaze(f.eye);
+    assert.ok(gx * (f.planet.x - f.eye.x) + gy * (f.planet.y - f.eye.y) > 0, `busy at ${t}`);
+  }
+  const n = avFrame(soft, 'needs', 1, { blink: false });
+  const [nx, ny] = gaze(n.eye);
+  assert.ok(nx * (n.planet.x - n.eye.x) + ny * (n.planet.y - n.eye.y) > 0);
+  assert.ok(n.eye.open > eyeAt('idle').open);
+  // Done: the lid drops, at ease.
+  assert.ok(eyeAt('done').open < 0.6);
+});
+
+test('it blinks now and then, never on a still mark', () => {
+  const opens = blink => Array.from({ length: 600 }, (_, i) => avFrame(soft, 'idle', i * 0.02, { blink }).eye.open);
+  assert.ok(Math.min(...opens(true)) < 0.2);
+  assert.ok(Math.min(...opens(false)) >= 0.9);
+});
+
+test('the eye rides the shape as it turns, upright', () => {
+  const look = { ...soft, shape: 'crescent' };
+  const c = t => avFrame(look, 'thinking', t, { blink: false }).eye;
+  const r = e => Math.hypot(e.x - 50, e.y - 50);
+  assert.ok(Math.abs(r(c(0.3)) - r(c(2.1))) < 0.01);
+  assert.notEqual(c(0.3).x, c(2.1).x);
+});
+
+const lit = { shape: 'dot', color: 'ink', temper: 'calm', finish: 'light' };
+const glowAt = (state, t) => avFrame(lit, state, t).glow;
+const levels = state => Array.from({ length: 80 }, (_, i) => glowAt(state, i * 0.1).level);
+
+test('paper has no glow; light glows', () => {
+  assert.equal(avFrame({ ...lit, finish: 'paper' }, 'idle', 1).glow, null);
+  assert.equal(avFrame({ ...lit, finish: 'neon' }, 'idle', 1).glow, null);
+  for (const state of AV_STATES) for (const color of Object.keys(AV_COLORS)) {
+    const g = avFrame({ ...lit, color }, state, 1.7).glow;
+    assert.ok(g.level > 0 && g.level <= 1, `${state} ${color}`);
+    assert.match(g.core, /^rgb\(/);
+    assert.match(g.mid, /^rgb\(/);
+    assert.equal(g.edge, AV_COLORS[color]);
+  }
+});
+
+test('how bright it glows tells the state', () => {
+  // Idle breathes, dim; thinking is always brighter; done fades below idle.
+  assert.ok(Math.max(...levels('idle')) - Math.min(...levels('idle')) > 0.1);
+  assert.ok(Math.min(...levels('thinking')) > Math.max(...levels('idle')));
+  assert.ok(Math.max(...levels('done')) < Math.min(...levels('idle')));
+  // Needs you flares amber, the brightest of all; otherwise the halo is its colour.
+  assert.equal(glowAt('needs', 1).halo, '#E8B04A');
+  assert.equal(glowAt('idle', 1).halo, AV_COLORS.ink);
+  assert.ok(glowAt('needs', 1).level >= Math.max(...levels('thinking')));
 });

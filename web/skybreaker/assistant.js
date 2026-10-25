@@ -5,7 +5,7 @@
 // updates, page frames) only goes in through textContent or a canvas.
 
 // asstLookOf is a project's assistant look, or a plain one until it has its own.
-const asstLookOf = p => p?.look || { name: p?.name || '', shape: 'dot', color: 'clay', temper: 'calm' };
+const asstLookOf = p => p?.look || { name: p?.name || '', shape: 'dot', color: 'clay', temper: 'calm', ring: 'fine', eye: 'none', finish: 'paper' };
 const asstCap = s => s.charAt(0).toUpperCase() + s.slice(1);
 
 // asstPicker is a row of choices as one radio group: arrow keys move and
@@ -462,6 +462,9 @@ function asstLook(name, a) {
   }, { cls: '.a-states' });
   drawPicks();
   const temper = seg([['calm', 'Calm'], ['lively', 'Lively'], ['precise', 'Precise']], look.temper, v => save({ temper: v }));
+  const ring = seg(AV_RINGS.map(r => [r, asstCap(r)]), look.ring, v => save({ ring: v }));
+  const eye = seg(AV_EYES.map(e => [e, asstCap(e)]), look.eye, v => save({ eye: v }));
+  const finish = seg(AV_FINISHES.map(x => [x, asstCap(x)]), look.finish, v => save({ finish: v }));
   const nameIn = el('input.np-input', { type: 'text', maxlength: '40', value: look.name, 'aria-label': 'Name' });
   // The name is set when it's committed (Enter, or leaving the field), and
   // the field let go so the page can show it.
@@ -471,6 +474,9 @@ function asstLook(name, a) {
     el('div.a-opts', null,
       el('div.a-opt', null, el('h3.a-label', null, 'Shape'), shapes),
       el('div.a-opt', null, el('h3.a-label', null, 'Colour'), colors),
+      el('div.a-opt', null, el('h3.a-label', null, 'Ring'), ring),
+      el('div.a-opt', null, el('h3.a-label', null, 'Eye'), eye),
+      el('div.a-opt', null, el('h3.a-label', null, 'Finish'), finish),
       el('div.a-opt', null, el('h3.a-label', null, 'Motion'), temper),
       el('div.a-opt', null, el('h3.a-label', null, 'Name'), nameIn),
       el('div.a-opt', null, el('h3.a-label', null, 'Agents'), agentsEditor(state.asst.p)),
@@ -729,7 +735,7 @@ const asstSlug = s => {
 async function newAssistantSheet() {
   let caps;
   try { caps = await api('GET', '/api/capabilities') } catch (e) { toast(e.message, 'error'); return }
-  const look = { name: '', shape: 'dot', color: 'clay', temper: 'calm' };
+  const look = { name: '', shape: 'dot', color: 'clay', temper: 'calm', ring: 'fine', eye: 'none', finish: 'paper' };
   const mark = avatar({ ...look }, { cls: 'na-mark' });
   const name = el('input.np-input.na-name', { type: 'text', placeholder: 'Pip', maxlength: '40', required: true, autocomplete: 'off', 'aria-label': 'Name' });
   const address = el('span.np-hint');
