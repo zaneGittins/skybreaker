@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"net/http"
+	"path"
 	"slices"
 	"time"
 
@@ -33,6 +35,10 @@ func (s *server) assistantRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/assistants/{a}/today", s.today)
 	m.HandleFunc("GET /api/assistants/{a}/files/{name}", s.assistantFile)
 	m.HandleFunc("POST /api/assistants/{a}/thread", s.thread)
+	m.HandleFunc("GET /api/assistants/{a}/library", s.library)
+	m.HandleFunc("GET /api/assistants/{a}/library/{id}", s.libraryItem)
+	m.HandleFunc("PUT /api/assistants/{a}/library/{id}/state", s.setItemState)
+	m.HandleFunc("DELETE /api/assistants/{a}/library/{id}", s.deleteLibraryItem)
 	m.HandleFunc("GET /api/assistants/{a}/browser/live", s.browserLive)
 	m.HandleFunc("GET /api/assistants/{a}/browser/watch", s.browserWatch)
 	m.HandleFunc("POST /api/assistants/{a}/browser/restart", s.restartBrowser)
@@ -387,19 +393,128 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
-// assistantFile serves a file one of the assistant's routines shared.
+// libraryTypes are what a library file is served as: a chat's types, and
+// what the library reads in the app (PDFs, Markdown) or runs framed in it
+// (a page the agent made).
+var libraryTypes = func() map[string]string {
+	t := maps.Clone(shownTypes)
+	t[".pdf"] = "application/pdf"
+	t[".md"] = "text/plain; charset=utf-8"
+	t[".html"] = "text/html; charset=utf-8"
+	return t
+}()
+
+// viewCSP is a page the agent made: its own inline script and styles, in a
+// sandbox with no origin, so it can't reach the app or the network, framed
+// only by the app.
+const viewCSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; frame-ancestors 'self'; sandbox allow-scripts"
+
+// assistantFile serves a file in the assistant's library.
 func (s *server) assistantFile(w http.ResponseWriter, r *http.Request) {
 	name, ok := s.named(w, r)
 	if !ok {
 		return
 	}
 	kept := r.PathValue("name")
-	b, err := s.Assistants.Shared(name, kept)
+	f, err := s.Assistants.Shared(name, kept)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	serveKept(w, r, kept, b)
+	defer f.Close()
+	if path.Ext(kept) == ".html" {
+		// serveKept sets its own policy; this one replaces it.
+		w = viewHeaders{w}
+	}
+	serveKept(w, r, kept, f, libraryTypes)
+}
+
+// viewHeaders sends a view's policy, and lets the app frame it, in place
+// of what's set for a kept file.
+type viewHeaders struct{ http.ResponseWriter }
+
+func (v viewHeaders) WriteHeader(code int) {
+	h := v.Header()
+	h.Set("Content-Security-Policy", viewCSP)
+	h.Set("X-Frame-Options", "SAMEORIGIN")
+	v.ResponseWriter.WriteHeader(code)
+}
+
+func (v viewHeaders) Write(b []byte) (int, error) {
+	if v.Header().Get("X-Frame-Options") != "SAMEORIGIN" {
+		v.WriteHeader(http.StatusOK)
+	}
+	return v.ResponseWriter.Write(b)
+}
+
+// --- library ----------------------------------------------------------------
+
+// library is everything in the assistant's library, newest first.
+func (s *server) library(w http.ResponseWriter, r *http.Request) {
+	name, ok := s.named(w, r)
+	if !ok {
+		return
+	}
+	a := s.Assistants.Get(name)
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{
+		"items": nonNil(slices.Collect(func(yield func(assistant.Item) bool) {
+			for _, it := range slices.Backward(a.Library) {
+				if !yield(it) {
+					return
+				}
+			}
+		})),
+		"collections": nonNil(a.Collections),
+	})
+}
+
+// libraryItem is one item and its collection, for a chat's card.
+func (s *server) libraryItem(w http.ResponseWriter, r *http.Request) {
+	name, ok := s.named(w, r)
+	if !ok {
+		return
+	}
+	a := s.Assistants.Get(name)
+	i := slices.IndexFunc(a.Library, func(it assistant.Item) bool { return it.ID == r.PathValue("id") })
+	if i < 0 {
+		webutil.Error(w, http.StatusNotFound, "no such item")
+		return
+	}
+	it := a.Library[i]
+	var c *assistant.Collection
+	if j := slices.IndexFunc(a.Collections, func(c assistant.Collection) bool { return c.ID == it.Collection }); j >= 0 {
+		c = &a.Collections[j]
+	}
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"item": it, "collection": c})
+}
+
+func (s *server) setItemState(w http.ResponseWriter, r *http.Request) {
+	name, ok := s.named(w, r)
+	if !ok {
+		return
+	}
+	var in assistant.ItemState
+	if !decodeStrict(w, r, &in) {
+		return
+	}
+	it, err := s.Assistants.SetItemState(name, r.PathValue("id"), in)
+	if err != nil {
+		assistantFail(w, err)
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, it)
+}
+
+func (s *server) deleteLibraryItem(w http.ResponseWriter, r *http.Request) {
+	name, ok := s.named(w, r)
+	if !ok {
+		return
+	}
+	if err := s.Assistants.DeleteItem(name, r.PathValue("id")); err != nil {
+		assistantFail(w, err)
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // --- today ------------------------------------------------------------------
@@ -434,10 +549,24 @@ func (s *server) today(w http.ResponseWriter, r *http.Request) {
 			bv = &browserView{Site: browser.SiteOf(st.URL), Taken: st.TakenBy != ""}
 		}
 	}
+	// Each shared item, with where the user is in it, and how many are new.
+	items := map[string]assistant.Item{}
+	fresh := 0
+	for _, it := range a.Library {
+		if !it.Seen {
+			fresh++
+		}
+		for _, u := range updates {
+			if u.Item == it.ID {
+				items[it.ID] = it
+			}
+		}
+	}
 	webutil.WriteJSON(w, http.StatusOK, map[string]any{
 		"name": name, "look": a.Look, "browser": bv,
 		"approvals": nonNil(s.Approvals.Pending(name)), "requests": nonNil(s.pendingRequests(name)),
 		"proposals": nonNil(a.Proposals), "updates": updates, "runs": runs,
+		"items": items, "fresh": fresh, "collections": nonNil(a.Collections),
 	})
 }
 

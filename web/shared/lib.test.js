@@ -35,7 +35,7 @@ test('route', () => {
   assert.deepEqual(route('/s/%'), { name: 'notfound' });
   // An assistant's pages.
   assert.deepEqual(route('/a/pip'), { name: 'assistant', project: 'pip', tab: 'today' });
-  for (const tab of ['memory', 'routines', 'look', 'browser', 'takeover']) assert.deepEqual(route('/a/pip/' + tab), { name: 'assistant', project: 'pip', tab });
+  for (const tab of ['library', 'memory', 'routines', 'look', 'browser', 'takeover']) assert.deepEqual(route('/a/pip/' + tab), { name: 'assistant', project: 'pip', tab });
   // Its one thread, where an old link to its chats lands too.
   assert.deepEqual(route('/a/pip/chat'), { name: 'thread', project: 'pip' });
   assert.deepEqual(route('/a/pip/chats'), { name: 'thread', project: 'pip' });

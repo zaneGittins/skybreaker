@@ -455,15 +455,15 @@ func (s *server) chatShown(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	serveKept(w, r, name, b)
+	serveKept(w, r, name, bytes.NewReader(b), shownTypes)
 }
 
 // serveKept serves a kept file as inert content in a sandbox of its own:
 // even opened directly, it can't run script with the UI's origin. A .bin
 // goes as a download, named as the link says; the rest inline, in ranges,
 // so audio can seek (a phone's player asks for them).
-func serveKept(w http.ResponseWriter, r *http.Request, name string, b []byte) {
-	ctype, ok := shownTypes[path.Ext(name)]
+func serveKept(w http.ResponseWriter, r *http.Request, name string, f io.ReadSeeker, types map[string]string) {
+	ctype, ok := types[path.Ext(name)]
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -471,7 +471,7 @@ func serveKept(w http.ResponseWriter, r *http.Request, name string, b []byte) {
 	h := w.Header()
 	h.Set("Content-Type", ctype)
 	h.Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox")
-	if path.Ext(name) == ".bin" {
+	if ext := path.Ext(name); ext == ".bin" || (ext == ".pdf" && r.URL.Query().Get("name") != "") {
 		// Its own name, if the link gave one, so it downloads as itself.
 		disp := mime.FormatMediaType("attachment", map[string]string{"filename": r.URL.Query().Get("name")})
 		if disp == "" || r.URL.Query().Get("name") == "" {
@@ -482,5 +482,5 @@ func serveKept(w http.ResponseWriter, r *http.Request, name string, b []byte) {
 		h.Set("Content-Disposition", "inline")
 	}
 	h.Set("Cache-Control", "private, max-age=31536000, immutable")
-	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(b))
+	http.ServeContent(w, r, "", time.Time{}, f)
 }

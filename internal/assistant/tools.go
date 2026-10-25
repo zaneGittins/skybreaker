@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/zaneGittins/skybreaker/internal/control/cron"
@@ -12,7 +13,7 @@ import (
 )
 
 // Instructions for the MCP server, said once to every agent.
-const ToolInstructions = `An assistant (a project without a repository) has its own memory: recall finds what it remembers, and propose_memory asks the user to remember something new. post_update leaves a short note for the user's daily brief; propose_routine asks the user to schedule recurring work. Nothing proposed takes effect until the user approves it.`
+const ToolInstructions = `An assistant (a project without a repository) has its own memory: recall finds what it remembers, and propose_memory asks the user to remember something new. post_update leaves a short note for the user's daily brief; propose_routine asks the user to schedule recurring work. Nothing proposed takes effect until the user approves it. show_file keeps what it makes for the user (podcasts, reports, pages) in its library, set_collection says how a series is shown and kept, and list_library shows what the user has heard or read.`
 
 var routineNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
 
@@ -27,7 +28,7 @@ func Tools(s *Store, assistant func(project string) bool) func(mcp.Caller) []mcp
 		if t.session == "-" {
 			t.session = ""
 		}
-		return []mcp.Tool{t.recall(), t.proposeMemory(), t.proposeRoutine(), t.postUpdate()}
+		return []mcp.Tool{t.recall(), t.proposeMemory(), t.proposeRoutine(), t.postUpdate(), t.listLibrary()}
 	}
 }
 
@@ -128,4 +129,82 @@ func (t *tools) postUpdate() mcp.Tool {
 			}
 			return "Posted.", nil
 		}}
+}
+
+func (t *tools) listLibrary() mcp.Tool {
+	return mcp.Tool{Name: "list_library", ReadOnly: true,
+		Description: "See what's in your library for the user, newest first, and how far they got in each: new, part heard or read, finished, starred. Use it to build on what they've heard and skip what they have.",
+		Input:       schema(`"collection":{"type":"string","description":"only this collection, e.g. Morning briefing"}`),
+		Call: func(_ context.Context, _ mcp.Caller, raw json.RawMessage) (string, error) {
+			var in struct{ Collection string }
+			if err := mcp.Args(raw, &in); err != nil {
+				return "", err
+			}
+			a := t.s.Get(t.name)
+			if len(a.Library) == 0 {
+				return "Your library is empty: share files with show_file.", nil
+			}
+			want := Slug(in.Collection)
+			titles := map[string]string{}
+			var b strings.Builder
+			for _, c := range a.Collections {
+				titles[c.ID] = c.Title
+				if want == "" || c.ID == want {
+					fmt.Fprintf(&b, "Collection %s (%s, keeps %s)\n", c.Title, c.Layout, keeps(c))
+				}
+			}
+			n := 0
+			for _, it := range slices.Backward(a.Library) {
+				if (want != "" && it.Collection != want) || n == 50 {
+					continue
+				}
+				n++
+				fmt.Fprintf(&b, "- [%s] %s (%s", it.ID, it.Title, it.Kind)
+				if c := titles[it.Collection]; c != "" {
+					fmt.Fprintf(&b, ", %s", c)
+				}
+				fmt.Fprintf(&b, ", %s): %s\n", it.At.Format("Jan 2"), where(it))
+			}
+			if n == 0 {
+				return "No items in that collection.", nil
+			}
+			return b.String(), nil
+		}}
+}
+
+func keeps(c Collection) string {
+	switch {
+	case c.Keep > 0 && c.KeepDays > 0:
+		return fmt.Sprintf("the newest %d, for %d days", c.Keep, c.KeepDays)
+	case c.Keep > 0:
+		return fmt.Sprintf("the newest %d", c.Keep)
+	case c.KeepDays > 0:
+		return fmt.Sprintf("%d days", c.KeepDays)
+	}
+	return "everything"
+}
+
+// where says how far the user got in an item.
+func where(it Item) string {
+	var s string
+	switch {
+	case it.Finished:
+		s = "finished"
+	case !it.Seen:
+		s = "new"
+	case it.Kind == KindAudio && it.Duration > 0:
+		s = fmt.Sprintf("%d%% heard", int(100*it.Progress/it.Duration))
+	case it.Kind == KindAudio:
+		s = fmt.Sprintf("heard to %d:%02d", int(it.Progress)/60, int(it.Progress)%60)
+	case it.Kind == KindPDF && it.Progress >= 1:
+		s = fmt.Sprintf("on page %d", int(it.Progress))
+	case it.Progress > 0 && it.Progress <= 1:
+		s = fmt.Sprintf("%d%% read", int(100*it.Progress))
+	default:
+		s = "opened"
+	}
+	if it.Star {
+		s += ", starred"
+	}
+	return s
 }

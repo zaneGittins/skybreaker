@@ -474,15 +474,21 @@ func TestApproveRoutineThatClashes(t *testing.T) {
 	}
 }
 
-// A file a routine shared is served to play or open, like a chat's: in
-// ranges, as inert content, a download under its own name.
-func TestAssistantSharedFile(t *testing.T) {
-	f, as := assistantFixture(t)
-	u, err := as.ShareFile("pip", "", "Sunday's podcast", assistant.File{Name: "podcast.mp3", Kind: "audio"}, []byte("ID3 a podcast"), ".mp3")
+func share(t *testing.T, as *assistant.Store, kind, title, collection, data, ext string) assistant.Item {
+	t.Helper()
+	it, _, err := as.ShareFile("pip", "", assistant.Share{Item: assistant.Item{Kind: kind, Name: "f" + ext, Title: title, Collection: collection}, Data: []byte(data), Ext: ext})
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, _ := http.NewRequest("GET", f.ts.URL+"/api/assistants/pip/files/"+u.File.Kept, nil)
+	return it
+}
+
+// A library file is served to play or open, like a chat's: in ranges, as
+// inert content, a download under its own name.
+func TestAssistantSharedFile(t *testing.T) {
+	f, as := assistantFixture(t)
+	u := share(t, as, assistant.KindAudio, "Sunday's podcast", "", "ID3 a podcast", ".mp3")
+	req, _ := http.NewRequest("GET", f.ts.URL+"/api/assistants/pip/files/"+u.Kept, nil)
 	req.Header.Set("Range", "bytes=4-4")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -493,23 +499,119 @@ func TestAssistantSharedFile(t *testing.T) {
 	if resp.StatusCode != 206 || string(b) != "a" || resp.Header.Get("Content-Type") != "audio/mpeg" || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "sandbox") {
 		t.Errorf("%d %q %v", resp.StatusCode, b, resp.Header)
 	}
-	d, _ := as.ShareFile("pip", "", "The report", assistant.File{Name: "report.pdf", Kind: "file"}, []byte("%PDF-1.7"), ".bin")
-	resp, err = http.Get(f.ts.URL + "/api/assistants/pip/files/" + d.File.Kept + "?name=report.pdf")
+	d := share(t, as, assistant.KindFile, "The archive", "", "PK\x03\x04", ".bin")
+	resp, err = http.Get(f.ts.URL + "/api/assistants/pip/files/" + d.Kept + "?name=notes.zip")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.Header.Get("Content-Type") != "application/octet-stream" || !strings.Contains(resp.Header.Get("Content-Disposition"), `filename=report.pdf`) {
+	if resp.Header.Get("Content-Type") != "application/octet-stream" || !strings.Contains(resp.Header.Get("Content-Disposition"), `filename=notes.zip`) {
 		t.Errorf("download %v", resp.Header)
 	}
-	for _, p := range []string{"/api/assistants/pip/files/x.mp3", "/api/assistants/other/files/" + u.File.Kept, "/api/assistants/pip/files/..%2Fassistants.json"} {
+	for _, p := range []string{"/api/assistants/pip/files/x.mp3", "/api/assistants/other/files/" + u.Kept, "/api/assistants/pip/files/..%2Fassistants.json"} {
 		if code, _ := f.do(t, "GET", p, "", nil); code != 404 {
 			t.Errorf("%s: %d", p, code)
 		}
 	}
-	// Today carries the file with its update.
+}
+
+// A PDF and Markdown are read in the app's own reader; a page the agent
+// made runs framed by the app, with script but no origin and no network.
+func TestLibraryFileTypes(t *testing.T) {
+	f, as := assistantFixture(t)
+	get := func(kept, query string) http.Header {
+		resp, err := http.Get(f.ts.URL + "/api/assistants/pip/files/" + kept + query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("%s: %d", kept, resp.StatusCode)
+		}
+		return resp.Header
+	}
+	pdf := share(t, as, assistant.KindPDF, "Report", "", "%PDF-1.7", ".pdf")
+	if h := get(pdf.Kept, ""); h.Get("Content-Type") != "application/pdf" || h.Get("Content-Disposition") != "inline" {
+		t.Errorf("pdf %v", h)
+	}
+	if h := get(pdf.Kept, "?name=report.pdf"); !strings.Contains(h.Get("Content-Disposition"), "attachment") {
+		t.Errorf("pdf download %v", h)
+	}
+	md := share(t, as, assistant.KindText, "Notes", "", "# Notes", ".md")
+	if h := get(md.Kept, ""); h.Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Errorf("md %v", h)
+	}
+	view := share(t, as, assistant.KindView, "Plan", "", "<html><script>1</script></html>", ".html")
+	h := get(view.Kept, "")
+	csp := h.Get("Content-Security-Policy")
+	if h.Get("Content-Type") != "text/html; charset=utf-8" || !strings.Contains(csp, "sandbox allow-scripts") || strings.Contains(csp, "allow-same-origin") ||
+		!strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "frame-ancestors 'self'") || h.Get("X-Frame-Options") != "SAMEORIGIN" {
+		t.Errorf("view %v", h)
+	}
+	// A chat never serves a page.
+	if _, ok := shownTypes[".html"]; ok {
+		t.Error("chats serve HTML")
+	}
+}
+
+func TestLibraryAPI(t *testing.T) {
+	f, as := assistantFixture(t)
+	as.SetCollection("pip", "Morning briefing", assistant.CollectionPatch{Layout: ptr(assistant.LayoutPodcast)}, nil)
+	a := share(t, as, assistant.KindAudio, "Sunday", "Morning briefing", "ID3 sunday", ".mp3")
+	b := share(t, as, assistant.KindPDF, "Reading list", "", "%PDF-1.7", ".pdf")
+	code, body := f.do(t, "GET", "/api/assistants/pip/library", "", nil)
+	var lib struct {
+		Items       []assistant.Item       `json:"items"`
+		Collections []assistant.Collection `json:"collections"`
+	}
+	json.Unmarshal([]byte(body), &lib)
+	// Newest first.
+	if code != 200 || len(lib.Items) != 2 || lib.Items[0].ID != b.ID || len(lib.Collections) != 1 || lib.Collections[0].Layout != assistant.LayoutPodcast {
+		t.Fatalf("%d %s", code, body)
+	}
+	code, body = f.do(t, "PUT", "/api/assistants/pip/library/"+a.ID+"/state", `{"progress":95.5,"duration":360}`, nil)
+	if code != 200 || !strings.Contains(body, `"progress":95.5`) {
+		t.Fatalf("%d %s", code, body)
+	}
+	if got := as.Get("pip").Library[0]; got.Progress != 95.5 || got.Duration != 360 || !got.Seen {
+		t.Errorf("state %+v", got)
+	}
+	code, body = f.do(t, "GET", "/api/assistants/pip/library/"+a.ID, "", nil)
+	if code != 200 || !strings.Contains(body, `"layout":"podcast"`) || !strings.Contains(body, `"title":"Sunday"`) {
+		t.Errorf("item %d %s", code, body)
+	}
+	if code, _ := f.do(t, "PUT", "/api/assistants/pip/library/"+a.ID+"/state", `{"progress":-1}`, nil); code != 400 {
+		t.Errorf("bad state: %d", code)
+	}
+	if code, _ := f.do(t, "PUT", "/api/assistants/pip/library/i999/state", `{"seen":true}`, nil); code != 404 {
+		t.Errorf("missing item: %d", code)
+	}
+	if code, _ := f.do(t, "DELETE", "/api/assistants/pip/library/"+b.ID, "", nil); code != 200 {
+		t.Errorf("delete: %d", code)
+	}
+	if n := len(as.Get("pip").Library); n != 1 {
+		t.Errorf("%d items after delete", n)
+	}
+	for _, p := range []string{"/api/assistants/ghost/library", "/api/assistants/pip/library/i999"} {
+		if code, _ := f.do(t, "GET", p, "", nil); code != 404 {
+			t.Errorf("%s: %d", p, code)
+		}
+	}
+}
+
+// Today carries each shared item with its update, and how many are new.
+func TestTodayItems(t *testing.T) {
+	f, as := assistantFixture(t)
+	a := share(t, as, assistant.KindAudio, "Podcast", "", "ID3 a", ".mp3")
+	share(t, as, assistant.KindPDF, "Report", "", "%PDF", ".pdf")
+	as.SetItemState("pip", a.ID, assistant.ItemState{Finished: ptr(true)})
 	_, body := f.do(t, "GET", "/api/assistants/pip/today", "", nil)
-	if !strings.Contains(body, `"kept":"`+u.File.Kept+`"`) {
+	var v struct {
+		Items map[string]assistant.Item `json:"items"`
+		Fresh int                       `json:"fresh"`
+	}
+	json.Unmarshal([]byte(body), &v)
+	if len(v.Items) != 2 || v.Items[a.ID].Kept != a.Kept || !v.Items[a.ID].Finished || v.Fresh != 1 {
 		t.Errorf("today %s", body)
 	}
 }
@@ -532,3 +634,5 @@ func TestAssistantThread(t *testing.T) {
 		}
 	}
 }
+
+func ptr[T any](v T) *T { return &v }

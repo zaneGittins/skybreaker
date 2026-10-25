@@ -246,6 +246,9 @@ type Show struct {
 	Start     int  `json:"start,omitempty"`
 	End       int  `json:"end,omitempty"`
 	Truncated bool `json:"truncated,omitempty"`
+	// Item is the assistant's library item it is, when it went there: the
+	// chat keeps no copy of its own.
+	Item string `json:"item,omitempty"`
 }
 
 // Preview is a web server in the sandbox the agent put in front of the

@@ -14,7 +14,6 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -206,6 +205,21 @@ func Run(ctx context.Context, o Options) error {
 		}
 		a.Publish(app.Event{Type: "assistant", Project: name})
 	}
+	assistants.OnLibrary = func(name string) { a.Publish(app.Event{Type: "assistant", Project: name}) }
+	assistants.OnNewItem = func(name string, it assistant.Item, tell bool) {
+		if !tell {
+			return
+		}
+		title := "Something new to read"
+		if it.Kind == assistant.KindAudio {
+			title = "Something new to listen to"
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			n.Notify(ctx, notify.Message{ID: "item-" + name + "-" + it.ID, Title: title, Body: "From assistant " + name + ".", Click: cfg.UIURL + "/a/" + name + "/library"})
+		}()
+	}
 	assistants.OnPropose = func(name string, p assistant.Proposal) {
 		// Content-free, like every push: the agent's words stay in the app.
 		page, title := "memory", "A suggestion is waiting"
@@ -390,6 +404,19 @@ func Run(ctx context.Context, o Options) error {
 			case <-t.C:
 				a.ReapChats()
 				within(ctx, 2*time.Minute, a.SweepContainers)
+			}
+		}
+	}()
+	go func() {
+		// Libraries nothing new came into still let go of what's had its time.
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				assistants.Prune()
 			}
 		}
 	}()
@@ -599,13 +626,21 @@ type browserHost struct {
 	isAssistant func(project string) bool
 }
 
-// IsAssistant and AssistantShare give show_file an assistant's routine:
-// what it shares goes on the assistant's Today.
+// IsAssistant, AssistantShare and AssistantCollection give show_file an
+// assistant's library: what a routine shares also goes on its Today.
 func (h browserHost) IsAssistant(project string) bool { return h.isAssistant(project) }
 
-func (h browserHost) AssistantShare(project string, sh chat.Show, data []byte, ext string) error {
-	_, err := h.assistants.ShareFile(project, "", sh.Title, assistant.File{Name: path.Base(sh.Path), Kind: sh.Kind}, data, ext)
-	return err
+func (h browserHost) AssistantShare(project, session string, sh assistant.Share) (assistant.Item, error) {
+	if session == "" {
+		it, _, err := h.assistants.ShareFile(project, "", sh)
+		return it, err
+	}
+	sh.Item.Session = session
+	return h.assistants.AddItem(project, sh)
+}
+
+func (h browserHost) AssistantCollection(project, title string, p assistant.CollectionPatch, cover *assistant.Blob) (assistant.Collection, error) {
+	return h.assistants.SetCollection(project, title, p, cover)
 }
 
 func (h browserHost) RequestTakeover(project, session, reason string) error {

@@ -35,7 +35,7 @@ func TestToolsAreForAssistants(t *testing.T) {
 	for _, tool := range Tools(s, isPip)(mcp.Caller{Project: "pip", Session: "s1"}) {
 		names = append(names, tool.Name)
 	}
-	if strings.Join(names, ",") != "recall,propose_memory,propose_routine,post_update" {
+	if strings.Join(names, ",") != "recall,propose_memory,propose_routine,post_update,list_library" {
 		t.Fatalf("tools %v", names)
 	}
 }
@@ -106,5 +106,38 @@ func TestLongScheduleIsntATitleError(t *testing.T) {
 	s, _ := open(t)
 	if _, err := call(t, s, mcp.Caller{Project: "pip", Session: "s1"}, "propose_routine", `{"name": "`+strings.Repeat("n", 48)+`", "schedule": "0,5,10,15,20,25,30,35,40,45,50,55 0-23 1-31 1-12 0-6", "prompt": "x"}`); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The agent sees its library as the user left it: what's new, how far
+// they got, what they finished or starred.
+func TestListLibrary(t *testing.T) {
+	s, _ := Open("")
+	c := mcp.Caller{Project: "pip", Session: "s1"}
+	if out, _ := call(t, s, c, "list_library", `{}`); !strings.Contains(out, "empty") {
+		t.Errorf("empty library: %q", out)
+	}
+	s.SetCollection("pip", "Morning briefing", CollectionPatch{Layout: ptr(LayoutPodcast), Keep: ptr(14)}, nil)
+	a, _ := s.AddItem("pip", audio("Sunday", "Morning briefing", "ID3 a"))
+	b, _ := s.AddItem("pip", audio("Saturday", "Morning briefing", "ID3 b"))
+	p, _ := s.AddItem("pip", Share{Item: Item{Kind: KindPDF, Name: "r.pdf", Title: "Reading list"}, Data: []byte("%PDF"), Ext: ".pdf"})
+	s.SetItemState("pip", a.ID, ItemState{Progress: ptr(90.0), Duration: ptr(360.0)})
+	s.SetItemState("pip", b.ID, ItemState{Finished: ptr(true), Star: ptr(true)})
+	s.SetItemState("pip", p.ID, ItemState{Progress: ptr(3.0)})
+	out, err := call(t, s, c, "list_library", `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Morning briefing (podcast, keeps the newest 14", "[" + a.ID + "] Sunday", "25% heard", "finished, starred", "on page 3", "Reading list"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+	out, _ = call(t, s, c, "list_library", `{"collection":"Morning briefing"}`)
+	if strings.Contains(out, "Reading list") || !strings.Contains(out, "Sunday") {
+		t.Errorf("one collection:\n%s", out)
+	}
+	if out, _ := call(t, s, c, "list_library", `{"collection":"nope"}`); !strings.Contains(out, "No items") {
+		t.Errorf("unknown collection: %q", out)
 	}
 }

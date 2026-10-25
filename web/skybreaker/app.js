@@ -1688,6 +1688,7 @@ async function boot() {
   });
   go();
   refreshSidebar();
+  plRestore();
 }
 
 boot();

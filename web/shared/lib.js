@@ -57,7 +57,7 @@ function route(path) {
     return { name: 'notfound' };
   }
   // An assistant: Today, another of its pages, or its one thread.
-  const a = /^\/a\/([^/]+)(?:\/(chats?|memory|routines|look|browser|takeover))?$/.exec(path);
+  const a = /^\/a\/([^/]+)(?:\/(library|chats?|memory|routines|look|browser|takeover))?$/.exec(path);
   if (a) {
     let v;
     try { v = decodeURIComponent(a[1]) } catch { return { name: 'notfound' } }

@@ -55,6 +55,7 @@ An assistant reads email, web pages and files, all of it untrusted. It gets the 
 
 - **It proposes; you decide.** It can't keep a memory, schedule a routine or change its personality. `propose_memory` and `propose_routine` only make a card. Any user can keep or forget memories; only admins save routines or change its personality, which is part of its instructions.
 - **Its state lives on the host.** Memory and personality are never in the sandbox. Every personality is kept. A memory notes the chat that suggested it, as its sandbox reported it.
+- **Pages it makes can't reach the app.** An HTML page in its library runs in a sandboxed frame with no origin, and its CSP lets it load nothing from the network, so it can't read your session or call the API. It holds only what the agent wrote, and can only post its progress to the library. Other shared files are served as inert content.
 - **Its browser's logins stay out of reach.** Chromium runs in its own container with the profile mounted there only, driven over a pipe, so the sandbox has nothing to connect to. The agent gets high-level actions: no script, cookies or DevTools protocol. Traffic goes through the broker under the assistant's policy, in TLS pinned to the broker's CA.
 - **The agent never types secrets.** It can't type into password, code or card fields, screenshots blur them, and reads never include what a field holds. Account security pages are closed to it. For a login, it asks you to take over; what you type goes to the browser only.
 
