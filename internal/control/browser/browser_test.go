@@ -522,3 +522,48 @@ func TestLaunchKeepsOutOfShm(t *testing.T) {
 		}
 	}
 }
+
+// Sites (Google's sign-in first) refuse a browser that says it's headless
+// or automated: it reads as an ordinary Chrome, in its pages and requests.
+func TestLooksLikeChrome(t *testing.T) {
+	var hdr http.Header
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			hdr = r.Header.Clone()
+		}
+		fmt.Fprint(w, `<!doctype html><title>Hello</title>`)
+	}))
+	defer ts.Close()
+	b := start(t, Options{})
+	ctx := ctxT(t)
+	if err := b.Open(ctx, ts.URL+"/"); err != nil {
+		t.Fatal(err)
+	}
+	js := func(e string) any {
+		var out struct {
+			Result struct{ Value any } `json:"result"`
+		}
+		b.call(ctx, b.page, "Runtime.evaluate", map[string]any{"expression": e, "returnByValue": true}, &out)
+		return out.Result.Value
+	}
+	ua, _ := js("navigator.userAgent").(string)
+	brands, _ := js("JSON.stringify(navigator.userAgentData.brands)").(string)
+	for what, v := range map[string]string{"navigator.userAgent": ua, "User-Agent": hdr.Get("User-Agent"), "brands": brands, "Sec-CH-UA": hdr.Get("Sec-Ch-Ua")} {
+		if strings.Contains(v, "Headless") || !strings.Contains(v, "Chrom") {
+			t.Errorf("%s = %q", what, v)
+		}
+	}
+	// A screen at least as big as the window, as on any real machine.
+	if ok := js("screen.width >= outerWidth && screen.height >= outerHeight && screen.width >= 1280"); ok != true {
+		t.Errorf("screen %v around a window of %v", js("screen.width+'x'+screen.height"), js("outerWidth+'x'+outerHeight"))
+	}
+	if w := js("navigator.webdriver"); w != false {
+		t.Errorf("navigator.webdriver = %v", w)
+	}
+	if l := js("navigator.language"); l != "en-US" {
+		t.Errorf("navigator.language = %v", l)
+	}
+	if l := hdr.Get("Accept-Language"); !strings.HasPrefix(l, "en-US") {
+		t.Errorf("Accept-Language = %q", l)
+	}
+}

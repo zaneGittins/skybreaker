@@ -75,6 +75,7 @@ type Browser struct {
 	// whole by Take, so nothing of the agent's runs while you have it.
 	act     sync.RWMutex
 	mu      sync.Mutex
+	agent   map[string]any // how it introduces itself: see ordinary
 	takenBy string
 	held    int // the mouse buttons you hold down, as the buttons field counts them
 	world   int // Skybreaker's isolated world in the page, 0 until made
@@ -114,6 +115,12 @@ func Start(ctx context.Context, o Options) (*Browser, error) {
 		// Its frames go in /tmp, not /dev/shm: a container gets 64 MB of
 		// that, which a few sharp frames fill, hanging the page.
 		"--disable-dev-shm-usage",
+		// Not "automated", and a language a person's browser has: sites,
+		// Google's sign-in first, refuse a browser that looks like a bot.
+		"--disable-blink-features=AutomationControlled", "--lang=en-US", "--accept-lang=en-US,en",
+		// A 1920x1080 screen around the window, in its pixels: at twice the
+		// pixels, Chromium would otherwise report half the window's size.
+		"--screen-info={" + strconv.Itoa(1920*pixelRatio) + "x" + strconv.Itoa(1080*pixelRatio) + "}",
 	}
 	if o.Proxy != "" {
 		args = append(args, "--proxy-server="+o.Proxy, "--proxy-bypass-list=<-loopback>")
@@ -137,6 +144,34 @@ func Start(ctx context.Context, o Options) (*Browser, error) {
 	return b, nil
 }
 
+// ordinary works out how the browser introduces itself as an ordinary
+// Chrome: a headless one says HeadlessChrome in its user agent and its
+// client hints, which Google's sign-in, among others, refuses.
+func (b *Browser) ordinary(ctx context.Context) error {
+	var v struct {
+		Product   string `json:"product"`   // HeadlessChrome/153.0.8010.0
+		UserAgent string `json:"userAgent"` // ... HeadlessChrome/153.0.8010.0 ...
+	}
+	if err := b.call(ctx, "", "Browser.getVersion", nil, &v); err != nil {
+		return err
+	}
+	_, full, _ := strings.Cut(v.Product, "/")
+	major, _, _ := strings.Cut(full, ".")
+	brands := func(version string) []any {
+		return []any{map[string]string{"brand": "Chromium", "version": version}, map[string]string{"brand": "Not_A Brand", "version": "8"}}
+	}
+	b.agent = map[string]any{
+		"userAgent":      strings.ReplaceAll(v.UserAgent, "HeadlessChrome", "Chrome"),
+		"acceptLanguage": "en-US,en;q=0.9",
+		"platform":       "Linux x86_64",
+		"userAgentMetadata": map[string]any{
+			"brands": brands(major), "fullVersionList": brands(full), "fullVersion": full,
+			"platform": "Linux", "platformVersion": "", "architecture": "x86", "bitness": "64", "model": "", "mobile": false, "wow64": false,
+		},
+	}
+	return b.call(ctx, b.page, "Network.setUserAgentOverride", b.agent, nil)
+}
+
 func (b *Browser) open(ctx context.Context) error {
 	var t struct {
 		TargetID string `json:"targetId"`
@@ -151,6 +186,9 @@ func (b *Browser) open(ctx context.Context) error {
 		return err
 	}
 	b.page, b.target = s.SessionID, t.TargetID
+	if err := b.ordinary(ctx); err != nil {
+		return err
+	}
 	for _, c := range []struct {
 		method string
 		params any
@@ -269,6 +307,8 @@ func (b *Browser) attached(ctx context.Context, e Event) {
 		return
 	}
 	b.call(ctx, p.SessionID, "Fetch.enable", map[string]any{"handleAuthRequests": true, "patterns": []any{map[string]any{"urlPattern": "*", "requestStage": "Request"}}}, nil)
+	// A frame or worker of the page introduces itself as the page does.
+	b.call(ctx, p.SessionID, "Network.setUserAgentOverride", b.agent, nil)
 	b.call(ctx, p.SessionID, "Runtime.runIfWaitingForDebugger", nil, nil)
 }
 
