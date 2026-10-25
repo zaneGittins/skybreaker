@@ -402,6 +402,8 @@ function foldChat(c, e) {
   const auto = () => 'e' + (e.seq || c.items.length) + ':' + c.items.length;
   switch (e.kind) {
     case 'user': {
+      // Handing the browser back tells the agent, and shows as a line.
+      if (e.handback) return add({ type: 'handback', id: e.id || auto(), site: typeof e.handback.site === 'string' ? e.handback.site : '', time: e.time });
       const attach = Array.isArray(e.attach) ? e.attach.filter(a => a && typeof a.kept === 'string')
         .map(a => ({ ...a, thumb: typeof a.thumb === 'string' ? a.thumb : '' })) : [];
       // Try again resends text alone, so it's offered only without files.

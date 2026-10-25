@@ -457,7 +457,7 @@ func devAssistant(dataDir string) {
 	m, _ := s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeMemory, Title: "Bakes sourdough on weekends", Body: "Fine to include in the podcast."})
 	s.Remember("pip", m.ID, "", "")
 	s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeMemory, Title: "Prefers podcast episodes under 20 minutes", Body: "From Sunday's chat: \"that one was way too long\"", Session: "s-dev"})
-	s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeTakeover, Title: "Google wants a sign-in code for NotebookLM"})
+	s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeTakeover, Title: "Google wants a sign-in code for NotebookLM", Session: "s-dev-thread"})
 	s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeRoutine, Title: "weekly-podcast", Body: "Make this week's podcast.",
 		Routine: &assistant.Routine{Name: "weekly-podcast", Schedule: "0 7 * * 0", Prompt: "Make this week's NotebookLM podcast from what I saved, and save the audio."}})
 	s.ShareFile("pip", "", "This week's podcast: sourdough, home labs and the week ahead", assistant.File{Name: "weekly-podcast.wav", Kind: "audio"}, devTone(), ".wav")

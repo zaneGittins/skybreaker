@@ -134,6 +134,16 @@ test('foldChat: a turn streams, then settles', () => {
   assert.equal(c.lastUser, 'hi');
 });
 
+test('foldChat: a hand-back of the browser is a line, not a message to try again', () => {
+  const c = newChat();
+  foldChat(c, { seq: 1, kind: 'user', id: 'u1', text: 'sign in for me' });
+  foldChat(c, { seq: 2, kind: 'user', id: 'u2', text: "I'm done in the browser.", handback: { site: 'accounts.google.com' } });
+  assert.deepEqual(c.items[1], { type: 'handback', id: 'u2', site: 'accounts.google.com', time: undefined });
+  assert.equal(c.lastUser, 'sign in for me');
+  foldChat(c, { seq: 3, kind: 'user', id: 'u3', text: 'x', handback: {} });
+  assert.equal(c.items[2].site, '');
+});
+
 test('foldChat: tools update in place and nest under their agent', () => {
   const c = newChat();
   foldChat(c, { seq: 1, kind: 'tool', id: 't1', tool: { name: 'Task', kind: 'agent', title: 'explore', status: 'running' } });

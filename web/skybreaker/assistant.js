@@ -50,6 +50,8 @@ const asstPath = (name, tab) => '/a/' + encodeURIComponent(name) + (tab && tab !
 const asstAPI = name => '/api/assistants/' + encodeURIComponent(name);
 
 Object.assign(ICON, {
+  keyboard: ['M3 7h18v10H3z', 'M7 10h.01', 'M11 10h.01', 'M15 10h.01', 'M8 14h8'],
+  lock: ['M6 11h12v9H6z', 'M8.5 11V8a3.5 3.5 0 0 1 7 0v3'],
   memory: ['M12 3a7 7 0 0 0-4 12.7V19h8v-3.3A7 7 0 0 0 12 3z', 'M9 22h6'],
   sparkle: ['M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z'],
   hand: ['M8 13V5.5a1.5 1.5 0 0 1 3 0V12', 'M11 11.5V4a1.5 1.5 0 0 1 3 0v8', 'M14 11.5V6a1.5 1.5 0 0 1 3 0v8a7 7 0 0 1-7 7h-.5A6.5 6.5 0 0 1 4 14.5V11a1.5 1.5 0 0 1 3 0v2'],
@@ -79,6 +81,10 @@ function closeAssistant() {
   state.asstLive?.close();
   state.asstLive = null;
 }
+
+// asstOwn keeps the way to stop a browser view on its own page, for when
+// you leave it.
+const asstOwn = close => { state.asstLive = { close } };
 
 async function renderAssistant(seq, name, tab) {
   const enc = encodeURIComponent(name);
@@ -230,12 +236,15 @@ async function renderThread(seq, name) {
 
 const runWord = r => r.status === 'ok' ? 'Finished' : r.status === 'running' ? 'Running' : r.status === 'failed' ? 'Failed' + (r.error ? ': ' + r.error : '') : r.status;
 
-function asstTakeoverCard(name, x) {
+// asstTakeoverCard asks you to take the browser over: on its own page, or
+// with take, wherever take opens it.
+function asstTakeoverCard(name, x, take) {
   return el('div.a-card.a-need', null,
     el('div.a-need-text', null, el('div.a-kick', null, 'The browser needs you'), el('b', null, x.title),
       el('p', null, 'Take over to sign in or enter a code. The assistant can’t see what you type.')),
     el('div.a-acts', null,
-      el('a.btn.primary.sm', { href: asstPath(name, 'takeover'), 'data-link': true }, svg(ICON.hand), 'Take over'),
+      take ? el('button.btn.primary.sm', { type: 'button', onclick: take }, svg(ICON.hand), 'Take over')
+        : el('a.btn.primary.sm', { href: asstPath(name, 'takeover'), 'data-link': true }, svg(ICON.hand), 'Take over'),
       el('button.btn.ghost.sm', { type: 'button', onclick: e => asstDo(asstProposal(name, x, 'dismiss'), 'Dismissed', {}, e) }, 'Not now')));
 }
 
@@ -548,8 +557,10 @@ function asstPersonality(name, a) {
 // --- browser ------------------------------------------------------------------
 
 // asstWatch shows the assistant's browser as it works, with a cursor where
-// it last clicked or typed. Watching never pauses it; Take over does.
-function asstWatch(name, look) {
+// it last clicked or typed. Watching never pauses it; Take over does. On
+// its own page by default; a panel passes take, close and own (which keeps
+// the way to stop it).
+function asstWatch(name, look, opts = {}) {
   const canvas = el('canvas.a-screen.a-watch-screen', { width: '1280', height: '900', 'aria-label': look.name + '’s browser, live' });
   const arrow = svg(['M5 2.5v16.2l4.3-4.1 2.7 6.2 2.6-1.1-2.7-6.1h5.9z'], 'a-cursor-arrow');
   const cursor = el('div.a-cursor', { 'aria-hidden': 'true' }, arrow);
@@ -627,16 +638,20 @@ function asstWatch(name, look) {
     };
   };
   connect();
-  state.asstLive = { close: () => { closed = true; clearTimeout(hide); clearTimeout(rest); try { ws.close() } catch { } } };
+  (opts.own || asstOwn)(() => { closed = true; clearTimeout(hide); clearTimeout(rest); try { ws.close() } catch { } });
   return el('div.a-browser.a-watch', null,
     el('div.a-live-bar', null, el('span.a-live-status', null, dot, where), el('span.grow'),
-      el('a.btn.sm', { href: asstPath(name, 'takeover'), 'data-link': true }, svg(ICON.hand), 'Take over')),
+      opts.take ? el('button.btn.sm', { type: 'button', onclick: opts.take }, svg(ICON.hand), 'Take over')
+        : el('a.btn.sm', { href: asstPath(name, 'takeover'), 'data-link': true }, svg(ICON.hand), 'Take over'),
+      opts.close ? el('button.icon-btn.bare.a-panel-x', { type: 'button', onclick: opts.close, 'aria-label': 'Close', title: 'Close' }, svg(ICON.x)) : null),
     wrap);
 }
 
 // asstTakeover shows the assistant's browser live and hands it to you: the
-// assistant's browser tools pause until you're done.
-function asstTakeover(name, look) {
+// assistant's browser tools pause until you're done. On its own page by
+// default; a panel passes done (once it's handed back), reconnect and own,
+// and has the page laid out to fit it.
+function asstTakeover(name, look, opts = {}) {
   const touch = matchMedia('(pointer: coarse)').matches;
   // On a phone the canvas takes no focus, or a tap would take it from the
   // field below and close the keyboard.
@@ -653,42 +668,48 @@ function asstTakeover(name, look) {
   const ws = new WebSocket(proto + '//' + location.host + asstAPI(name) + '/browser/live');
   ws.binaryType = 'blob';
   const send = m => { if (ws.readyState === 1) ws.send(JSON.stringify(m)) };
-  const done = () => { send({ t: 'done' }); navigate(asstPath(name, 'browser')) };
+  const back = opts.done || (() => navigate(asstPath(name, 'browser')));
+  const done = () => { send({ t: 'done' }); back() };
   // A phone gets the page laid out for its own screen, and again when it
-  // turns; the keyboard coming and going leaves it be.
-  let fitW = 0;
+  // turns; the keyboard coming and going leaves it be. A panel gets it
+  // laid out for the panel.
+  let fitted = '';
   const fit = () => {
     const w = Math.round(wrap.clientWidth);
-    if (!touch || !w || w === fitW) return;
-    fitW = w;
-    const h = Math.round(Math.min(window.innerHeight - wrap.getBoundingClientRect().top - 16, w * 2));
-    send({ t: 'fit', w, h: Math.max(h, 240) });
+    const h = Math.max(240, Math.round(opts.done ? wrap.clientHeight : Math.min(window.innerHeight - wrap.getBoundingClientRect().top - 16, w * 2)));
+    // A panel on a desktop follows its height too: no keyboard comes and goes.
+    const key = touch ? String(w) : w + 'x' + h;
+    if (!(touch || opts.done) || !w || key === fitted) return;
+    fitted = key;
+    send({ t: 'fit', w, h });
   };
   ws.onopen = () => requestAnimationFrame(fit);
   window.addEventListener('resize', fit);
-  state.asstLive = { close: () => { window.removeEventListener('resize', fit); try { ws.close() } catch { } } };
+  let live = true;
+  (opts.own || asstOwn)(() => { live = false; window.removeEventListener('resize', fit); try { ws.close() } catch { } });
   ws.onmessage = async e => {
     if (typeof e.data !== 'string') {
       const img = await createImageBitmap(e.data);
       if (canvas.width !== img.width || canvas.height !== img.height) { canvas.width = img.width; canvas.height = img.height }
       ctx.drawImage(img, 0, 0);
       img.close();
-      if (!open) { open = true; status.replaceChildren(el('span.dot.ok'), 'You have the browser. ' + look.name + ' waits until you\u2019re done.') }
+      // A panel says less: the chat beside it says the rest.
+      if (!open) { open = true; status.replaceChildren(el('span.dot.ok'), opts.done ? 'You have the browser' : 'You have the browser. ' + look.name + ' waits until you\u2019re done.') }
       return;
     }
     const m = JSON.parse(e.data);
     if (m.t === 'size') size = { w: m.w, h: m.h };
     if (m.t === 'error') toast(m.error, 'error');
-    if (m.t === 'state' && m.taken === false && m.why === 'idle') { toast('Handed back after a quiet while'); navigate(asstPath(name, 'browser')) }
+    if (m.t === 'state' && m.taken === false && m.why === 'idle') { toast('Handed back after a quiet while'); back() }
     if (m.t === 'state' && m.taken === false && m.why === 'elsewhere') gone = 'Opened on another screen.';
   };
   // A dropped connection (a phone asleep, a network change) leaves the ask
   // waiting: you can pick up where you were.
   let gone = '';
   ws.onclose = () => {
-    if (!state.asstLive) return;
+    if (!live) return;
     status.replaceChildren(el('span.dot.bad'), gone || 'Disconnected.', ' ',
-      el('button.btn.ghost.sm', { type: 'button', onclick: () => moveTo() }, 'Reconnect'));
+      el('button.btn.ghost.sm', { type: 'button', onclick: () => (opts.reconnect || moveTo)() }, 'Reconnect'));
   };
   // Where on the page a pointer is, in the page's own pixels.
   const at = e => {
@@ -823,8 +844,65 @@ function asstTakeover(name, look) {
       pasteBtn, el('button.btn.primary.sm', { type: 'button', onclick: done }, svg(ICON.check), 'Done')),
     go,
     wrap,
-    el('p.np-hint', null, (touch ? 'Tap' : 'Click') + ' the page to type. What you type goes straight to the browser; ' + look.name + ' never sees it.'));
+    // A phone types through a bar where its message box was.
+    touch ? el('button.a-typebar', { type: 'button', onpointerdown: e => e.preventDefault(), onclick: () => keys.focus({ preventScroll: true }) },
+      svg(ICON.keyboard), el('span.a-typebar-label', null, 'Type into the page'), el('span.a-typebar-lock', null, svg(ICON.lock), look.name + ' can\u2019t see this'))
+      : el('p.np-hint', null, 'Click the page to type. What you type goes straight to the browser; ' + look.name + ' never sees it.'));
 }
+
+// asstPanel is an assistant's browser beside its chat, so taking it over
+// doesn't leave the conversation: you take it over from the dock's card,
+// then watch it carry on until you close it. On a narrow screen it's a
+// sheet over the chat, which closes once you've handed the browser back.
+// Back closes it too. changed runs when it opens, closes or changes hands.
+function asstPanel(page, name, look, changed) {
+  const body = el('div.a-panel-body');
+  const root = el('section.a-panel', { 'aria-label': look.name + '\u2019s browser' }, body);
+  let mode = '', stop = null;
+  const own = close => { stop = close };
+  const narrow = () => !matchMedia('(min-width: 1180px)').matches;
+  const show = m => {
+    stop?.();
+    stop = null;
+    mode = m;
+    root.classList.toggle('taking', m === 'takeover');
+    body.replaceChildren(m === 'takeover'
+      ? asstTakeover(name, look, { own, done: () => narrow() ? close() : show('watch'), reconnect: () => show('takeover') })
+      : asstWatch(name, look, { own, take: () => show('takeover'), close: () => close() }));
+    if (!root.isConnected) {
+      page.append(root);
+      page.classList.add('with-panel');
+      history.pushState({ ...history.state, asstPanel: true }, '', location.href);
+      asstPanelOpen = p;
+    }
+    changed();
+  };
+  // unwind takes back the step opening it added, when it isn't Back closing it.
+  const close = (unwind = true) => {
+    if (!mode) return;
+    stop?.();
+    stop = null;
+    mode = '';
+    root.remove();
+    page.classList.remove('with-panel');
+    if (asstPanelOpen === p) asstPanelOpen = null;
+    if (unwind && history.state?.asstPanel) { asstPanelPopping = true; history.back() }
+    changed();
+  };
+  const p = { take: () => show('takeover'), close, taking: () => mode === 'takeover' };
+  return p;
+}
+
+// Back closes an open panel rather than leaving the chat under it. This
+// runs before the router's listener, which it keeps from seeing these steps.
+let asstPanelOpen = null, asstPanelPopping = false;
+addEventListener('popstate', e => {
+  if (asstPanelPopping) { asstPanelPopping = false; e.stopImmediatePropagation(); return }
+  // Still on the panel's step: Back closed something over it, an image.
+  if (!asstPanelOpen || history.state?.asstPanel) return;
+  e.stopImmediatePropagation();
+  asstPanelOpen.close(false);
+});
 
 // --- making one ------------------------------------------------------------------
 

@@ -59,6 +59,8 @@ type Backend interface {
 
 	NewChat(ctx context.Context, project, harness string, opts app.NewOptions) (store.Session, error)
 	ChatSend(ctx context.Context, id, text string, files ...chat.File) error
+	// ChatHandback tells a chat you've handed its browser back, on site.
+	ChatHandback(ctx context.Context, id, text, site string) error
 	ChatAnswer(ctx context.Context, id, ask string, a chat.Answer) error
 	ChatInterrupt(ctx context.Context, id string) error
 	ChatMode(ctx context.Context, id, mode string) error

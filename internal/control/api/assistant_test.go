@@ -409,25 +409,26 @@ func TestSetAgentsIsAdmins(t *testing.T) {
 }
 
 // Done in the browser clears what asked for it, and the chat that asked
-// carries on if it's waiting for you; a working one isn't interrupted.
+// carries on if it's waiting for you, told where the page is; a working one
+// isn't interrupted.
 func TestTakeoverDone(t *testing.T) {
 	f, as := assistantFixture(t)
 	f.store.CreateSession(store.Session{ID: "idle", Project: "pip", Mode: store.ModeChat, Status: store.StatusRunning, State: store.ChatIdle})
 	f.store.CreateSession(store.Session{ID: "busy", Project: "pip", Mode: store.ModeChat, Status: store.StatusRunning, State: store.ChatWorking})
 	as.Propose("pip", assistant.Proposal{Kind: assistant.ProposeTakeover, Title: "Google wants a code", Session: "idle"})
 	as.Propose("pip", assistant.Proposal{Kind: assistant.ProposeMemory, Title: "Likes jazz"})
-	takeoverDone(context.Background(), as, f.store, f.backend, "pip")
+	takeoverDone(context.Background(), as, f.store, f.backend, "pip", "accounts.google.com")
 	if ps := as.Get("pip").Proposals; len(ps) != 1 || ps[0].Kind != assistant.ProposeMemory {
 		t.Fatalf("proposals %+v", ps)
 	}
 	f.backend.chat.mu.Lock()
 	calls := slices.Clone(f.backend.chat.calls)
 	f.backend.chat.mu.Unlock()
-	if len(calls) != 1 || !strings.HasPrefix(calls[0], "send idle ") {
+	if len(calls) != 1 || !strings.HasPrefix(calls[0], "handback idle accounts.google.com ") {
 		t.Fatalf("calls %q", calls)
 	}
 	as.Propose("pip", assistant.Proposal{Kind: assistant.ProposeTakeover, Title: "Again", Session: "busy"})
-	takeoverDone(context.Background(), as, f.store, f.backend, "pip")
+	takeoverDone(context.Background(), as, f.store, f.backend, "pip", "")
 	f.backend.chat.mu.Lock()
 	defer f.backend.chat.mu.Unlock()
 	if len(f.backend.chat.calls) != 1 {

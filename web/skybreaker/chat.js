@@ -378,6 +378,8 @@ async function renderChat(seq, d) {
     goalBar, scroller, jump, footer);
   if (asst) asstAccent(page, asst.color);
   $('#app').replaceChildren(page);
+  // An assistant's browser opens beside its chat, not on a page of its own.
+  const panel = asst ? asstPanel(page, project.name, asst, () => drawDock()) : null;
   const viewport = trackViewport();
   viewport();
   const onViewport = () => { const stick = nearBottom(); viewport(); if (stick) toBottom() };
@@ -392,6 +394,7 @@ async function renderChat(seq, d) {
   const unlisten = new AbortController();
   v.close = () => {
     v.closed = true;
+    panel?.close(false);
     unlisten.abort();
     v.es?.close();
     clearInterval(v.timer);
@@ -472,6 +475,8 @@ async function renderChat(seq, d) {
       case 'show': return showCard(it);
       case 'preview': return previewCard(it);
       case 'card': return workCard(it);
+      case 'handback': return el('div.handback', null, el('span.handback-ic', null, svg(ICON.hand)),
+        el('span', null, 'You handed the browser back', it.site ? [' on ', el('b', null, it.site)] : null));
     }
     return el('div');
   };
@@ -1136,8 +1141,9 @@ async function renderChat(seq, d) {
     // A network request the broker holds for this project waits here too:
     // the agent's command is stuck on it.
     const req = v.requests?.[0];
-    // So does an assistant's browser, waiting for you to sign in.
-    const take = v.takeover;
+    // So does an assistant's browser, waiting for you to sign in, until
+    // you have it.
+    const take = panel?.taking() ? null : v.takeover;
     const key = ask ? 'ask:' + ask.id + ':' + chat.asks.size : chat.login ? 'login:' + JSON.stringify(chat.login) : req ? 'req:' + req.id : take ? 'take:' + take.id : '';
     syncComposer();
     if (key === dockKey) return;
@@ -1150,7 +1156,7 @@ async function renderChat(seq, d) {
     if (ask) dock.replaceChildren(ask.ask.kind === 'question' ? questionCard(ask) : permissionCard(ask, chat.asks.size));
     else if (chat.login) dock.replaceChildren(loginCard(chat.login));
     else if (req) dock.replaceChildren(requestCard(req, project.tint, { dock: true }));
-    else if (take) dock.replaceChildren(asstTakeoverCard(project.name, take));
+    else if (take) dock.replaceChildren(asstTakeoverCard(project.name, take, () => panel.take()));
     else leave([...dock.children].filter(n => !n.classList.contains('leaving')), 160);
   }
   v.project = session.project;

@@ -110,12 +110,12 @@ func (b *Browser) cuePage(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	u, _ := b.current(ctx)
-	b.cue(Cue{Kind: "page", Site: siteOf(u)})
+	b.cue(Cue{Kind: "page", Site: SiteOf(u)})
 }
 
-// siteOf is an address's host, never its path or query, which can carry
+// SiteOf is an address's host, never its path or query, which can carry
 // what's on the page.
-func siteOf(u string) string {
+func SiteOf(u string) string {
 	p, err := url.Parse(u)
 	if err != nil || p.Scheme != "http" && p.Scheme != "https" {
 		return ""
@@ -179,7 +179,7 @@ func watchOne(ctx context.Context, ws WS, b *Browser, say func(any)) error {
 	sctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	st, _ := b.Status(sctx)
 	cancel()
-	say(map[string]any{"t": "state", "running": true, "taken": st.TakenBy != "", "site": siteOf(st.URL)})
+	say(map[string]any{"t": "state", "running": true, "taken": st.TakenBy != "", "site": SiteOf(st.URL)})
 	w, h := 0, 0
 	for {
 		select {
