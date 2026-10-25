@@ -34,12 +34,17 @@ const (
 	browserMemory = "2g"
 )
 
+// browserAnswer is how long a browser has to answer before it's taken for
+// stuck and replaced.
+var browserAnswer = 10 * time.Second
+
 // browserTokenTTL is how long a browser's broker token lasts; a longer
 // browser mints another.
 const browserTokenTTL = 24 * time.Hour
 
 type liveBrowser struct {
 	b    *browser.Browser
+	gone chan struct{} // closed once it has gone and been tidied up
 	mu   sync.Mutex
 	used time.Time
 	// The broker token it answers challenges with, by value and ID, and
@@ -101,14 +106,22 @@ func (a *App) Browser(ctx context.Context, project string) (*browser.Browser, er
 	lb := a.browsers.m[project]
 	a.browsers.mu.Unlock()
 	if lb != nil {
-		select {
-		case <-lb.b.Done():
-		default:
+		actx, cancel := context.WithTimeout(ctx, browserAnswer)
+		err := lb.b.Alive(actx)
+		cancel()
+		if err == nil {
 			lb.mu.Lock()
 			lb.used = time.Now()
 			lb.mu.Unlock()
 			return lb.b, nil
 		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		log.Printf("skybreaker: %s's browser is stuck, starting another: %v", project, err)
+		// Its container goes before the new one starts, not after.
+		lb.b.Close()
+		<-lb.gone
 	}
 	lb, err := a.startBrowser(ctx, project)
 	if err != nil {
@@ -136,7 +149,7 @@ func (a *App) startBrowser(ctx context.Context, project string) (*liveBrowser, e
 	if err != nil {
 		return nil, err
 	}
-	lb := &liveBrowser{used: time.Now()}
+	lb := &liveBrowser{used: time.Now(), gone: make(chan struct{})}
 	o := browser.Options{
 		Launch:    a.launchChromium(project),
 		Profile:   "/profile",
@@ -168,6 +181,7 @@ func (a *App) startBrowser(ctx context.Context, project string) (*liveBrowser, e
 func (a *App) watchBrowser(project string, lb *liveBrowser) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
+	defer close(lb.gone)
 	for {
 		select {
 		case <-lb.b.Done():
@@ -192,7 +206,14 @@ func (a *App) watchBrowser(project string, lb *liveBrowser) {
 			lb.mu.Lock()
 			idle := time.Since(lb.used) > browserIdle
 			lb.mu.Unlock()
-			if st, err := lb.b.Status(context.Background()); idle && err == nil && st.TakenBy == "" {
+			if !idle {
+				continue
+			}
+			// One that doesn't answer is closed too, rather than waited on.
+			ctx, cancel := context.WithTimeout(context.Background(), browserAnswer)
+			st, err := lb.b.Status(ctx)
+			cancel()
+			if err != nil || st.TakenBy == "" {
 				lb.b.Close()
 			}
 		}
@@ -225,13 +246,15 @@ func (a *App) RunningBrowser(project string) (*browser.Browser, bool) {
 	return lb.b, true
 }
 
-// StopBrowser closes an assistant's browser, if it runs.
+// StopBrowser closes an assistant's browser, if it runs, and waits until
+// it has gone: the next use starts another.
 func (a *App) StopBrowser(project string) {
 	a.browsers.mu.Lock()
 	lb := a.browsers.m[project]
 	a.browsers.mu.Unlock()
 	if lb != nil {
 		lb.b.Close()
+		<-lb.gone
 	}
 }
 

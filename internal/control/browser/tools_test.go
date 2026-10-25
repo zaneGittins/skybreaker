@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
 )
@@ -95,3 +96,55 @@ func TestBrowserTools(t *testing.T) {
 }
 
 func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }
+
+// toolRef is the number browser_read gave the element named name.
+func toolRef(t *testing.T, h *fakeHost, name string) string {
+	t.Helper()
+	out, err := use(t, h, "browser_read", `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "[") && strings.Contains(line, `"`+name+`"`) {
+			return strings.Trim(strings.Fields(line)[0], "[]")
+		}
+	}
+	t.Fatalf("no %q in %s", name, out)
+	return ""
+}
+
+func TestDownloadToolReportsProgress(t *testing.T) {
+	old := downloadWait
+	downloadWait = time.Second
+	t.Cleanup(func() { downloadWait = old })
+	release := make(chan struct{})
+	ts := episodes(t, release)
+	h := &fakeHost{b: start(t, Options{}), saved: map[string][]byte{}}
+	use(t, h, "browser_open", `{"url": "`+ts.URL+`/"}`)
+	args := `{"ref": ` + toolRef(t, h, "Download episode") + `}`
+	out, err := use(t, h, "browser_download", args)
+	if err != nil || !strings.Contains(out, "Still downloading episode.wav: 0.1 of 1.0 MB") || !strings.Contains(out, "browser_status") {
+		t.Fatalf("download: %q %v", out, err)
+	}
+	if _, err := use(t, h, "browser_download", args); err == nil || !strings.Contains(err.Error(), "already going") {
+		t.Fatalf("a second download: %v", err)
+	}
+	if out, _ := use(t, h, "browser_status", `{}`); !strings.Contains(out, "Downloading episode.wav: 0.1 of 1.0 MB") {
+		t.Fatalf("status mid-download: %q", out)
+	}
+	close(release)
+	deadline := time.Now().Add(20 * time.Second)
+	for !strings.Contains(out, "/workspace/downloads/episode.wav") {
+		if time.Now().After(deadline) {
+			t.Fatalf("status never got the file: %q", out)
+		}
+		time.Sleep(200 * time.Millisecond)
+		out, _ = use(t, h, "browser_status", `{}`)
+	}
+	if len(h.copied) != 1 || h.copied[0].Name != "episode.wav" {
+		t.Fatalf("copied %+v", h.copied)
+	}
+	if out, _ := use(t, h, "browser_status", `{}`); strings.Contains(out, "episode") {
+		t.Fatalf("a delivered download is told again: %q", out)
+	}
+}

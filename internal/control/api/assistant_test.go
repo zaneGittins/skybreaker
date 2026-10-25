@@ -264,7 +264,10 @@ func TestAssistantSession(t *testing.T) {
 	}
 }
 
-type fakeBrowsers struct{ st *browser.Status }
+type fakeBrowsers struct {
+	st      *browser.Status
+	stopped *[]string
+}
 
 func (f fakeBrowsers) Browser(context.Context, string) (*browser.Browser, error) {
 	return nil, errors.New("no browser here")
@@ -275,6 +278,23 @@ func (f fakeBrowsers) BrowserStatus(context.Context, string) (browser.Status, bo
 		return browser.Status{}, false
 	}
 	return *f.st, true
+}
+func (f fakeBrowsers) StopBrowser(project string) { *f.stopped = append(*f.stopped, project) }
+
+// Restarting a browser stops it: the next use starts another.
+func TestRestartBrowser(t *testing.T) {
+	var stopped []string
+	as, _ := assistant.Open("")
+	f := newFixture(t, you, func(d *Deps) {
+		d.Config.Projects["pip"] = &config.Project{Kind: config.KindAssistant, Harnesses: []string{"claude"}}
+		d.Assistants, d.Browsers = as, fakeBrowsers{stopped: &stopped}
+	})
+	if code, body := f.do(t, "POST", "/api/assistants/pip/browser/restart", "", nil); code != 204 || len(stopped) != 1 || stopped[0] != "pip" {
+		t.Fatalf("restart: %d %s %v", code, body, stopped)
+	}
+	if code, _ := f.do(t, "POST", "/api/assistants/orbit/browser/restart", "", nil); code != 404 || len(stopped) != 1 {
+		t.Fatalf("a coding project: %d %v", code, stopped)
+	}
 }
 
 // Today says how its browser is, by site only: never the page's address.
@@ -290,7 +310,7 @@ func TestTodayBrowser(t *testing.T) {
 		as, _ := assistant.Open("")
 		f := newFixture(t, you, func(d *Deps) {
 			d.Config.Projects["pip"] = &config.Project{Kind: config.KindAssistant, Harnesses: []string{"claude"}}
-			d.Assistants, d.Browsers = as, fakeBrowsers{c.st}
+			d.Assistants, d.Browsers = as, fakeBrowsers{st: c.st}
 		})
 		_, body := f.do(t, "GET", "/api/assistants/pip/today", "", nil)
 		if !strings.Contains(body, c.want) || strings.Contains(body, "secret") {

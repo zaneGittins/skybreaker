@@ -683,10 +683,25 @@ function asstTakeover(name, look, opts = {}) {
     fitted = key;
     send({ t: 'fit', w, h });
   };
-  ws.onopen = () => requestAnimationFrame(fit);
+  // A browser that shows nothing is stuck: restarting it starts another.
+  const restart = async () => {
+    status.replaceChildren(el('span.spinner'), 'Restarting the browser\u2026');
+    stop();
+    try { await api('POST', asstAPI(name) + '/browser/restart') } catch (e) { toast(e.message, 'error') }
+    (opts.reconnect || moveTo)();
+  };
+  let stuck;
+  ws.onopen = () => {
+    requestAnimationFrame(fit);
+    stuck = setTimeout(() => {
+      if (!open && ws.readyState === 1) status.replaceChildren(el('span.dot.bad'), 'The browser isn\u2019t showing anything.', ' ',
+        el('button.btn.ghost.sm', { type: 'button', onclick: restart }, 'Restart browser'));
+    }, 15000);
+  };
   window.addEventListener('resize', fit);
   let live = true;
-  (opts.own || asstOwn)(() => { live = false; window.removeEventListener('resize', fit); try { ws.close() } catch { } });
+  const stop = () => { live = false; clearTimeout(stuck); window.removeEventListener('resize', fit); try { ws.close() } catch { } };
+  (opts.own || asstOwn)(stop);
   ws.onmessage = async e => {
     if (typeof e.data !== 'string') {
       const img = await createImageBitmap(e.data);
