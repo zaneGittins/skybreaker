@@ -476,3 +476,22 @@ func TestAssistantSharedFile(t *testing.T) {
 		t.Errorf("today %s", body)
 	}
 }
+
+// An assistant's thread opens as one chat; starting fresh carries it on.
+func TestAssistantThread(t *testing.T) {
+	f, _ := assistantFixture(t)
+	if code, body := f.do(t, "POST", "/api/assistants/pip/thread", `{}`, nil); code != 200 || !strings.Contains(body, `"id":"th-pip"`) {
+		t.Errorf("thread: %d %s", code, body)
+	}
+	if code, _ := f.do(t, "POST", "/api/assistants/orbit/thread", `{}`, nil); code != 404 {
+		t.Errorf("a coding project's thread: %d", code)
+	}
+	if code, body := f.do(t, "POST", "/api/sessions/c1/fresh", `{}`, nil); code != 200 || !strings.Contains(body, `"id":"fresh-c1"`) {
+		t.Errorf("fresh: %d %s", code, body)
+	}
+	for path, want := range map[string]int{"/api/sessions/busy/fresh": 409, "/api/sessions/nope/fresh": 404} {
+		if code, body := f.do(t, "POST", path, `{}`, nil); code != want {
+			t.Errorf("%s: %d %s, want %d", path, code, body, want)
+		}
+	}
+}

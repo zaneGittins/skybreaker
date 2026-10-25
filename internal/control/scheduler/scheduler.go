@@ -110,6 +110,9 @@ func (s *Scheduler) Reconcile() {
 			s.store.UpdateRun(r.ID, func(x *store.Run) {
 				x.Status, x.Error, x.Finished = store.RunFailed, "interrupted by a control plane restart", time.Now().UTC()
 			})
+			if r, ok := s.store.Run(r.ID); ok {
+				s.onUpdate(r)
+			}
 		}
 	}
 }

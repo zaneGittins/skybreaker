@@ -456,10 +456,16 @@ func TestOldRunsArePruned(t *testing.T) {
 func TestReconcileMarksInterruptedRuns(t *testing.T) {
 	s, _, st := setup(t, nightly)
 	st.CreateRun(store.Run{ID: "old", Job: "nightly", Project: "orbit", Status: store.RunRunning, Started: time.Now().Add(-time.Hour)})
+	var told []store.Run
+	s.onUpdate = func(r store.Run) { told = append(told, r) }
 	s.Reconcile()
 	r, _ := st.Run("old")
 	if r.Status != store.RunFailed || !strings.Contains(r.Error, "restart") {
 		t.Fatalf("run = %+v", r)
+	}
+	// What follows runs (an assistant's thread) hears how it ended.
+	if len(told) != 1 || told[0].ID != "old" || told[0].Status != store.RunFailed {
+		t.Errorf("told %+v", told)
 	}
 }
 

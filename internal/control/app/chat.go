@@ -194,6 +194,13 @@ func (a *App) placeSession(ctx context.Context, s *store.Session, opts NewOption
 // first message, or in the background now, so that message is quick. Its
 // own worktree, if it has one, is made on that first start.
 func (a *App) NewChat(ctx context.Context, project, harnessName string, opts NewOptions) (store.Session, error) {
+	return a.newChat(ctx, project, harnessName, opts, nil)
+}
+
+// newChat is NewChat, with prepare to ready the chat before it's saved.
+// Only an assistant's thread and tasks, which prepare theirs, make its
+// chats: another would take the thread's place.
+func (a *App) newChat(ctx context.Context, project, harnessName string, opts NewOptions, prepare func(*store.Session) error) (store.Session, error) {
 	if err := a.enabled(project, harnessName); err != nil {
 		return store.Session{}, err
 	}
@@ -210,7 +217,17 @@ func (a *App) NewChat(ctx context.Context, project, harnessName string, opts New
 	if err := a.placeSession(ctx, &s, opts); err != nil {
 		return store.Session{}, err
 	}
+	if _, err := a.assistantProject(project); err == nil && prepare == nil {
+		return store.Session{}, errNotThread
+	}
+	if prepare != nil {
+		if err := prepare(&s); err != nil {
+			a.chat.Forget(s.ID)
+			return store.Session{}, err
+		}
+	}
 	if err := a.store.CreateSession(s); err != nil {
+		a.chat.Forget(s.ID)
 		return store.Session{}, err
 	}
 	a.Publish(Event{Type: "session", Project: project, Session: s.ID, Data: "started"})
@@ -234,6 +251,9 @@ func (a *App) ChatFork(ctx context.Context, id string) (store.Session, error) {
 	s, err := a.chatSession(id)
 	if err != nil {
 		return store.Session{}, err
+	}
+	if _, err := a.assistantProject(s.Project); err == nil {
+		return store.Session{}, errNotThread
 	}
 	if s.Resume == "" {
 		return store.Session{}, errors.New("there's nothing to fork yet: send a message first")
@@ -314,6 +334,9 @@ func (a *App) reopen(id string) (store.Session, error) {
 	}
 	if err := a.enabled(s.Project, s.Harness); err != nil {
 		return store.Session{}, err
+	}
+	if s.CarriedOn != "" {
+		return store.Session{}, busyErr("this conversation carried on in a newer chat: continue it in the assistant's thread")
 	}
 	if s.Worktree != "" {
 		// Waits out a tidy under way, so it can't take the worktree from
@@ -554,6 +577,9 @@ func (a *App) killChat(ctx context.Context, s store.Session) {
 // endChat ends chat s and tidies after it. Callers hold its lock.
 func (a *App) endChat(ctx context.Context, s store.Session) {
 	a.killChat(ctx, s)
+	if s.Task != "" {
+		a.bg.Go(func() { a.taskCard(s.ID) })
+	}
 	a.Publish(Event{Type: "session", Project: s.Project, Session: s.ID, Data: "killed"})
 	a.sessionEnded(s)
 }
@@ -579,6 +605,7 @@ func (a *App) chatUsage(id string, u *chat.Usage, limits []chat.Limit) {
 // project, never what the agent said.
 func (a *App) chatChanged(before, after store.Session) {
 	a.Publish(Event{Type: "session", Project: after.Project, Session: after.ID, Data: after.State})
+	a.taskChanged(before, after)
 	var m notify.Message
 	who := "A " + after.Harness + " session in " + after.Project
 	bucket := after.ID + "-" + strconv.FormatInt(time.Now().Unix()/60, 10)

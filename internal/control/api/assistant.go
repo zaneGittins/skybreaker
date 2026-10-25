@@ -33,6 +33,7 @@ func (s *server) assistantRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/assistants/{a}/proposals/{id}/approve", s.approveProposal)
 	m.HandleFunc("GET /api/assistants/{a}/today", s.today)
 	m.HandleFunc("GET /api/assistants/{a}/files/{name}", s.assistantFile)
+	m.HandleFunc("POST /api/assistants/{a}/thread", s.thread)
 	m.HandleFunc("GET /api/assistants/{a}/browser/live", s.browserLive)
 	m.HandleFunc("GET /api/assistants/{a}/routines", s.routines)
 	m.HandleFunc("POST /api/assistants/{a}/routines", s.addRoutine)
@@ -90,6 +91,20 @@ func (s *server) assistant(w http.ResponseWriter, r *http.Request) {
 	webutil.WriteJSON(w, http.StatusOK, assistantView{Name: name, Look: a.Look,
 		Personality: nonNil(a.Personality), Memories: nonNil(a.Memories), Proposals: nonNil(a.Proposals), Updates: nonNil(a.Updates),
 		Shapes: assistant.Shapes, Colors: assistant.Colors, Tempers: assistant.Tempers})
+}
+
+// thread opens the assistant's one chat with you.
+func (s *server) thread(w http.ResponseWriter, r *http.Request) {
+	name, ok := s.named(w, r)
+	if !ok {
+		return
+	}
+	th, err := s.Backend.Thread(r.Context(), name)
+	if err != nil {
+		chatFail(w, err)
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, th)
 }
 
 // done answers a change with the assistant as it is now.

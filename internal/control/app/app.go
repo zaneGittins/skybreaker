@@ -114,7 +114,10 @@ type App struct {
 	subs  map[chan Event]struct{}
 
 	chat *chat.Manager
-	bg   sync.WaitGroup // background sandbox starts and container stops
+	bg   sync.WaitGroup // background sandbox starts, container stops and assistant cards
+	// cardMu takes one assistant card at a time, each drawn from the
+	// state as it is then, so a later one never shows an older state.
+	cardMu sync.Mutex
 
 	pullErrMu sync.Mutex
 	pullErr   map[string]string // per project: the last GitHub read error logged

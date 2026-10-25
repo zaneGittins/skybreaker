@@ -33,6 +33,7 @@ const (
 	KindNotice   = "notice"   // a note from Skybreaker, like a restart: Text
 	KindShow     = "show"     // a file the agent showed the user: ID (its kept copy), Show
 	KindPreview  = "preview"  // a web page in the sandbox, ready to open: Preview
+	KindCard     = "card"     // work reported in an assistant's thread, created or updated: ID, Card
 )
 
 // Event is one entry in a session's log. Seq orders stored events; deltas
@@ -50,6 +51,7 @@ type Event struct {
 	Login   *Login    `json:"login,omitempty"`
 	Show    *Show     `json:"show,omitempty"`
 	Preview *Preview  `json:"preview,omitempty"`
+	Card    *Card     `json:"card,omitempty"`
 	// Attach is what the user sent with a message.
 	Attach []Attachment `json:"attach,omitempty"`
 }
@@ -245,6 +247,27 @@ type Preview struct {
 	Port  int    `json:"port"`
 	URL   string `json:"url"`
 	Title string `json:"title,omitempty"`
+}
+
+// Card kinds and statuses.
+const (
+	CardTask = "task" // a task the assistant started: Ref is its chat
+	CardRun  = "run"  // a routine's run: Ref is the run
+
+	CardWorking = "working"
+	CardWaiting = "waiting" // on you
+	CardDone    = "done"
+	CardFailed  = "failed"
+)
+
+// Card is a piece of work reported in an assistant's thread. Every update
+// carries the whole card.
+type Card struct {
+	Kind    string `json:"kind"`
+	Ref     string `json:"ref"`
+	Title   string `json:"title"`
+	Status  string `json:"status"`
+	Summary string `json:"summary,omitempty"`
 }
 
 // Login is a harness asking to be signed in. With a URL and code it is a

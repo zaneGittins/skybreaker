@@ -13,6 +13,8 @@ function navigate(path) {
   if (state.dirty && !confirm('Leave without saving your changes?')) return;
   state.dirty = false;
   const here = location.pathname + location.search;
+  // The thread you're in stays as it is: you came to write in it.
+  if (here === path && state.route?.name === 'thread') { $('.composer-input')?.focus(); return }
   if (here !== path) history.pushState({ from: here }, '', path);
   moveTo();
 }
@@ -44,7 +46,7 @@ window.addEventListener('popstate', () => {
 
 // depth is how far in a page is: the inbox, then a project or a list, then
 // a chat or a run.
-const depth = r => !r ? 0 : r.name === 'home' ? 0 : r.name === 'session' || r.name === 'run' ? 2
+const depth = r => !r ? 0 : r.name === 'home' ? 0 : r.name === 'session' || r.name === 'thread' || r.name === 'run' ? 2
   : r.name === 'settings' ? 1 + !!r.section + (r.item !== undefined) : 1;
 
 // moveTo shows the page at the address now in the bar. On a phone, going
@@ -100,13 +102,14 @@ async function go() {
   closeMenu();
   state.route = route(location.pathname);
   state.path = location.pathname + location.search;
-  document.body.classList.toggle('term-mode', state.route.name === 'session');
+  document.body.classList.toggle('term-mode', state.route.name === 'session' || state.route.name === 'thread');
   document.body.classList.remove('chat-mode');
   try {
     switch (state.route.name) {
       case 'home': await renderHome(seq); break;
       case 'project': await renderProject(seq, state.route.project, state.route.tab); break;
       case 'assistant': await renderAssistant(seq, state.route.project, state.route.tab); break;
+      case 'thread': await renderThread(seq, state.route.project); break;
       case 'session': await renderSession(seq, state.route.id); break;
       case 'run': await renderRun(seq, state.route.id); break;
       case 'activity': await renderActivity(seq); break;
@@ -139,7 +142,7 @@ function busy() {
 const refresh = debounce(() => {
   // A chat streams on its own; a browser you've taken over must not be
   // closed and handed back by a redraw.
-  if (!state.route || state.route.name === 'session' || state.route.tab === 'browser') return;
+  if (!state.route || state.route.name === 'session' || state.route.name === 'thread' || state.route.tab === 'browser') return;
   // An open sheet that can redraw itself does, so what you answer there
   // leaves it; the page waits until the sheet closes.
   if (busy()) { state.stale = true; state.sheetReload?.(); return }
@@ -220,7 +223,7 @@ function liveRow(s, p, pending) {
   return endable(s, link, pending);
 }
 
-const placePath = p => p.kind === 'assistant' ? asstPath(p.name) : '/p/' + encodeURIComponent(p.name);
+const placePath = p => p.kind === 'assistant' ? asstPath(p.name, 'chat') : '/p/' + encodeURIComponent(p.name);
 const placeName = p => p.kind === 'assistant' ? asstLookOf(p).name : p.name;
 
 // placeMark is how a place looks small: an assistant's own mark, or a
@@ -960,7 +963,7 @@ function harnessPicks(p) {
     busy = true;
     try {
       prefs.set('lastProject', p.name);
-      const s = await api('POST', `/api/projects/${p.name}/sessions`, { harness: h, title: '', own_branch: p.kind !== 'assistant' && ownBranch() });
+      const s = await api('POST', `/api/projects/${p.name}/sessions`, { harness: h, title: '', own_branch: ownBranch() });
       closeSheet();
       navigate('/s/' + s.id);
     } catch (err) { toast(err.message, 'error') } finally { busy = false }
@@ -984,8 +987,8 @@ function pickHarness(p) {
       el('div.picker-grip'),
       el('div.picker-head', null,
         el('h2', null, 'New chat'),
-        el('p', null, (p.kind === 'assistant' ? 'with ' + (p.look?.name || p.name) : 'in ' + p.name) + (p.running ? '' : ' · starts the sandbox first'))),
-      list, p.kind === 'assistant' ? null : ownBranchBox(),
+        el('p', null, 'in ' + p.name + (p.running ? '' : ' · starts the sandbox first'))),
+      list, ownBranchBox(),
       el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Cancel')));
   $('.pick', list)?.focus({ preventScroll: true });
 }
@@ -1570,20 +1573,15 @@ function sidebar(d) {
 }
 
 // sideAssistant is an assistant in the sidebar: its mark, amber while
-// something waits on you.
+// something waits on you. It opens its thread.
 function sideAssistant(p, d) {
   const look = asstLookOf(p);
   const needs = p.pending + (p.asks || 0) > 0;
-  const row = el('a.side-link.side-project.side-assistant', { href: asstPath(p.name), 'data-link': true, 'data-project': p.name, title: look.name + (needs ? ' needs you' : '') },
+  const row = el('a.side-link.side-project.side-assistant', { href: asstPath(p.name, 'chat'), 'data-link': true, 'data-project': p.name, title: look.name + (needs ? ' needs you' : '') },
     avatar(look, { mini: true, ...asstState(needs, d.sessions.filter(s => s.project === p.name)) }), el('span', null, look.name),
     needs ? el('span.side-needs', null, el('span.sr-only', null, 'needs you')) : null);
   asstAccent(row, look.color);
-  // Its latest chats show beneath it while you're with it.
-  const recent = recentChats(d.sessions, p.name);
-  if (!recent.length) return row;
-  return [row, el('div.side-chats', null,
-    recent.map(s => el('a.side-chat', { href: '/s/' + s.id, 'data-link': true, 'data-session': s.id, title: chatName(s) }, chatName(s))),
-    el('a.side-chat.more', { href: asstPath(p.name, 'chats'), 'data-link': true }, 'All chats'))];
+  return row;
 }
 
 // refreshSidebar keeps the sidebar current on pages that don't fetch the
@@ -1597,12 +1595,11 @@ const refreshSidebar = debounce(async () => {
 // you're in.
 function markSidebar() {
   const r = state.route || {};
-  const project = r.name === 'project' || r.name === 'assistant' ? r.project : r.name === 'session' ? state.chat?.project : null;
+  const project = r.name === 'project' || r.name === 'assistant' || r.name === 'thread' ? r.project : r.name === 'session' ? state.chat?.project : null;
   $('#nav-inbox').classList.toggle('on', r.name === 'home');
   $('#nav-activity').classList.toggle('on', r.name === 'activity');
   $('#nav-settings').classList.toggle('on', r.name === 'settings');
   for (const a of document.querySelectorAll('.side-project')) a.classList.toggle('on', a.dataset.project === project);
-  for (const a of document.querySelectorAll('.side-chat[data-session]')) a.classList.toggle('on', r.name === 'session' && a.dataset.session === r.id);
   const asst = (state.inbox?.projects || []).find(p => p.name === project && p.kind === 'assistant');
   $('#new-chat-label').textContent = asst ? 'Message ' + (asst.look?.name || project) : project ? 'New chat in ' + project : 'New chat';
   // In an assistant's space the frame takes its colour too.
@@ -1612,10 +1609,14 @@ function markSidebar() {
   state.newChatIn = project;
 }
 
+// startNewChat starts a chat where you are; an assistant has one, its
+// thread, so it opens that.
 function startNewChat() {
   const projects = state.inbox?.projects || state.projects || [];
-  const p = projects.find(x => x.name === state.newChatIn);
-  p ? pickHarness(p) : newSessionSheet(projects);
+  const repos = projects.filter(x => x.kind !== 'assistant');
+  const p = projects.find(x => x.name === state.newChatIn) || (repos.length ? null : projects[0]);
+  if (p?.kind === 'assistant') navigate(asstPath(p.name, 'chat'));
+  else p ? pickHarness(p) : newSessionSheet(repos);
 }
 
 // setupSideToggle collapses the desktop sidebar to its icons and back, and
@@ -1653,17 +1654,21 @@ async function boot() {
   activityBadge();
   $('#new-chat').addEventListener('click', startNewChat);
   addEventListener('keydown', e => {
-    if (e.key === 'n' && shortcut(e) && state.route?.name !== 'session') {
+    if (e.key === 'n' && shortcut(e) && state.route?.name !== 'session' && state.route?.name !== 'thread') {
       e.preventDefault();
       startNewChat();
     }
   });
   liveEvents(ev => {
-    const here = state.route?.name === 'session' && state.route.id === ev.session;
-    if (ev.type === 'hook' && ev.data?.kind === 'permission' && state.route?.name === 'session' && !here) {
+    const inChat = state.route?.name === 'session' || state.route?.name === 'thread';
+    const here = state.route?.name === 'session' && state.route.id === ev.session || state.chat?.id === ev.session;
+    // The thread you're reading carried on elsewhere (another tab started
+    // fresh, or switched its agent): follow it.
+    if (state.route?.name === 'thread' && here && ev.type === 'session' && ev.data === 'killed') { go(); return }
+    if (ev.type === 'hook' && ev.data?.kind === 'permission' && inChat && !here) {
       toast('An agent is waiting for approval', '', { label: 'Review', run: () => navigate('/') });
     }
-    if (ev.type === 'session' && state.route?.name === 'session' && !here && (ev.data === 'waiting' || ev.data === 'login')) {
+    if (ev.type === 'session' && inChat && !here && (ev.data === 'waiting' || ev.data === 'login')) {
       toast(`A session in ${ev.project} needs you`, '', { label: 'Open', run: () => navigate('/s/' + ev.session) });
     }
     if (ev.type === 'request' && ev.data === 'pending' && state.route?.name !== 'home' && state.route?.name !== 'activity'

@@ -102,13 +102,12 @@ async function renderAssistant(seq, name, tab) {
       el('span.a-sub', null, (p.harnesses || []).filter(h => h !== 'shell').map(harnessLabel).join(' · '),
         el('span.sep', null, '·'), asstMemories(a.memories?.length || 0),
         el('span.sep', null, '·'), el('a.a-access', { href: '/settings/access/' + enc, 'data-link': true }, 'Access'))));
-  const tabs = [['today', 'Today', 0], ['chats', 'Chats', 0], ['memory', 'Memory', memoryAsks], ['routines', 'Routines', routineAsks], ['look', 'Look', 0]];
+  const tabs = [['today', 'Today', 0], ['chat', 'Chat', 0], ['memory', 'Memory', memoryAsks], ['routines', 'Routines', routineAsks], ['look', 'Look', 0]];
   const tabBar = tab === 'browser' ? null : el('nav.p-tabs.a-tabs', { 'aria-label': look.name }, tabs.map(([k, label, n]) =>
     el('a.p-tab' + (k === tab ? '.on' : ''), { href: asstPath(name, k), 'data-link': true, 'aria-current': k === tab ? 'page' : null },
       el('span', null, label), n ? el('span.n.warn', null, String(n)) : null)));
   let body;
   switch (tab) {
-    case 'chats': body = asstChats(p, d); break;
     case 'memory': body = asstMemory(name, a); break;
     case 'routines': body = await asstRoutines(seq, name, a); break;
     case 'look': body = asstLook(name, a); break;
@@ -118,8 +117,8 @@ async function renderAssistant(seq, name, tab) {
   if (seq !== state.seq) return;
   const page = el('div.page.assistant.a-tab-' + tab, null, tab === 'browser' ? null : head, tabBar, body);
   asstAccent(page, look.color);
-  // On a phone, which has no sidebar, the + starts a chat with it.
-  const fab = tab === 'browser' ? null : el('button.fab', { type: 'button', onclick: () => pickHarness(p), 'aria-label': 'Message ' + look.name }, svg(ICON.plus));
+  // On a phone, which has no sidebar, the + opens its thread.
+  const fab = tab === 'browser' ? null : el('a.fab', { href: asstPath(name, 'chat'), 'data-link': true, 'aria-label': 'Message ' + look.name }, svg(ICON.plus));
   if (fab) asstAccent(fab, look.color);
   $('#app').replaceChildren(...[page, fab].filter(Boolean));
 }
@@ -177,7 +176,9 @@ async function asstToday(seq, name, p, a, d) {
   const takeovers = t.proposals.filter(x => x.kind === 'takeover');
   const needs = asstNeeds(name, p, t).length;
   const finished = t.runs.filter(r => r.status !== 'running');
-  const lately = finished.length + t.updates.length;
+  // Tasks it finished from the thread, in the last day.
+  const tasks = (d.sessions || []).filter(s => s.task && s.state === 'idle' && s.resume && Date.parse(s.updated) > Date.now() - 864e5);
+  const lately = finished.length + tasks.length + t.updates.length;
   const brief = asstBrief(finished);
   const site = asstBrowsing(name, t.browser, takeovers.length > 0);
   const pill = needs ? el('button.a-needs-pill', { type: 'button', onclick: () => asstNeedsSheet(name, p) },
@@ -194,6 +195,10 @@ async function asstToday(seq, name, p, a, d) {
           el('span.a-ic', null, svg(r.status === 'ok' ? ICON.check : ICON.clock)),
           el('span.a-row-text', null, el('b', null, r.job), el('span.a-row-sub', null, oneLine(r.summary) || runWord(r))),
           el('span.a-row-end', null, ago(r.finished || r.started)))),
+        ...tasks.map(s => el('a.a-row', { href: '/s/' + encodeURIComponent(s.id), 'data-link': true },
+          el('span.a-ic', null, svg(ICON.check)),
+          el('span.a-row-text', null, el('b', null, chatName(s)), el('span.a-row-sub', null, 'Task')),
+          el('span.a-row-end', null, ago(s.updated)))),
         ...t.updates.map(u => [el('div.a-row' + (u.file ? '.a-row-shared' : ''), null,
           el('span.a-ic', null, svg(u.file?.kind === 'audio' ? ICON.music : u.file ? ICON.file : ICON.note)),
           el('span.a-row-text', null, el('b', null, u.text)),
@@ -209,10 +214,15 @@ function asstShared(name, f) {
   return el('div.a-shared', null, sharedFile(url, { name: f.name, kind: f.kind, size: f.size }));
 }
 
-// asstChats is every chat with the assistant, open ones first.
-function asstChats(p, d) {
-  const { shown, ended } = chatGroups(d.sessions, new Set(d.pending.map(a => a.session)));
-  return el('div.a-chats', null, ...chatList(p, shown, ended));
+// renderThread opens the assistant's one chat with you, made on the first
+// visit and carried on to its preferred agent.
+async function renderThread(seq, name) {
+  const th = await api('POST', asstAPI(name) + '/thread', {});
+  if (seq !== state.seq) return;
+  const d = await api('GET', '/api/sessions/' + encodeURIComponent(th.id));
+  if (seq !== state.seq) return;
+  document.body.classList.replace('term-mode', 'chat-mode');
+  return renderChat(seq, d);
 }
 
 const runWord = r => r.status === 'ok' ? 'Finished' : r.status === 'running' ? 'Running' : r.status === 'failed' ? 'Failed' + (r.error ? ': ' + r.error : '') : r.status;
@@ -508,7 +518,7 @@ function asstPersonality(name, a) {
     try {
       await api('PUT', asstAPI(name) + '/personality', { text: text.value });
       state.dirty = false;
-      toast('Saved: new chats start with it');
+      toast('Saved: it takes effect when the agent next starts');
       refresh();
     } catch (e) { save.disabled = false; toast(e.message, 'error') }
   });

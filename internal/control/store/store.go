@@ -83,6 +83,14 @@ type Session struct {
 	Branch       string `json:"branch,omitempty"`
 	BranchFrom   string `json:"branch_from,omitempty"`
 	WorktreeGone bool   `json:"worktree_gone,omitempty"`
+	// Task names the assistant thread session that started this one as
+	// a task, which it reports back to.
+	Task string `json:"task,omitempty"`
+	// Handoff goes to the agent ahead of its first message: what came
+	// before in a thread it carries on.
+	Handoff string `json:"handoff,omitempty"`
+	// CarriedOn is the chat an assistant's thread moved on to from this one.
+	CarriedOn string `json:"carried_on,omitempty"`
 	// Pull is the open pull request its branch has on GitHub, as followed.
 	Pull Pull `json:"pull,omitzero"`
 }

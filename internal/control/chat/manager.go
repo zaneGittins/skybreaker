@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -236,10 +237,7 @@ func (m *Manager) Send(ctx context.Context, id, text string, files ...File) erro
 		if title == "" {
 			title = atts[0].Name
 		}
-		title = strings.TrimSuffix(title, " …")
-		if len(title) > 80 {
-			title = strings.TrimSpace(clip(title, 77)[:77]) + "…"
-		}
+		title = Shorten(strings.TrimSuffix(title, " …"), 80)
 		m.c.Sessions.UpdateSession(id, func(x *store.Session) { x.Title = title })
 	}
 	if note != "" {
@@ -255,12 +253,22 @@ func (m *Manager) Send(ctx context.Context, id, text string, files ...File) erro
 		}
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		lines, err := r.drv.Send(text, images...)
+		// A hand-off goes ahead of the first message an agent takes, and
+		// stays until one does.
+		out := text
+		cur, _ := m.c.Sessions.Session(id)
+		if cur.Handoff != "" {
+			out = cur.Handoff + "\n\n---\n\n" + text
+		}
+		lines, err := r.drv.Send(out, images...)
 		if err != nil {
 			m.failTurn(r, err.Error())
 			return
 		}
 		m.write(r, lines)
+		if cur.Handoff != "" {
+			m.c.Sessions.UpdateSession(id, func(x *store.Session) { x.Handoff = "" })
+		}
 	})
 	return nil
 }
@@ -885,6 +893,19 @@ func (m *Manager) Preview(id string, p Preview) error {
 	return nil
 }
 
+// Card adds a card to a chat, or redraws the one with its kind and ref.
+func (m *Manager) Card(id string, c Card) error {
+	if _, ok := m.c.Sessions.Session(id); !ok {
+		return fmt.Errorf("session %q: %w", id, store.ErrNotFound)
+	}
+	c.Title, c.Summary = Shorten(c.Title, 200), Shorten(c.Summary, 2<<10)
+	r := m.run(id)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	m.emit(r, Event{Kind: KindCard, ID: c.Kind + ":" + c.Ref, Card: &c})
+	return nil
+}
+
 // Shown returns the kept copy of a file shown in a chat.
 func (m *Manager) Shown(id, name string) ([]byte, error) {
 	return m.c.Log.Kept(id, name)
@@ -1022,16 +1043,19 @@ func (m *Manager) Stop(id string) {
 // Reap stops harness processes that have sat idle for IdleStop. A later
 // message resumes the conversation in a new process.
 func (m *Manager) Reap(now time.Time) {
+	// A chat's lock is never taken under m.mu: OnChange runs under a
+	// chat's lock and may call back into the manager.
 	m.mu.Lock()
+	runs := maps.Clone(m.runs)
+	m.mu.Unlock()
 	var idle []string
-	for id, r := range m.runs {
+	for id, r := range runs {
 		r.mu.Lock()
 		if r.proc != nil && !r.working && len(r.asks) == 0 && r.agents() == 0 && now.Sub(r.used) > m.c.IdleStop {
 			idle = append(idle, id)
 		}
 		r.mu.Unlock()
 	}
-	m.mu.Unlock()
 	for _, id := range idle {
 		m.Stop(id)
 	}

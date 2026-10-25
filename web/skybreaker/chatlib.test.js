@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, liveGroups, waitingByPlace, dockPlaces, placeKey, resting, closable, openCount, chatGroups, recentChats, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, liveGroups, waitingByPlace, dockPlaces, placeKey, resting, closable, openCount, chatGroups, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages, tasksWorking } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -269,17 +269,6 @@ test('chatGroups: open chats, then the rest newest first', () => {
   assert.deepEqual(chatGroups(ss, new Set(['rest']), now).shown.map(s => s.id), ['rest', 'new'], 'an approval keeps it open');
 });
 
-test('recentChats: an assistant\'s latest chats, for the sidebar', () => {
-  const c = (id, project, updated, x = {}) => ({ id, project, updated, mode: 'chat', status: 'running', ...x });
-  const ss = [
-    c('a', 'pip', '2026-10-18T10:00:00Z'), c('b', 'pip', '2026-10-19T10:00:00Z'), c('c', 'pip', '2026-10-17T10:00:00Z'),
-    c('d', 'pip', '2026-10-20T10:00:00Z'), c('e', 'other', '2026-10-21T10:00:00Z'),
-    c('f', 'pip', '2026-10-22T10:00:00Z', { parent: 'b' }), c('g', 'pip', '2026-10-22T10:00:00Z', { mode: 'terminal' }),
-  ];
-  assert.deepEqual(recentChats(ss, 'pip').map(s => s.id), ['d', 'b', 'a']);
-  assert.deepEqual(recentChats(ss, 'nobody'), []);
-});
-
 test('currentModel: chosen, then reported, then the default', () => {
   const ms = [
     { id: 'default', name: 'Default (recommended)', resolved: 'claude-opus-5-5', default: true },
@@ -338,6 +327,23 @@ test('activityLabel: what the agent is doing right now', () => {
   // Long commands are cut, and only the first line shows.
   tool(11, 'c2', { kind: 'command', title: 'go test ./... -run TestSomethingExtremelyLongNamed -count=1 -v\nsecond' });
   assert.ok(activityLabel(c).length <= 48 && !activityLabel(c).includes('second'));
+});
+
+test('foldChat: a card redraws in place, and counts while its task works', () => {
+  const c = newChat();
+  const task = status => ({ seq: 0, kind: 'card', id: 'task:t1', card: { kind: 'task', ref: 't1', title: 'Find flights', status } });
+  const first = foldChat(c, { ...task('working'), seq: 1 });
+  assert.equal(first.added.type, 'card');
+  foldChat(c, { seq: 2, kind: 'card', id: 'run:r1', card: { kind: 'run', ref: 'r1', title: 'morning-brief', status: 'working' } });
+  // A routine's run is the routine's, not a task the assistant has on.
+  assert.equal(tasksWorking(c), 1);
+  const next = foldChat(c, { ...task('done'), seq: 3, card: { ...task('done').card, summary: 'Three under $400' } });
+  assert.equal(next.changed, first.added);
+  assert.equal(c.items.filter(i => i.type === 'card').length, 2);
+  assert.equal(first.added.card.summary, 'Three under $400');
+  assert.equal(tasksWorking(c), 0);
+  // A card without its parts is dropped.
+  assert.deepEqual(foldChat(c, { seq: 4, kind: 'card', id: 'x' }), { changed: null });
 });
 
 test('foldChat: a preview is its own item', () => {

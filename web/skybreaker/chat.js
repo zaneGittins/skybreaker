@@ -328,6 +328,8 @@ async function renderChat(seq, d) {
   // With an assistant, it's the assistant that works with you: its mark,
   // its colour.
   const asst = project.kind === 'assistant' ? asstLookOf(project) : null;
+  // Its thread is its one chat with you; a task reports back to it.
+  const thread = asst && !session.task;
   const asstMark = asst ? avatar(asst, { cls: 'a-chat-mark' }) : null;
   const working = el('div.chat-working', { hidden: true }, asst ? avatar(asst, { state: 'thinking', cls: 'a-working-mark' }) : sunMark(),
     el('span.wtext', { role: 'status' }, 'Working'), el('span.wtime'), agentsBtn);
@@ -356,14 +358,16 @@ async function renderChat(seq, d) {
   const ringPct = el('span.ctx-pct');
   const ringBtn = el('button.icon-btn.bare.ctx-btn', { onclick: e => sessionMenu(e.currentTarget), 'aria-label': 'Context and session' }, ring.node, ringPct);
 
-  const back = () => goBack('', asst ? asstPath(project.name) : projectPath(project.name));
+  const back = () => goBack('', asst ? asstPath(project.name, thread ? '' : 'chat') : projectPath(project.name));
   const page = el('div.chat-page' + (asst ? '.a-chat' : ''), null,
     // An assistant's chat has no bar: round buttons and its mark float over
     // the conversation. The ring's menu holds the model and the terminal.
     asst ? el('div.chat-bar.a-bar', null,
       el('button.icon-btn.bare.a-round', { onclick: back, 'aria-label': 'Back' }, svg(ICON.back)),
       el('div.a-bar-who', null,
-        el('a.a-bar-link', { href: asstPath(project.name), 'data-link': true, 'aria-label': asst.name }, asstMark, el('b.a-bar-name', null, asst.name))),
+        // A task leads back to the thread it reports to, and says what it is.
+        el('a.a-bar-link', { href: asstPath(project.name, thread ? '' : 'chat'), 'data-link': true, 'aria-label': thread ? asst.name : `${asst.name}: ${chatName(session)}. Back to the conversation` }, asstMark,
+          el('b.a-bar-name', null, thread ? asst.name : asst.name + ' \u00b7 ' + chatName(session)))),
       el('div.a-bar-acts', null, ringBtn))
     : el('div.chat-bar', null,
       el('button.icon-btn.bare', { onclick: back, 'aria-label': 'Back' }, svg(ICON.back)),
@@ -400,7 +404,8 @@ async function renderChat(seq, d) {
 
   // --- header and state ---
   const head = () => {
-    if (project.kind === 'assistant') { asstCrumb(project); $('#crumb').append(el('span.sep', null, '/'), el('span.crumb-pill', null, el('span', null, chatName(session)))) }
+    if (thread) asstCrumb(project);
+    else if (asst) { asstCrumb(project); $('#crumb').append(el('span.sep', null, '/'), el('span.crumb-pill', null, el('span', null, chatName(session)))) }
     else crumb(project, chatName(session));
     title.textContent = chatName(session);
     for (const c of CHAT_COLORS) page.classList.toggle('sc-' + c, session.color === c);
@@ -466,6 +471,7 @@ async function renderChat(seq, d) {
       case 'notice': return el('div.notice', null, it.text);
       case 'show': return showCard(it);
       case 'preview': return previewCard(it);
+      case 'card': return workCard(it);
     }
     return el('div');
   };
@@ -475,6 +481,10 @@ async function renderChat(seq, d) {
     if (it.type === 'tool') {
       if (prev?.classList.contains('tools')) prev.append(node);
       else log.append(el('div.tools', null, node));
+    } else if (it.type === 'card') {
+      // Cards that follow each other stack, as one report.
+      if (prev?.classList.contains('work-cards')) prev.append(node);
+      else log.append(el('div.work-cards', null, node));
     } else log.append(node);
   };
   const dirty = new Set();
@@ -687,6 +697,9 @@ async function renderChat(seq, d) {
       } else if (c.cmd === 'compact') {
         await api('POST', `/api/sessions/${id}/compact`, {});
         stick = true;
+      } else if ((c.cmd === 'fork' || c.cmd === 'clear' && !thread) && asst) {
+        toast(asst.name + ' has one conversation with you: ' + (thread ? 'ask it to start a task instead.' : 'start fresh from it.'));
+        return false;
       } else if (c.cmd === 'fork') {
         const f = await api('POST', `/api/sessions/${id}/fork`, {});
         navigate('/s/' + f.id);
@@ -705,7 +718,7 @@ async function renderChat(seq, d) {
         await api('POST', `/api/sessions/${id}/interrupt`, {});
       } else if (c.cmd === 'clear') {
         if (chat.working) { toast('Stop the agent first, then clear.'); return false }
-        await clearChat();
+        await (thread ? startFresh() : clearChat());
       }
       return true;
     } catch (e) { toast(e.message, 'error'); return false }
@@ -721,6 +734,12 @@ async function renderChat(seq, d) {
     if (session.chosen_effort) await api('POST', `/api/sessions/${n.id}/effort`, { effort: session.chosen_effort }).catch(() => { });
     await api('DELETE', '/api/sessions/' + id);
     navigate('/s/' + n.id);
+  };
+  // startFresh carries the thread on with an agent that has only its
+  // memories; the conversation stays above.
+  const startFresh = async () => {
+    await api('POST', `/api/sessions/${id}/fresh`, {});
+    moveTo();
   };
   const clearInput = () => {
     input.value = '';
@@ -918,12 +937,14 @@ async function renderChat(seq, d) {
       { note: use ? `${use.pct}% of context used` : 'Context not reported yet',
         desc: use ? `${fmtTokens(use.used)} of ${fmtTokens(use.window)} tokens` : 'It shows after the agent\'s first reply.' },
       running && session.resume ? { label: 'Compact', desc: 'Summarise the conversation to free up context', run: () => runCommand({ cmd: 'compact', arg: '' }) } : null,
-      { label: 'New chat', desc: 'Start fresh; this one stays as it is', run: () => newChatIn(project.name, session.harness) },
-      session.resume ? { label: 'Fork', desc: 'Copy this conversation into a new chat', run: () => runCommand({ cmd: 'fork', arg: '' }) } : null,
+      thread && session.resume && !chat.working ? { label: 'Start fresh', desc: 'It keeps its memories, not this conversation', run: () => runCommand({ cmd: 'clear', arg: '' }) } : null,
+      asst ? null : { label: 'New chat', desc: 'Start fresh; this one stays as it is', run: () => newChatIn(project.name, session.harness) },
+      session.resume && !asst ? { label: 'Fork', desc: 'Copy this conversation into a new chat', run: () => runCommand({ cmd: 'fork', arg: '' }) } : null,
       asst ? { label: 'Open in terminal', desc: 'The agent\'s own command line', run: () => openTerminal() } : null,
       running && chat.info.models?.length ? { label: 'Model', desc: modelLine(chatModel(), effortNow().on), run: () => modelMenu(anchor) } : null,
+      thread && v.earlier?.length ? { label: 'Earlier chats', desc: plural(v.earlier.length, 'chat') + ' from before the thread', run: () => earlierSheet() } : null,
       asst ? null : { label: 'Project ' + project.name, run: () => navigate('/p/' + project.name) },
-      running ? { label: 'End chat', desc: 'A message carries it on again', run: () => endChat(id) } : null,
+      running && !thread ? { label: 'End chat', desc: 'A message carries it on again', run: () => endChat(id) } : null,
     ].filter(Boolean));
   };
 
@@ -1068,6 +1089,26 @@ async function renderChat(seq, d) {
     return el('div.show-card.pv-card', null, head, caption, el('div.pv-card-body', null, open, el('span.pv-card-addr', null, url ? url.replace(/^https?:\/\//, '') : 'No address')));
   }
 
+  // workCard is a task or a routine's run, reported in the thread: what
+  // it is, how it's going, and a way in.
+  const WORK = { working: ['Working on it', () => el('span.spinner')], waiting: ['Needs you', () => el('i.wc-wait')], done: ['Done', () => svg(ICON.check)], failed: ['Hit a problem', () => svg(ICON.x)] };
+  function workCard(it) {
+    const c = it.card;
+    const status = WORK[c.status] ? c.status : 'done';
+    const [word, icon] = WORK[status];
+    const href = (c.kind === 'run' ? '/r/' : '/s/') + encodeURIComponent(c.ref);
+    return el('a.work-card.wc-' + status, { href, 'data-link': true },
+      el('span.wc-ic', null, icon()),
+      el('span.wc-text', null, el('b', null, reveal(c.title)),
+        el('span.wc-sub', null, c.summary ? [el('span.sr-only', null, word + ': '), reveal(c.summary)] : word)),
+      el('span.wc-kind', null, c.kind === 'run' ? 'Routine' : 'Task'));
+  }
+
+  // earlierSheet lists the chats from before the assistant had one thread.
+  function earlierSheet() {
+    sheet('Earlier chats', el('div.a-chats', null, v.earlier.map(s => sessionRow(s))));
+  }
+
   // askLine is what became of an ask. An open one is the dock's to show.
   function askLine(it) {
     if (it.state === 'open') return el('div.ask-line.open', { hidden: true });
@@ -1101,6 +1142,10 @@ async function renderChat(seq, d) {
     syncComposer();
     if (key === dockKey) return;
     dockKey = key;
+    // A card coming or going changes the conversation's room: the latest
+    // stays in view.
+    const stay = nearBottom();
+    requestAnimationFrame(() => { if (stay && !v.closed) toBottom() });
     page.classList.toggle('asking', !!key);
     if (ask) dock.replaceChildren(ask.ask.kind === 'question' ? questionCard(ask) : permissionCard(ask, chat.asks.size));
     else if (chat.login) dock.replaceChildren(loginCard(chat.login));
@@ -1128,6 +1173,10 @@ async function renderChat(seq, d) {
     } catch { }
   }, 300);
   v.refreshTakeover();
+  // The chats it had before its thread stay within reach.
+  if (thread) api('GET', '/api/projects/' + encodeURIComponent(project.name)).then(d => {
+    v.earlier = d.sessions.filter(s => s.mode === 'chat' && !s.task && !s.carried_on && s.id !== id);
+  }).catch(() => { });
 
   const answer = async (ask, body) => {
     try { await api('POST', `/api/sessions/${id}/answer`, { ask: ask.id, ...body }) } catch (e) { toast(e.message, 'error') }
@@ -1242,7 +1291,7 @@ async function renderChat(seq, d) {
   const drawWorking = () => {
     const agents = runningAgents(chat);
     working.hidden = !(chat.working || agents.length) || chat.asks.size > 0;
-    avSet(asstMark, asstMotion(chat.asks.size + (v.takeover ? 1 : 0), (chat.working ? 1 : 0) + agents.length));
+    avSet(asstMark, asstMotion(chat.asks.size + (v.takeover ? 1 : 0), (chat.working ? 1 : 0) + agents.length + tasksWorking(chat)));
     const lead = agents[agents.length - 1];
     agentsBtn.hidden = !lead;
     if (lead) {

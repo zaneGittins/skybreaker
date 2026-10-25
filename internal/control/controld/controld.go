@@ -259,9 +259,9 @@ func Run(ctx context.Context, o Options) error {
 	// images in a chat, and previews of a sandbox's web server.
 	host := browserHost{a, assistants, cfg.Assistant}
 	tools := &mcp.Server{Name: "skybreaker", Version: o.Version,
-		Instructions: board.Instructions + "\n\n" + preview.Instructions + "\n\n" + assistant.ToolInstructions + "\n\n" + browser.ToolInstructions,
+		Instructions: board.Instructions + "\n\n" + preview.Instructions + "\n\n" + assistant.ToolInstructions + "\n\n" + assistant.TaskInstructions + "\n\n" + browser.ToolInstructions,
 		Tools: []func(mcp.Caller) []mcp.Tool{board.Tools(boards), show.Tools(host), preview.Tools(previews, a),
-			assistant.Tools(assistants, cfg.Assistant), browser.Tools(host, cfg.Assistant)}}
+			assistant.Tools(assistants, cfg.Assistant), assistant.TaskTools(taskHost{a}), browser.Tools(host, cfg.Assistant)}}
 
 	hk := hooks.New(a.CheckHookToken, a.HookEvent)
 	// Chats answer their harness's prompts in the conversation.
@@ -272,7 +272,10 @@ func Run(ctx context.Context, o Options) error {
 	}
 	sched := scheduler.New(scheduler.Deps{
 		Config: cfg, Store: st, Backend: a, Notify: n, UIURL: cfg.UIURL,
-		OnUpdate: func(r store.Run) { a.Publish(app.Event{Type: "run", Project: r.Project, Data: r}) },
+		OnUpdate: func(r store.Run) {
+			a.Publish(app.Event{Type: "run", Project: r.Project, Data: r})
+			a.RunCard(r)
+		},
 		OnUsage: func(harness string, u chat.Usage) {
 			tokensUsed.Add(harness, u)
 			a.Publish(app.Event{Type: "usage"})
@@ -578,6 +581,14 @@ func within(ctx context.Context, d time.Duration, f func(context.Context)) {
 	ctx, cancel := context.WithTimeout(ctx, d)
 	defer cancel()
 	f(ctx)
+}
+
+// taskHost gives the task tools the app.
+type taskHost struct{ *app.App }
+
+func (h taskHost) StartTask(ctx context.Context, thread, title, brief string) (string, error) {
+	s, err := h.App.StartTask(ctx, thread, title, brief)
+	return s.ID, err
 }
 
 // browserHost gives the browser's tools what they need: the app, and the

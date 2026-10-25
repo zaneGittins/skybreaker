@@ -137,6 +137,15 @@ func (b *fakeBackend) ChatFork(_ context.Context, id string) (store.Session, err
 	}
 	return store.Session{ID: "f1", Resume: "conv-1", Fork: true, Status: store.StatusRunning}, known(id)
 }
+func (b *fakeBackend) Thread(_ context.Context, project string) (store.Session, error) {
+	return store.Session{ID: "th-" + project, Status: store.StatusRunning}, nil
+}
+func (b *fakeBackend) ThreadFresh(_ context.Context, id string) (store.Session, error) {
+	if id == "busy" {
+		return store.Session{}, app.ErrBusy
+	}
+	return store.Session{ID: "fresh-" + id, Status: store.StatusRunning}, known(id)
+}
 func (b *fakeBackend) ReopenChat(_ context.Context, id string) (store.Session, error) {
 	return store.Session{ID: id, Status: store.StatusRunning}, known(id)
 }
