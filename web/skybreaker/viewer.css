@@ -1,0 +1,61 @@
+/* ---- image viewer (viewer.js): dark in either theme, like a photo ---- */
+.vw { position: fixed; inset: 0; z-index: 80; color: #F1EEE7; touch-action: none; user-select: none; -webkit-user-select: none; outline: none; }
+.vw-shade {
+  position: absolute; inset: 0; background: rgba(10, 10, 9, .94); opacity: var(--vw-fade, 1);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); animation: fade .22s;
+}
+.vw-stage { position: absolute; inset: 0; overflow: hidden; cursor: default; }
+.vw-img {
+  position: absolute; left: 50%; top: 50%; max-width: none; transform-origin: 50% 50%; will-change: transform;
+  border-radius: 6px; box-shadow: 0 30px 90px rgba(0, 0, 0, .55); cursor: zoom-in; -webkit-user-drag: none;
+}
+.vw.zoomed .vw-img { cursor: grab; border-radius: 0; }
+.vw.zoomed .vw-img:active { cursor: grabbing; }
+
+.vw-bar {
+  position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: center; gap: 6px;
+  padding: 12px 14px 28px 20px; padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  background: linear-gradient(rgba(10, 10, 9, .7), transparent); pointer-events: none;
+}
+.vw-bar > * { pointer-events: auto; }
+.vw-what { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 12px; font-size: 14px; }
+.vw-count { flex-shrink: 0; font: 600 12.5px var(--mono); color: rgba(241, 238, 231, .6); font-variant-numeric: tabular-nums; }
+.vw-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; }
+
+.vw-btn {
+  width: 42px; height: 42px; flex-shrink: 0; display: inline-grid; place-items: center; border: 0; border-radius: 999px;
+  background: transparent; color: inherit; text-decoration: none; transition: background .15s, opacity .2s;
+}
+.vw-btn:hover { background: rgba(255, 255, 255, .12); }
+.vw-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.vw-btn svg { width: 20px; height: 20px; }
+.vw-nav { position: absolute; top: 50%; margin-top: -26px; width: 52px; height: 52px; background: rgba(30, 29, 26, .72); }
+.vw-nav:hover { background: rgba(60, 58, 52, .9); }
+.vw-nav:disabled { opacity: 0; pointer-events: none; }
+.vw-prev { left: 18px; }
+.vw-next { right: 18px; }
+
+/* A tap hides the controls; zooming in leaves the arrows out of the way,
+   and dragging down to close fades them with the shade. */
+.vw-bar, .vw-nav { opacity: var(--vw-fade, 1); transition: opacity .2s, background .15s; }
+.vw.bare .vw-bar, .vw.bare .vw-nav, .vw.zoomed .vw-nav { opacity: 0; pointer-events: none; }
+.vw.bare .vw-bar > * { pointer-events: none; }
+
+.vw.leaving { pointer-events: none; }
+.vw.leaving .vw-shade, .vw.leaving .vw-bar, .vw.leaving .vw-nav { animation: fade-out .2s ease-in forwards; }
+
+/* Touch screens swipe between images, so the arrows stay off them. */
+@media (pointer: coarse) {
+  .vw-nav { display: none; }
+  .vw-img { cursor: default; }
+}
+@media (max-width: 640px) {
+  .vw-img { border-radius: 0; box-shadow: none; }
+  .vw-bar { padding-left: 16px; padding-right: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vw-shade { animation: none; }
+}
+
+/* What opens in the viewer says so. */
+a[data-view] { cursor: zoom-in; }
