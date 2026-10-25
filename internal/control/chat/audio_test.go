@@ -13,7 +13,11 @@ func TestAudioType(t *testing.T) {
 		{"RIFF\x24\x00\x00\x00WAVEfmt ", "a.wav", ".wav"},
 		{"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00", "a.ogg", ".ogg"},
 		{"\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00", "episode.m4a", ".m4a"},
-		{"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00", "clip.mp4", ""},
+		// An MP4 is audio unless it has a video track: a podcast saved as
+		// .mp4 plays; a screen recording doesn't become a podcast.
+		{"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00....hdlr\x00\x00\x00\x00\x00\x00\x00\x00soun", "podcast.mp4", ".m4a"},
+		{"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00....hdlr\x00\x00\x00\x00\x00\x00\x00\x00vide....hdlr\x00\x00\x00\x00\x00\x00\x00\x00soun", "clip.mp4", ""},
+		{"\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00", "episode.mp4", ".m4a"},
 		{"%PDF-1.7\n", "a.mp3", ""},
 		{"plain text", "notes.txt", ""},
 	} {

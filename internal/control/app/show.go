@@ -28,6 +28,10 @@ case "$p" in "$3"|"$3"/*|"$4"|"$4"/*) ;; *) printf 'err\0%s is outside %s and %s
 printf 'ok\0%s\0%s\0' "$p" "$(wc -c < "$p")"
 exec head -c "$2" -- "$p"`
 
+// readHeader is room for what readScript prints before the file: two
+// words, a path and a size.
+const readHeader = 8 << 10
+
 // parseRead reads readScript's output.
 func parseRead(out []byte) (string, int64, []byte, error) {
 	f := bytes.SplitN(out, []byte{0}, 4)
@@ -55,9 +59,16 @@ func (a *App) ReadSandboxFile(ctx context.Context, project, session, p string, m
 	if s, ok := a.store.Session(session); ok && s.Project == project {
 		dir = workdir(s)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	// A big file, a podcast, takes longer to come out of the sandbox.
+	wait := 30 * time.Second
+	if max > 8<<20 {
+		wait = 2 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
-	out, err := a.sandbox.Exec(ctx, project, "sh", "-c", readScript, "sh", p, strconv.FormatInt(max, 10), dir, "/tmp")
+	// What's printed is the file and a short header: the limit is that,
+	// not the default for a sandbox command, which a podcast is over.
+	out, err := a.sandbox.ExecInput(ctx, project, nil, max+readHeader, "sh", "-c", readScript, "sh", p, strconv.FormatInt(max, 10), dir, "/tmp")
 	if err != nil {
 		return "", 0, nil, errors.New("couldn't read the file in the sandbox")
 	}
