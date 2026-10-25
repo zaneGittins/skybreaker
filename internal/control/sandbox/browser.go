@@ -2,6 +2,8 @@ package sandbox
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -64,7 +66,7 @@ func (b BrowserSpec) RunArgs() ([]string, error) {
 		"--network", NetworkName(b.Project),
 		"--ip", BrowserAddr(b.Subnet).String(),
 		"--dns", "127.0.0.1",
-		"--read-only", "--tmpfs", "/tmp:size=256m", "--tmpfs", "/downloads:size=512m,mode=1777",
+		"--read-only", "--tmpfs", "/tmp:size=512m", "--tmpfs", "/downloads:size=512m,mode=1777",
 		"--user", fmt.Sprintf("%d:%d", b.UID, b.GID),
 		// Chromium runs without its own sandbox here, so it gets nothing
 		// to escalate with.
@@ -91,14 +93,19 @@ func (m *Manager) StartBrowser(ctx context.Context, b BrowserSpec) error {
 	if err := os.MkdirAll(b.Profile, 0o700); err != nil {
 		return err
 	}
+	// The container carries how it was started; one started otherwise, by
+	// an older Skybreaker or with another image or user, is started again.
+	spec := BrowserSpecHash(args)
+	args = append(args[:len(args)-2], "--label", "skybreaker.spec="+spec, args[len(args)-2], args[len(args)-1])
 	name := BrowserContainer(b.Project)
-	out, err := m.run(ctx, "container", "inspect", "-f", "{{.Id}} {{.State.Running}}", name)
+	out, err := m.run(ctx, "container", "inspect", "-f", `{{.Id}} {{.State.Running}} {{index .Config.Labels "skybreaker.spec"}}`, name)
+	f := strings.Fields(string(out))
 	switch {
-	case err == nil && strings.HasSuffix(strings.TrimSpace(string(out)), " true"):
+	case err == nil && len(f) == 3 && f[1] == "true" && f[2] == spec:
 		return nil
 	case err == nil:
 		if _, err := m.run(ctx, "rm", "-f", name); err != nil {
-			return fmt.Errorf("remove stopped browser %s: %w", b.Project, err)
+			return fmt.Errorf("remove old browser %s: %w", b.Project, err)
 		}
 	case !notFound(err):
 		return fmt.Errorf("inspect browser %s: %w", b.Project, err)
@@ -107,6 +114,12 @@ func (m *Manager) StartBrowser(ctx context.Context, b BrowserSpec) error {
 		return fmt.Errorf("start browser %s: %w", b.Project, err)
 	}
 	return nil
+}
+
+// BrowserSpecHash is a short fingerprint of a browser's run arguments.
+func BrowserSpecHash(args []string) string {
+	h := sha256.Sum256([]byte(strings.Join(args, "\x00")))
+	return hex.EncodeToString(h[:8])
 }
 
 // StopBrowser removes an assistant's browser container; its profile stays.

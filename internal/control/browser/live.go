@@ -22,14 +22,16 @@ const liveIdle = 15 * time.Minute
 //
 //	{"t":"mouse", ...Mouse} {"t":"key", ...Key} {"t":"text","s":"..."}
 //	{"t":"go","url":"..."} {"t":"fit","w":390,"h":700} {"t":"done"}
-func Live(ctx context.Context, ws WS, b *Browser, by string) error {
+//
+// done is whether they said they're done; going quiet or away isn't.
+func Live(ctx context.Context, ws WS, b *Browser, by string) (done bool, err error) {
 	frames, err := b.Take(ctx, by)
 	if err != nil {
-		return err
+		return false, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer b.Release(context.WithoutCancel(ctx))
+	defer b.release(context.WithoutCancel(ctx), frames)
 	say := func(v any) {
 		m, _ := json.Marshal(v)
 		ws.Write(ctx, false, m)
@@ -47,6 +49,10 @@ func Live(ctx context.Context, ws WS, b *Browser, by string) error {
 				return
 			}
 		}
+		// The frames end when the browser is handed back, or taken over
+		// again elsewhere: this view ends with them.
+		say(map[string]any{"t": "state", "taken": false, "why": "elsewhere"})
+		cancel()
 	}()
 	in := make(chan []byte)
 	go func() {
@@ -70,21 +76,21 @@ func Live(ctx context.Context, ws WS, b *Browser, by string) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return false, nil
 		case <-b.Done():
 			say(map[string]any{"t": "error", "error": "the browser closed"})
-			return nil
+			return false, nil
 		case <-idle.C:
 			say(map[string]any{"t": "state", "taken": false, "why": "idle"})
-			return nil
+			return false, nil
 		case m, ok := <-in:
 			if !ok {
-				return nil
+				return false, nil
 			}
 			idle.Reset(liveIdle)
-			if done := handle(ctx, b, m, say); done {
+			if handle(ctx, b, m, say) {
 				say(map[string]any{"t": "state", "taken": false})
-				return nil
+				return true, nil
 			}
 		}
 	}

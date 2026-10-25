@@ -7,40 +7,84 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
+	"time"
 )
 
 // ErrTaken is taking a browser someone else has.
 var ErrTaken = errors.New("someone else is using this browser")
 
 // Take gives you the browser: the agent's actions pause, the deny list is
-// lifted, and frames of the page come on the channel until Release.
+// lifted, and frames of the page come on the channel until Release. Taking
+// it again yourself, from a reload or another device, closes the frames of
+// your old view, which then ends.
 func (b *Browser) Take(ctx context.Context, by string) (<-chan Frame, error) {
 	if by == "" {
 		return nil, errors.New("the browser is taken by someone, not no one")
 	}
 	b.mu.Lock()
-	if b.takenBy != "" {
+	if b.takenBy != "" && b.takenBy != by {
 		b.mu.Unlock()
 		return nil, ErrTaken
 	}
-	b.takenBy = by
+	if b.frames != nil {
+		close(b.frames)
+	}
+	b.takenBy, b.held = by, 0
 	b.frames = make(chan Frame, 4)
 	frames := b.frames
 	b.mu.Unlock()
+	out := (<-chan Frame)(frames)
 	// No new action of the agent's starts now; wait out any running.
 	b.act.Lock()
 	b.act.Unlock()
-	if err := b.screencast(ctx, 1280, 900); err != nil {
+	// The size a phone left is the old view's, not this one's.
+	b.call(ctx, b.page, "Emulation.clearDeviceMetricsOverride", nil, nil)
+	if err := b.screencast(ctx, 1280*pixelRatio, 900*pixelRatio); err != nil {
 		b.Release(ctx)
 		return nil, err
 	}
-	return frames, nil
+	b.firstFrame(ctx, frames)
+	return out, nil
+}
+
+// firstFrame sends the page as it is now: a screencast only sends a frame
+// when the page paints, and a sign-in form waiting for you may not.
+func (b *Browser) firstFrame(ctx context.Context, frames chan Frame) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var m struct {
+		CSSVisualViewport struct{ ClientWidth, ClientHeight float64 } `json:"cssVisualViewport"`
+	}
+	var s struct {
+		Data string `json:"data"`
+	}
+	if b.call(ctx, b.page, "Page.getLayoutMetrics", nil, &m) != nil ||
+		b.call(ctx, b.page, "Page.captureScreenshot", map[string]any{"format": "jpeg", "quality": 80}, &s) != nil {
+		return
+	}
+	img, err := base64.StdEncoding.DecodeString(s.Data)
+	if err != nil {
+		return
+	}
+	f := Frame{JPEG: img, Width: int(m.CSSVisualViewport.ClientWidth), Height: int(m.CSSVisualViewport.ClientHeight)}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.frames != frames {
+		return // handed back, or taken over again, meanwhile
+	}
+	offer(frames, f)
 }
 
 // Release hands the browser back to the agent.
-func (b *Browser) Release(ctx context.Context) {
+func (b *Browser) Release(ctx context.Context) { b.release(ctx, nil) }
+
+// release hands it back if frames are still the take-over's, or for any
+// take-over when frames is nil: a view that was taken over from doesn't
+// hand back the one that took it.
+func (b *Browser) release(ctx context.Context, frames <-chan Frame) {
 	b.mu.Lock()
-	if b.takenBy == "" {
+	if b.takenBy == "" || frames != nil && (<-chan Frame)(b.frames) != frames {
 		b.mu.Unlock()
 		return
 	}
@@ -50,6 +94,9 @@ func (b *Browser) Release(ctx context.Context) {
 		b.frames = nil
 	}
 	b.mu.Unlock()
+	// A browser that stops answering mustn't hold the hand-back up forever.
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
 	b.call(ctx, b.page, "Page.stopScreencast", nil, nil)
 	b.call(ctx, b.page, "Emulation.clearDeviceMetricsOverride", nil, nil)
 	// What you opened, the agent mayn't: leave it a blank page instead.
@@ -58,8 +105,19 @@ func (b *Browser) Release(ctx context.Context) {
 	}
 }
 
+// screencast starts frames of the page, at most w by h, in place of any
+// already coming: Chromium can still count a stopped one as running.
 func (b *Browser) screencast(ctx context.Context, w, h int) error {
-	return b.call(ctx, b.page, "Page.startScreencast", map[string]any{"format": "jpeg", "quality": 70, "maxWidth": w, "maxHeight": h}, nil)
+	start := func() error {
+		return b.call(ctx, b.page, "Page.startScreencast", map[string]any{"format": "jpeg", "quality": 80, "maxWidth": w, "maxHeight": h}, nil)
+	}
+	err := start()
+	for i := 0; err != nil && strings.Contains(err.Error(), "already active") && i < 5; i++ {
+		b.call(ctx, b.page, "Page.stopScreencast", nil, nil)
+		time.Sleep(50 * time.Millisecond)
+		err = start()
+	}
+	return err
 }
 
 // Fit lays the page out for your screen, w by h CSS pixels, as a phone
@@ -72,13 +130,13 @@ func (b *Browser) Fit(ctx context.Context, w, h int) error {
 	if w < 240 || w > 1600 || h < 240 || h > 2000 {
 		return fmt.Errorf("can't fit the page to %dx%d", w, h)
 	}
-	err := b.call(ctx, b.page, "Emulation.setDeviceMetricsOverride", map[string]any{"width": w, "height": h, "deviceScaleFactor": 2, "mobile": true}, nil)
+	err := b.call(ctx, b.page, "Emulation.setDeviceMetricsOverride", map[string]any{"width": w, "height": h, "deviceScaleFactor": pixelRatio, "mobile": true}, nil)
 	if err != nil {
 		return err
 	}
 	// Frames at the phone's own pixels, so the text is sharp.
 	b.call(ctx, b.page, "Page.stopScreencast", nil, nil)
-	return b.screencast(ctx, 2*w, 2*h)
+	return b.screencast(ctx, w*pixelRatio, h*pixelRatio)
 }
 
 func (b *Browser) frame(ctx context.Context, e Event) {
@@ -102,9 +160,22 @@ func (b *Browser) frame(ctx context.Context, e Event) {
 	if b.frames == nil {
 		return
 	}
-	select {
-	case b.frames <- f:
-	default: // you're behind: skip a frame rather than stall the browser
+	offer(b.frames, f)
+}
+
+// offer queues a frame without waiting: a view that's behind loses the
+// oldest one waiting, so the page as it is now always gets through.
+func offer(ch chan Frame, f Frame) {
+	for {
+		select {
+		case ch <- f:
+			return
+		default:
+		}
+		select {
+		case <-ch:
+		default:
+		}
 	}
 }
 
@@ -140,6 +211,9 @@ type Key struct {
 	Modifiers int    `json:"modifiers,omitempty"`
 }
 
+// buttonBits are the buttons as a mouse event's buttons field counts them.
+var buttonBits = map[string]int{"left": 1, "right": 2, "middle": 4}
+
 var mouseTypes = map[string]bool{"mousePressed": true, "mouseReleased": true, "mouseMoved": true, "mouseWheel": true}
 var keyTypes = map[string]bool{"keyDown": true, "keyUp": true, "rawKeyDown": true, "char": true}
 
@@ -150,10 +224,26 @@ func (b *Browser) Mouse(ctx context.Context, m Mouse) error {
 	if !mouseTypes[m.Type] {
 		return fmt.Errorf("mouse event %q", m.Type)
 	}
+	// What's held down goes with every move, so the page sees a drag.
+	b.mu.Lock()
+	switch m.Type {
+	case "mousePressed":
+		b.held |= buttonBits[m.Button]
+	case "mouseReleased":
+		b.held &^= buttonBits[m.Button]
+	case "mouseMoved":
+		for name, bit := range buttonBits {
+			if b.held&bit != 0 && m.Button == "" {
+				m.Button = name
+			}
+		}
+	}
+	held := b.held
+	b.mu.Unlock()
 	if m.Button == "" {
 		m.Button = "none"
 	}
-	return b.call(ctx, b.page, "Input.dispatchMouseEvent", map[string]any{"type": m.Type, "x": m.X, "y": m.Y, "button": m.Button,
+	return b.call(ctx, b.page, "Input.dispatchMouseEvent", map[string]any{"type": m.Type, "x": m.X, "y": m.Y, "button": m.Button, "buttons": held,
 		"clickCount": m.ClickCount, "deltaX": m.DeltaX, "deltaY": m.DeltaY, "modifiers": m.Modifiers}, nil)
 }
 

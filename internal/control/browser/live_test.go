@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -55,8 +56,12 @@ func TestLive(t *testing.T) {
 	ctx := ctxT(t)
 	b.Open(ctx, ts.URL+"/")
 	ws := &fakeWS{in: make(chan []byte, 8)}
-	done := make(chan error, 1)
-	go func() { done <- Live(ctx, ws, b, "zane@example.com") }()
+	type ended struct {
+		done bool
+		err  error
+	}
+	done := make(chan ended, 1)
+	go func() { d, err := Live(ctx, ws, b, "zane@example.com"); done <- ended{d, err} }()
 	deadline := time.Now().Add(10 * time.Second)
 	for ws.frames() == 0 && time.Now().Before(deadline) {
 		time.Sleep(50 * time.Millisecond)
@@ -90,9 +95,9 @@ func TestLive(t *testing.T) {
 	msg(map[string]any{"t": "nonsense"})
 	msg(map[string]any{"t": "done"})
 	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
+	case e := <-done:
+		if e.err != nil || !e.done {
+			t.Fatalf("done %v, %v", e.done, e.err)
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("live view didn't end on done")
@@ -118,7 +123,127 @@ func TestLiveIsOneAtATime(t *testing.T) {
 	ctx := ctxT(t)
 	b.Take(ctx, "kim@example.com")
 	ws := &fakeWS{in: make(chan []byte)}
-	if err := Live(ctx, ws, b, "zane@example.com"); !errors.Is(err, ErrTaken) {
+	if _, err := Live(ctx, ws, b, "zane@example.com"); !errors.Is(err, ErrTaken) {
 		t.Fatalf("second live view: %v", err)
+	}
+}
+
+// Going away isn't being done: a take-over that ends some other way says so,
+// so what asked for it can wait on.
+func TestLiveGoneIsNotDone(t *testing.T) {
+	b := start(t, Options{})
+	ctx := ctxT(t)
+	ws := &fakeWS{in: make(chan []byte)}
+	close(ws.in)
+	if done, err := Live(ctx, ws, b, "zane@example.com"); done || err != nil {
+		t.Fatalf("done %v, %v", done, err)
+	}
+}
+
+// You again, from a reload or another device, take the browser over from
+// your own old view, which ends without handing it back.
+func TestLiveYouAgain(t *testing.T) {
+	b := start(t, Options{})
+	ctx := ctxT(t)
+	old := &fakeWS{in: make(chan []byte)}
+	first := make(chan bool, 1)
+	go func() { done, _ := Live(ctx, old, b, "zane@example.com"); first <- done }()
+	deadline := time.Now().Add(10 * time.Second)
+	for s, _ := b.Status(ctx); s.TakenBy == "" && time.Now().Before(deadline); s, _ = b.Status(ctx) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, err := Live(ctx, &fakeWS{in: make(chan []byte)}, b, "kim@example.com"); !errors.Is(err, ErrTaken) {
+		t.Fatalf("someone else: %v", err)
+	}
+	now := &fakeWS{in: make(chan []byte, 1)}
+	second := make(chan error, 1)
+	go func() { _, err := Live(ctx, now, b, "zane@example.com"); second <- err }()
+	select {
+	case done := <-first:
+		if done {
+			t.Error("the old view said done")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the old view held on")
+	}
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case err := <-second:
+		t.Fatalf("the new view ended: %v", err)
+	default:
+	}
+	if s, _ := b.Status(ctx); s.TakenBy != "zane@example.com" {
+		t.Fatalf("the old view's end handed it back: %+v", s)
+	}
+	m, _ := json.Marshal(map[string]any{"t": "done"})
+	now.in <- m
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Taking over a page that's sitting still shows it at once: a sign-in form
+// waiting for you doesn't repaint on its own.
+func TestTakeOverAStillPage(t *testing.T) {
+	ts := site(t)
+	b := start(t, Options{})
+	ctx := ctxT(t)
+	b.Open(ctx, ts.URL+"/still")
+	for i := range 3 {
+		time.Sleep(time.Second)
+		frames, err := b.Take(ctx, "zane@example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case f := <-frames:
+			if f.Width == 0 || len(f.JPEG) == 0 {
+				t.Fatalf("take-over %d: empty frame", i)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("take-over %d: no frame of a still page", i)
+		}
+		b.Release(ctx)
+	}
+}
+
+// After you say done, the next take-over shows the page as the first did.
+func TestTakeOverAfterDone(t *testing.T) {
+	ts := site(t)
+	b := start(t, Options{})
+	ctx := ctxT(t)
+	b.Open(ctx, ts.URL+"/next")
+	for i := range 2 {
+		ws := &fakeWS{in: make(chan []byte, 1)}
+		ended := make(chan bool, 1)
+		go func() { done, _ := Live(ctx, ws, b, "zane@example.com"); ended <- done }()
+		deadline := time.Now().Add(5 * time.Second)
+		for ws.frames() == 0 && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		if ws.frames() == 0 {
+			t.Fatalf("take-over %d: no frame", i)
+		}
+		m, _ := json.Marshal(map[string]any{"t": "done"})
+		ws.in <- m
+		if !<-ended {
+			t.Fatalf("take-over %d didn't end done", i)
+		}
+	}
+}
+
+// A view that falls behind skips old frames, never the newest: the page as
+// it is now always arrives, though some on the way may not.
+func TestOfferKeepsTheNewest(t *testing.T) {
+	ch := make(chan Frame, 2)
+	for w := 1; w <= 5; w++ {
+		offer(ch, Frame{Width: w})
+	}
+	var got []int
+	for len(ch) > 0 {
+		got = append(got, (<-ch).Width)
+	}
+	if !slices.Equal(got, []int{4, 5}) {
+		t.Fatalf("got %v", got)
 	}
 }

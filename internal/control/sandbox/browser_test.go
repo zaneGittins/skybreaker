@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"context"
 	"net/netip"
 	"slices"
 	"strings"
@@ -19,6 +20,10 @@ func TestBrowserRunArgs(t *testing.T) {
 	args, err := b.RunArgs()
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Chromium's frames live in /tmp (--disable-dev-shm-usage): room for them.
+	if !slices.Contains(args, "/tmp:size=512m") {
+		t.Errorf("/tmp too small for the browser's frames: %v", args)
 	}
 	if args[0] != "run" || args[len(args)-2] != b.Image || args[len(args)-1] != "infinity" {
 		t.Fatalf("args %v", args)
@@ -68,5 +73,33 @@ func TestBrowserRunArgs(t *testing.T) {
 	b.Profile = "/x,target=/root"
 	if _, err := b.RunArgs(); err == nil {
 		t.Error("accepted a profile that rewrites the mount")
+	}
+}
+
+// A running browser started some other way (an older Skybreaker, another
+// image or user) is replaced; one started this way is kept.
+func TestStartBrowserReplacesAnOldOne(t *testing.T) {
+	b := testBrowser()
+	b.Profile = t.TempDir()
+	args, _ := b.RunArgs()
+	spec := BrowserSpecHash(args)
+	for _, c := range []struct {
+		label string
+		want  []string
+	}{
+		{spec, []string{"container inspect"}},
+		{"", []string{"container inspect", "rm -f", "run -d"}},
+		{"0123abcd", []string{"container inspect", "rm -f", "run -d"}},
+	} {
+		f := &fakeRunner{replies: map[string]reply{"docker container inspect": {out: "abc true " + c.label + "\n"}}}
+		if err := (&Manager{R: f}).StartBrowser(context.Background(), b); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.commands(); !slices.Equal(got, c.want) {
+			t.Errorf("label %q: commands %v, want %v", c.label, got, c.want)
+		}
+		if run := f.find("docker run"); run != nil && !slices.Contains(run, "skybreaker.spec="+spec) {
+			t.Errorf("started without its spec: %v", run)
+		}
 	}
 }

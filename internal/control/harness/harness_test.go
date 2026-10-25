@@ -110,7 +110,7 @@ func TestHeadlessArgsClaude(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"claude", "-p", "fix the bug", "--bare", "--output-format", "stream-json", "--verbose",
+	want := []string{"claude", "-p", "fix the bug", "--output-format", "stream-json", "--verbose",
 		"--permission-prompts", "none", "--max-budget-usd", "2.50", "--allowedTools", "Read,Edit,Bash(git:*)",
 		"--mcp-config", "/etc/skybreaker/orbit-mcp.json", "--model", "claude-opus-5-5"}
 	if !reflect.DeepEqual(got, want) {
@@ -124,7 +124,7 @@ func TestHeadlessArgsDropsEmptyOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"claude", "-p", "go", "--bare", "--output-format", "stream-json", "--verbose",
+	want := []string{"claude", "-p", "go", "--output-format", "stream-json", "--verbose",
 		"--permission-prompts", "none"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %q\nwant %q", got, want)

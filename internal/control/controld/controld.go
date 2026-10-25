@@ -587,6 +587,6 @@ type browserHost struct {
 }
 
 func (h browserHost) RequestTakeover(project, session, reason string) error {
-	_, err := h.assistants.Propose(project, assistant.Proposal{Kind: assistant.ProposeTakeover, Title: reason, Session: session})
+	_, err := h.assistants.Propose(project, assistant.Proposal{Kind: assistant.ProposeTakeover, Title: assistant.ClipLine(reason, assistant.MaxTitle), Session: session})
 	return err
 }

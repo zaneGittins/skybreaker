@@ -389,3 +389,48 @@ func TestSetAgentsIsAdmins(t *testing.T) {
 		t.Fatalf("a user: %d", code)
 	}
 }
+
+// Done in the browser clears what asked for it, and the chat that asked
+// carries on if it's waiting for you; a working one isn't interrupted.
+func TestTakeoverDone(t *testing.T) {
+	f, as := assistantFixture(t)
+	f.store.CreateSession(store.Session{ID: "idle", Project: "pip", Mode: store.ModeChat, Status: store.StatusRunning, State: store.ChatIdle})
+	f.store.CreateSession(store.Session{ID: "busy", Project: "pip", Mode: store.ModeChat, Status: store.StatusRunning, State: store.ChatWorking})
+	as.Propose("pip", assistant.Proposal{Kind: assistant.ProposeTakeover, Title: "Google wants a code", Session: "idle"})
+	as.Propose("pip", assistant.Proposal{Kind: assistant.ProposeMemory, Title: "Likes jazz"})
+	takeoverDone(context.Background(), as, f.store, f.backend, "pip")
+	if ps := as.Get("pip").Proposals; len(ps) != 1 || ps[0].Kind != assistant.ProposeMemory {
+		t.Fatalf("proposals %+v", ps)
+	}
+	f.backend.chat.mu.Lock()
+	calls := slices.Clone(f.backend.chat.calls)
+	f.backend.chat.mu.Unlock()
+	if len(calls) != 1 || !strings.HasPrefix(calls[0], "send idle ") {
+		t.Fatalf("calls %q", calls)
+	}
+	as.Propose("pip", assistant.Proposal{Kind: assistant.ProposeTakeover, Title: "Again", Session: "busy"})
+	takeoverDone(context.Background(), as, f.store, f.backend, "pip")
+	f.backend.chat.mu.Lock()
+	defer f.backend.chat.mu.Unlock()
+	if len(f.backend.chat.calls) != 1 {
+		t.Errorf("interrupted a working chat: %q", f.backend.chat.calls)
+	}
+}
+
+// A suggested routine whose name is taken, or that names an agent the
+// assistant doesn't have, is still approved: under a free name, with its
+// default agent.
+func TestApproveRoutineThatClashes(t *testing.T) {
+	f, as, s := routinesFixture(t)
+	for range 2 {
+		p, _ := as.Propose("pip", assistant.Proposal{Kind: assistant.ProposeRoutine, Title: "weekly-podcast", Body: "Make the podcast.",
+			Routine: &assistant.Routine{Name: "weekly-podcast", Schedule: "0 7 * * 0", Prompt: "Make the podcast.", Harness: "pi"}})
+		if code, body := f.do(t, "POST", "/api/assistants/pip/proposals/"+p.ID+"/approve", ``, nil); code != 200 {
+			t.Fatalf("approve: %d %s", code, body)
+		}
+	}
+	rs := savedRoutines(t, s)
+	if len(rs) != 2 || rs[0].Name != "weekly-podcast" || rs[1].Name != "weekly-podcast-2" || rs[0].Harness != "" {
+		t.Fatalf("saved %+v %+v", rs[0], rs[len(rs)-1])
+	}
+}

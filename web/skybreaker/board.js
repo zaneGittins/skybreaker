@@ -105,7 +105,7 @@ function boardFilter(bs, load) {
 }
 
 addEventListener('keydown', e => {
-  if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable || sheetOpen()) return;
+  if (e.key !== '/' || !shortcut(e)) return;
   const input = $('.board-filter input');
   if (input) { e.preventDefault(); input.focus() }
 });

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -70,7 +71,12 @@ func instructionFiles(text string) map[string][]byte {
 
 // writeInPlace rewrites a file without replacing it, for a file a sandbox
 // has mounted on its own: a rename would leave the mount on the old one.
+// The same text again leaves it be, so an agent starting meanwhile doesn't
+// read it half written for nothing.
 func writeInPlace(path string, b []byte) error {
+	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, b) {
+		return nil
+	}
 	return os.WriteFile(path, b, 0o644)
 }
 
