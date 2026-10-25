@@ -161,7 +161,12 @@ func TestInvalid(t *testing.T) {
 		"mitm without rules":    {`"mode": "mitm", "methods": ["GET", "HEAD"]`, `"mode": "mitm"`},
 		"rules and methods":     {`"methods": ["GET", "HEAD"]`, `"methods": ["GET"], "rules": [{"match": "GET /**", "action": "auto"}]`},
 		"bad mode":              {`"mode": "tunnel"`, `"mode": "socks"`},
-		"wildcard host":         {`"registry.npmjs.org"`, `"*.npmjs.org"`},
+		"bare wildcard":         {`"registry.npmjs.org"`, `"*"`},
+		"wildcard on a tld":     {`"registry.npmjs.org"`, `"*.org"`},
+		"wildcard on a suffix":  {`"registry.npmjs.org"`, `"*.co.uk"`},
+		"inner wildcard":        {`"registry.npmjs.org"`, `"registry.*.org"`},
+		"double wildcard":       {`"registry.npmjs.org"`, `"*.*.npmjs.org"`},
+		"wildcard with inject":  {`"host": "api.github.com"`, `"host": "*.github.com"`},
 		"host with port":        {`"registry.npmjs.org"`, `"registry.npmjs.org:443"`},
 		"host with scheme":      {`"registry.npmjs.org"`, `"https://registry.npmjs.org"`},
 		"duplicate host":        {`{"host": "registry.npmjs.org", "mode": "tunnel"}`, `{"host": "github.com", "mode": "tunnel"}`},
@@ -246,5 +251,44 @@ func TestPlainHTTPRoutes(t *testing.T) {
 		if _, err := load(t, route(extra)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// A wildcard host reaches every subdomain of a domain, at any depth, but
+// never the domain itself; an exact host listed too wins over it.
+func TestWildcardHosts(t *testing.T) {
+	c := mustLoad(t, `{"projects": {"pip": {"allow": [
+	  {"host": "*.google.com", "mode": "tunnel"},
+	  {"host": "*.mail.google.com", "mode": "tunnel", "ports": [443, 8443]},
+	  {"host": "docs.google.com", "mode": "mitm", "methods": ["GET"]}
+	]}}}`)
+	p, _ := c.Project("pip")
+	for host, want := range map[string]string{
+		"calendar.google.com":     "*.google.com",
+		"A.B.Google.com.":         "*.google.com",
+		"x.mail.google.com":       "*.mail.google.com",
+		"mail.google.com":         "*.google.com",
+		"docs.google.com":         "docs.google.com",
+		"google.com":              "",
+		"notgoogle.com":           "",
+		"google.com.evil.example": "",
+		"evilgoogle.com":          "",
+		"*.google.com":            "",
+		"a.*.google.com":          "",
+	} {
+		got := ""
+		if r := p.Host(host); r != nil {
+			got = r.Host
+		}
+		if got != want {
+			t.Errorf("Host(%q) = %q, want %q", host, got, want)
+		}
+	}
+	reached := []string{}
+	for _, r := range p.Reaches() {
+		reached = append(reached, r.Target)
+	}
+	if !slices.Contains(reached, "*.google.com") {
+		t.Errorf("reaches %v", reached)
 	}
 }

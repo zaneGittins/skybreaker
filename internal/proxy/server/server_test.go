@@ -736,3 +736,27 @@ func TestPlainHTTPRoute(t *testing.T) {
 		t.Fatalf("a method no rule allows: %d", code)
 	}
 }
+
+// A wildcard host lets the sandbox reach every subdomain, tunnelled or
+// inspected under the wildcard's rules, with a certificate for the host it
+// asked for; the domain itself stays unlisted.
+func TestWildcardHosts(t *testing.T) {
+	w := newWorldWith(t, strings.Replace(testConfig, `{"host": "tunnel.test", "mode": "tunnel"},`,
+		`{"host": "tunnel.test", "mode": "tunnel"}, {"host": "*.tun.test", "mode": "tunnel"}, {"host": "*.wild.test", "mode": "mitm", "methods": ["GET"]},`, 1), nil)
+	c := w.orbit()
+	for _, u := range []string{"https://a.wild.test/x", "https://x.y.wild.test/x", "https://a.tun.test/x"} {
+		host := strings.Split(strings.TrimPrefix(u, "https://"), "/")[0]
+		if code, body, _ := do(t, c, "GET", u, "", nil); code != 200 || body != "hello from "+host {
+			t.Errorf("GET %s: %d %q", u, code, body)
+		}
+	}
+	if code, _, _ := do(t, c, "POST", "https://a.wild.test/x", "{}", nil); code != http.StatusForbidden {
+		t.Errorf("POST under a GET-only wildcard: %d", code)
+	}
+	if code, _, _ := do(t, c, "GET", "https://wild.test/", "", nil); code != 0 && code != http.StatusForbidden {
+		t.Errorf("the domain itself: %d", code)
+	}
+	if got := rawConnect(t, w, "*.wild.test:443", "orbit:"+w.token); got != http.StatusForbidden {
+		t.Errorf("CONNECT to the wildcard itself: %d", got)
+	}
+}

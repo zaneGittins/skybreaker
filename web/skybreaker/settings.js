@@ -118,6 +118,8 @@ function setList(rows, empty, what) {
 }
 
 const fileTag = () => el('span.tag', { title: 'Set in the config file; change it there' }, 'Config file');
+const builtinTag = () => el('span.tag', { title: 'Comes with Skybreaker' }, 'Built in');
+const sourceTag = src => src === 'builtin' ? builtinTag() : src !== 'app' ? fileTag() : null;
 
 // saveBar is the bar that rises while a form has unsaved changes. While it
 // shows, live updates don't redraw the page and leaving it asks first.
@@ -462,7 +464,7 @@ function bundlesSection(c) {
   const rows = c.d.bundles.map(b => el('a.set-row', { href: '/settings/bundles/' + encodeURIComponent(b.name), 'data-link': true },
     svg(ICON.box, 'set-ic'),
     el('span.set-row-main', null,
-      el('span.set-row-title', null, el('b.mono', null, b.name), b.source !== 'app' ? fileTag() : null),
+      el('span.set-row-title', null, el('b.mono', null, b.name), sourceTag(b.source)),
       el('span.set-row-sub.mono', null, hostList(b.entries))),
     el('span.set-row-side', null, b.used_by.length ? projectDots(b.used_by, c.tints) : 'No project uses it'),
     svg(ICON.chevron, 'chev')));
@@ -501,7 +503,7 @@ function bundlePage(c, name) {
   };
   if (fresh) { hosts.add({ mode: 'mitm' }); changed() }
   return setSection(fresh ? 'New bundle' : b.name,
-    readOnly && b ? 'From the config file; change it there.' : 'The hosts this bundle lets a project reach, and how.',
+    readOnly && b ? (b.source === 'builtin' ? 'Comes with Skybreaker, on no project until you give it one in Project access.' : 'From the config file; change it there.') : 'The hosts this bundle lets a project reach, and how.',
     !fresh && !readOnly ? el('button.btn.sm.ghost.danger-text', { type: 'button', onclick: del }, svg(ICON.trash), 'Delete') : null,
     fresh ? el('label.set-field', null, el('span.np-label', null, 'Name'), nameInput, el('span.set-hint', null, 'Lowercase letters, digits, dashes and underscores. Projects take it by this name.')) : null,
     b ? el('p.set-hint', null, b.used_by.length ? ['Used by ', projectDots(b.used_by, c.tints)] : 'No project uses it yet.') : null,

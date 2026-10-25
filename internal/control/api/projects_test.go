@@ -68,8 +68,8 @@ func TestCapabilitiesList(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil || code != 200 {
 		t.Fatalf("%d %s", code, out)
 	}
-	// The fixture defines none; the list is empty, not null.
-	if out != "[]\n" && len(got) != 0 {
+	// The fixture defines none: only the built-in bundles show.
+	if len(got) != 1 || got[0].Name != "google" || len(got[0].Reaches) == 0 {
 		t.Fatalf("capabilities %s", out)
 	}
 }
