@@ -664,9 +664,24 @@ function asstTakeover(name, look) {
     const h = Math.round(Math.min(window.innerHeight - wrap.getBoundingClientRect().top - 16, w * 2));
     send({ t: 'fit', w, h: Math.max(h, 240) });
   };
-  ws.onopen = () => requestAnimationFrame(fit);
+  // A browser that shows nothing is stuck: restarting it starts another.
+  const restart = async () => {
+    status.replaceChildren(el('span.spinner'), 'Restarting the browser\u2026');
+    state.asstLive?.close();
+    state.asstLive = null;
+    try { await api('POST', asstAPI(name) + '/browser/restart') } catch (e) { toast(e.message, 'error') }
+    moveTo();
+  };
+  let stuck;
+  ws.onopen = () => {
+    requestAnimationFrame(fit);
+    stuck = setTimeout(() => {
+      if (!open && ws.readyState === 1) status.replaceChildren(el('span.dot.bad'), 'The browser isn\u2019t showing anything.', ' ',
+        el('button.btn.ghost.sm', { type: 'button', onclick: restart }, 'Restart browser'));
+    }, 15000);
+  };
   window.addEventListener('resize', fit);
-  state.asstLive = { close: () => { window.removeEventListener('resize', fit); try { ws.close() } catch { } } };
+  state.asstLive = { close: () => { clearTimeout(stuck); window.removeEventListener('resize', fit); try { ws.close() } catch { } } };
   ws.onmessage = async e => {
     if (typeof e.data !== 'string') {
       const img = await createImageBitmap(e.data);

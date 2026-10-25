@@ -88,9 +88,10 @@ func (c *Conn) read(r io.Reader) {
 		}
 		if m.Method != "" {
 			e := Event{Method: m.Method, Session: m.Session, Params: m.Params}
-			// A held request or target waits on its answer: never lose
-			// one. Anything else may go when the reader is behind.
-			if strings.HasPrefix(m.Method, "Fetch.") || strings.HasPrefix(m.Method, "Target.") {
+			// A held request or target waits on its answer, and a download
+			// or crash is told once: never lose one. Anything else may go
+			// when the reader is behind.
+			if strings.HasPrefix(m.Method, "Fetch.") || strings.HasPrefix(m.Method, "Target.") || strings.HasPrefix(m.Method, "Browser.download") || m.Method == "Inspector.targetCrashed" {
 				select {
 				case c.events <- e:
 				case <-c.done:

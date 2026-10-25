@@ -36,6 +36,7 @@ func (s *server) assistantRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/assistants/{a}/thread", s.thread)
 	m.HandleFunc("GET /api/assistants/{a}/browser/live", s.browserLive)
 	m.HandleFunc("GET /api/assistants/{a}/browser/watch", s.browserWatch)
+	m.HandleFunc("POST /api/assistants/{a}/browser/restart", s.restartBrowser)
 	m.HandleFunc("GET /api/assistants/{a}/routines", s.routines)
 	m.HandleFunc("POST /api/assistants/{a}/routines", s.addRoutine)
 	m.HandleFunc("PUT /api/assistants/{a}/routines/{name}", s.editRoutine)
@@ -453,6 +454,8 @@ type Browsers interface {
 	BrowserStatus(ctx context.Context, project string) (browser.Status, bool)
 	// RunningBrowser is an assistant's browser if one runs; it never starts one.
 	RunningBrowser(project string) (*browser.Browser, bool)
+	// StopBrowser closes a browser, if one runs: the next use starts another.
+	StopBrowser(project string)
 }
 
 // browserView is a browser as the brief shows it: the site, never the
@@ -522,6 +525,21 @@ func (s *server) browserWatch(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close(1000, "")
 	browser.LiveWatch(r.Context(), conn, func() (*browser.Browser, bool) { return s.Browsers.RunningBrowser(name) })
+}
+
+// restartBrowser closes a browser that's stuck; taking over again starts
+// another.
+func (s *server) restartBrowser(w http.ResponseWriter, r *http.Request) {
+	name, ok := s.named(w, r)
+	if !ok {
+		return
+	}
+	if s.Browsers == nil {
+		webutil.Error(w, http.StatusNotFound, "browsers are off here")
+		return
+	}
+	s.Browsers.StopBrowser(name)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // takeoverDoneMessage tells the chat that asked that you've finished.

@@ -235,23 +235,53 @@ func (t *tools) screenshot() mcp.Tool {
 		})
 }
 
+// downloadWait is how long browser_download waits for its file before
+// leaving it to carry on, within the tool's two minutes.
+var downloadWait = time.Minute
+
 func (t *tools) download() mcp.Tool {
-	return t.tool("browser_download", "Click an element that downloads a file, and put the file in your workspace under downloads/.", pRef, false,
+	return t.tool("browser_download", "Click an element that downloads a file, and put the file in your workspace under downloads/. A large file carries on in the background: browser_status shows its progress and delivers it.", pRef, false,
 		func(ctx context.Context, b *Browser, raw json.RawMessage) (string, error) {
 			var in struct{ Ref int }
 			if err := mcp.Args(raw, &in); err != nil {
 				return "", err
 			}
-			d, err := b.Download(ctx, in.Ref)
+			d, err := b.Download(ctx, in.Ref, downloadWait)
 			if err != nil {
 				return "", err
 			}
-			path, err := t.h.CopyDownload(ctx, t.project, d)
-			if err != nil {
-				return "", err
-			}
-			return "Downloaded to " + path + ". To give it to the user (a podcast, a report), share it with show_file.", nil
+			return t.deliver(ctx, b, d)
 		}, "ref")
+}
+
+// deliver says where a download is: going, in the workspace once it's
+// done, or failed. An ended one is told once.
+func (t *tools) deliver(ctx context.Context, b *Browser, d Downloaded) (string, error) {
+	switch d.State {
+	case "inProgress":
+		return "Still downloading " + d.Name + ": " + progress(d) + ". It carries on in the background: check browser_status in a minute or two.", nil
+	case "completed":
+		defer b.Forget(d.GUID)
+		path, err := t.h.CopyDownload(ctx, t.project, d)
+		if err != nil {
+			return "", err
+		}
+		return "Downloaded " + d.Name + " to " + path + ". To give it to the user (a podcast, a report), share it with show_file.", nil
+	case "canceled":
+		b.Forget(d.GUID)
+		return "", fmt.Errorf("the download of %s stopped receiving and was canceled after %s: try it again", d.Name, progress(d))
+	default:
+		b.Forget(d.GUID)
+		return "", fmt.Errorf("the download of %s failed (%s) after %s: try it again", d.Name, d.State, progress(d))
+	}
+}
+
+func progress(d Downloaded) string {
+	mb := func(n int64) string { return fmt.Sprintf("%.1f", float64(n)/(1<<20)) }
+	if d.Total <= 0 {
+		return mb(d.Received) + " MB so far"
+	}
+	return mb(d.Received) + " of " + mb(d.Total) + " MB"
 }
 
 func (t *tools) takeover() mcp.Tool {
@@ -275,7 +305,7 @@ func (t *tools) takeover() mcp.Tool {
 }
 
 func (t *tools) status() mcp.Tool {
-	return t.tool("browser_status", "Where the browser is, and whether the user has it.", ``, true,
+	return t.tool("browser_status", "Where the browser is, whether the user has it, and how its downloads are going: one that has finished is put in your workspace.", ``, false,
 		func(ctx context.Context, b *Browser, raw json.RawMessage) (string, error) {
 			if err := mcp.Args(raw, &struct{}{}); err != nil {
 				return "", err
@@ -287,6 +317,17 @@ func (t *tools) status() mcp.Tool {
 			out := fmt.Sprintf("At %s (%q).", redact(s.URL), s.Title)
 			if s.TakenBy != "" {
 				out += " The user is using it now; your actions are paused."
+			}
+			for _, d := range b.Downloads() {
+				if d.State == "inProgress" {
+					out += "\nDownloading " + d.Name + ": " + progress(d) + "."
+					continue
+				}
+				said, err := t.deliver(ctx, b, d)
+				if err != nil {
+					said = strings.ToUpper(err.Error()[:1]) + err.Error()[1:] + "."
+				}
+				out += "\n" + said
 			}
 			return out, nil
 		})
