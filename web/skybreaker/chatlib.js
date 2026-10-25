@@ -552,30 +552,67 @@ const recentChats = (sessions, project, n = 3) =>
 // interrupts nothing.
 const closable = s => s.mode === 'chat' && s.status === 'running' && ['idle', 'done', 'bad'].includes(sessionTone(s).tone) && s.state !== 'login';
 
-// inboxGroups sorts sessions for the home page: what needs you (waiting
-// on you, then problems), what's working (an open terminal too), what's done (finished work you
-// haven't seen, then open chats you have), and ended or resting.
-function inboxGroups(sessions, pending = [], now = Date.now()) {
-  const waiting = new Set(pending.map(p => p.session));
-  const g = { needs: [], working: [], done: [], ended: [], unseen: 0 };
+// RECENT is how long a finished chat you've seen stays live on home.
+const RECENT = 3 * 3600e3;
+
+// liveGroups sorts sessions for home: what waits on you (asks first, then
+// problems), what's running, what finished lately, and the rest, earlier.
+function liveGroups(sessions, pending = [], now = Date.now()) {
+  const asked = new Set(pending.map(p => p.session));
+  const g = { waiting: [], running: [], finished: [], earlier: [], unseen: 0 };
   for (const s of sessions) {
+    if (s.parent) continue;
     const { tone } = sessionTone(s);
-    if (tone === 'ended' || resting(s, now, waiting)) g.ended.push(s);
-    else if (tone === 'wait' || tone === 'bad' || waiting.has(s.id)) g.needs.push(s);
-    else if (tone === 'work' || tone === 'live') g.working.push(s);
-    else g.done.push(s);
+    if (asked.has(s.id) || tone === 'wait' || tone === 'bad') g.waiting.push(s);
+    else if (tone === 'work' || tone === 'live') g.running.push(s);
+    else if (tone === 'done' || (tone === 'idle' && now - when(s) <= RECENT)) g.finished.push(s);
+    else g.earlier.push(s);
   }
   const newest = (a, b) => when(b) - when(a);
-  const urgent = s => waiting.has(s.id) || sessionTone(s).tone === 'wait' ? 0 : 1;
-  const fresh = s => sessionTone(s).tone === 'done' ? 0 : 1;
-  g.needs.sort((a, b) => urgent(a) - urgent(b) || newest(a, b));
-  g.working.sort(newest);
-  g.done.sort((a, b) => fresh(a) - fresh(b) || newest(a, b));
-  g.unseen = g.done.filter(s => !fresh(s)).length;
-  g.ended.sort(newest);
-  g.ended = g.ended.slice(0, 20);
+  const urgent = s => asked.has(s.id) || sessionTone(s).tone === 'wait' ? 0 : 1;
+  g.waiting.sort((a, b) => urgent(a) - urgent(b) || newest(a, b));
+  g.running.sort(newest);
+  g.finished.sort(newest);
+  g.unseen = g.finished.filter(s => sessionTone(s).tone === 'done').length;
+  g.earlier = g.earlier.sort(newest).slice(0, 20);
   return g;
 }
+
+// waitingByPlace is how many things wait on you in each project or
+// assistant: chats asking or stuck, approvals with no chat, network
+// requests, and an assistant's own asks.
+function waitingByPlace({ sessions = [], pending = [], requests = [], projects = [] }) {
+  const n = Object.fromEntries(projects.map(p => [p.name, p.asks || 0]));
+  const add = name => { if (name in n) n[name]++ };
+  const asked = new Set(pending.map(a => a.session));
+  const known = new Set(sessions.map(s => s.id));
+  for (const s of sessions) {
+    const { tone } = sessionTone(s);
+    if (!s.parent && (asked.has(s.id) || tone === 'wait' || tone === 'bad')) add(s.project);
+  }
+  for (const a of pending) if (!known.has(a.session)) add(a.project);
+  for (const r of requests) add(r.project);
+  return n;
+}
+
+// dockPlaces picks the places the phone's dock has room for: those waiting
+// on you, then the latest active. They keep a steady order, assistants
+// first, so each stays where your thumb expects it.
+function dockPlaces(projects, sessions, waiting = {}, room = 5) {
+  const last = {};
+  for (const s of sessions) last[s.project] = Math.max(last[s.project] || 0, when(s));
+  const rank = p => [waiting[p.name] ? 1 : 0, last[p.name] || 0];
+  const picked = new Set([...projects].sort((a, b) => {
+    const [x, y] = [rank(a), rank(b)];
+    return y[0] - x[0] || y[1] - x[1];
+  }).slice(0, room));
+  const assistant = p => p.kind === 'assistant' ? 0 : 1;
+  return projects.filter(p => picked.has(p)).sort((a, b) => assistant(a) - assistant(b));
+}
+
+// placeKey is a project's short label: its board key, if short enough to
+// read at a glance, else the first three letters.
+const placeKey = p => p.key && p.key.length <= 4 ? p.key : (p.key || p.name).replace(/[^a-z0-9]/gi, '').slice(0, 3).toUpperCase();
 
 // currentModel finds the model a chat runs among those its harness listed:
 // the one the user chose, else the one the harness reports (by ID, or by
@@ -811,4 +848,4 @@ function agentActivity(it) {
   return it.children?.length ? 'Thinking' : 'Starting';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, chatGroups, recentChats, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, liveGroups, waitingByPlace, dockPlaces, placeKey, resting, closable, openCount, chatGroups, recentChats, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages };

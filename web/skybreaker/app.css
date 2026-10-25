@@ -34,35 +34,14 @@
 .pick .chev { width: 18px; height: 18px; color: var(--muted); }
 .picker-cancel { justify-self: center; }
 
-/* ---- home: start work at the top, then one feed ---- */
-.page.home { max-width: 760px; margin: 0 auto; padding: 16px 16px 150px; }
+/* ---- home: what's live; on a phone, a dock of places ---- */
+.page.home { max-width: 760px; margin: 0 auto; padding: 16px 16px 130px; }
 .home-head h1 { margin: 6px 0 4px; font: 700 30px/1.1 var(--display); letter-spacing: -0.02em; }
 .home-head p { margin: 0; color: var(--muted); font-size: 15px; }
-.home-compose { margin-top: 20px; }
-.composer.home-composer { flex-direction: column; align-items: stretch; gap: 4px; padding: 10px 10px 8px 14px; border-radius: 22px; }
-.home-composer .home-input { flex: none; width: 100%; min-height: 52px; padding: 6px 4px; }
-.home-compose-row { display: flex; align-items: center; gap: 8px; }
-.home-chip {
-  display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px 0 12px; border-radius: 99px;
-  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); font: 600 13px var(--font); cursor: pointer;
-}
-.home-chip:hover { color: var(--text); border-color: var(--border-strong); }
-.home-chip[hidden] { display: none; }
-.home-chip svg { width: 14px; height: 14px; }
-.home-chip .pdot { width: 8px; height: 8px; }
-.home-chip .av-mark.mini { width: 16px; height: 16px; margin-left: -2px; }
-.home-briefs { display: grid; gap: 10px; margin-top: 16px; }
-.home-brief { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-radius: 18px; background: var(--surface); border: 1px solid var(--border); color: var(--text-2); }
-.home-brief:hover { border-color: var(--border-strong); }
-.home-brief .av-mark { width: 46px; height: 46px; flex-shrink: 0; margin: -4px; }
-.home-brief p { margin: 0; font-size: 14.5px; line-height: 1.45; }
-.home-brief b { color: var(--text); }
-.home-brief .a-needs-pill { margin-left: 8px; }
-.home-sec { margin-top: 28px; }
-.home-label { margin: 0 2px 8px; font: 650 12px var(--font); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
-.home-ask .btn { flex-shrink: 0; margin-right: 6px; }
-.home-ask-ic { background: var(--working-bg); color: var(--working); }
-.home-ask-ic svg { width: 16px; height: 16px; }
+.home-label { display: flex; align-items: baseline; gap: 8px; margin: 28px 2px 10px; font: 650 12px var(--font); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.home-label .n { letter-spacing: 0; opacity: .7; }
+.home-quiet { margin: 28px 2px; color: var(--muted); font-size: 14.5px; }
+.page.home details.earlier { margin-top: 24px; }
 .home-welcome { display: grid; gap: 10px; margin-top: 20px; }
 .home-start { display: flex; align-items: center; gap: 14px; width: 100%; padding: 16px; border-radius: 18px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
 .home-start:hover { border-color: var(--border-strong); }
@@ -72,25 +51,76 @@
 .home-start-text b { font-weight: 650; }
 .home-start-text span { color: var(--muted); font-size: 13.5px; }
 .home-start .chev { width: 16px; height: 16px; color: var(--muted); }
-.page.home details.earlier { margin-top: 28px; }
-/* A phone: places across the top, the message box at the thumb. */
-.home-places { display: flex; gap: 12px; overflow-x: auto; margin: 0 -16px; padding: 4px 16px 10px; scrollbar-width: none; }
-.home-places::-webkit-scrollbar { display: none; }
-.home-place { display: flex; flex-direction: column; align-items: center; gap: 5px; width: 64px; flex-shrink: 0; padding: 0; border: 0; background: none; color: var(--text-2); font: 600 12px var(--font); cursor: pointer; }
-.home-place > span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.home-place-o { position: relative; display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); }
-.home-place-o .av-mark { width: 54px; height: 54px; }
-.home-place-o > svg { width: 22px; height: 22px; color: var(--muted); }
-.home-place-dot-big { display: grid; }
-.home-place-dot-big .pdot { width: 16px; height: 16px; }
-.home-place-dot { position: absolute; top: 1px; right: 1px; width: 12px; height: 12px; border-radius: 50%; background: var(--needs-dot); border: 2px solid var(--bg); }
-@media (max-width: 1023px) {
-  .home-compose { position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; margin: 0; padding: 10px 12px calc(12px + var(--safe-b, 0px)); background: linear-gradient(transparent, var(--bg) 30%); }
-  .home-composer .home-input { min-height: 24px; }
-}
+details.earlier .live-list { margin-top: 4px; }
+.live-list { border-radius: 18px; background: var(--surface); border: 1px solid var(--border); padding: 0 14px; }
+.live-list > * + * { border-top: 1px solid var(--border); }
+.live-list .srow-wrap { border-bottom: 0; }
+.srow-wrap > .lrow { position: relative; z-index: 1; background: var(--surface); transition: transform .2s ease; }
+.srow-wrap.swiping > .lrow { transition: none; }
+.srow-wrap:hover .lrow-when, .srow-wrap:has(.srow-done:focus-visible) .lrow-when { opacity: 0; }
+/* A chat in two lines: title and when, then what it's doing and where. */
+.lrow { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; grid-template-areas: "mark title when" "mark what where"; column-gap: 12px; row-gap: 2px; align-items: center; padding: 10px 2px; color: var(--text); }
+.lrow-mark { grid-area: mark; position: relative; display: grid; place-items: center; width: 38px; height: 38px; }
+.lrow-mark .av-mark { width: 42px; height: 42px; }
+.lrow-mark::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid transparent; }
+.lrow.tone-wait .lrow-mark::after { border-color: var(--needs-dot); }
+.lrow.tone-bad .lrow-mark::after { border-color: var(--danger); }
+/* Working: a soft glow that breathes, so it never reads as an amount. */
+.lrow.tone-work .lrow-mark::after, .lrow.tone-live .lrow-mark::after { inset: 5px; border: 0; box-shadow: 0 0 10px 3px color-mix(in srgb, var(--working) 55%, transparent); animation: lrow-glow 2s ease-in-out infinite; }
+@keyframes lrow-glow { 50% { opacity: .25; transform: scale(.92); } }
+.lrow-mark:has(.av-mark)::after { inset: 9px; }
+@media (prefers-reduced-motion: reduce) { .lrow-mark::after { animation: none !important; } }
+.lrow-title { grid-area: title; display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 15px; font-weight: 650; }
+.lrow-title > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lrow-new { width: 7px; height: 7px; border-radius: 50%; background: var(--live-dot); flex-shrink: 0; }
+.lrow-what { grid-area: what; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lrow.tone-wait .lrow-what { color: var(--needs); }
+.lrow.tone-bad .lrow-what { color: var(--danger); }
+.lrow-where { grid-area: where; display: flex; justify-content: flex-end; min-width: 0; }
+.lrow-where .place-key { width: auto; height: 18px; padding: 0 6px; border-radius: 6px; font-size: 10.5px; }
+.lrow-when { grid-area: when; color: var(--muted); font-size: 12.5px; text-align: right; white-space: nowrap; transition: opacity .12s; }
+/* A place, small: an assistant's mark, or a project's key in its tint. */
+.place-key { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; background: var(--pbg); color: var(--pink); font: 750 12.5px var(--font); letter-spacing: .04em; }
+.place-key.long { font-size: 10.5px; letter-spacing: .02em; }
+.home-dock { position: fixed; z-index: 20; left: 50%; bottom: calc(14px + var(--safe-b, 0px)); transform: translateX(-50%); display: flex; gap: 6px; max-width: calc(100vw - 24px); padding: 8px; border-radius: 30px; background: color-mix(in srgb, var(--surface-2) 92%, transparent); border: 1px solid var(--border-strong); box-shadow: 0 12px 40px rgba(0, 0, 0, .35); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.dock-place { position: relative; display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; padding: 0; border: 0; border-radius: 50%; background: var(--surface-3); color: var(--muted); cursor: pointer; }
+.dock-place .av-mark { width: 50px; height: 50px; }
+.dock-all { background: none; border: 1.5px dashed var(--border-strong); }
+.dock-all svg { width: 20px; height: 20px; }
+.dock-n { position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; border: 2px solid var(--surface-2); background: var(--needs-dot); color: #1A1406; font: 700 11px/14px var(--font); font-style: normal; text-align: center; }
+.places { padding: 6px 20px 24px; }
+.places h3 { margin: 18px 4px 10px; font: 650 11.5px var(--font); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.places h3:first-child { margin-top: 4px; }
+.place-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.place-tile { display: grid; justify-items: center; gap: 6px; padding: 16px 6px 12px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; text-align: center; cursor: pointer; }
+.place-tile.new { background: none; border-style: dashed; }
+.place-o { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--surface-2); color: var(--muted); }
+.place-o .av-mark { width: 62px; height: 62px; }
+.place-o .place-key { font-size: 15px; }
+.place-o > svg { width: 22px; height: 22px; }
+.place-tile b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.place-tile small { margin-top: -4px; color: var(--muted); font-size: 12px; }
+.place-tile small.hot { color: var(--needs); }
 @media (min-width: 1024px) {
-  .page.home { padding: 64px 28px 80px; margin: 0 auto; }
-  .home-head h1 { font-size: 40px; }
+  .page.home { max-width: 1180px; padding: 56px 40px 72px; }
+  .home-head { display: flex; align-items: baseline; gap: 20px; }
+  .home-head h1 { font-size: 34px; margin: 0; }
+  .home-grid:has(.home-rail) { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 32px; align-items: start; }
+  .home-rail { display: grid; gap: 14px; margin-top: 36px; }
+  .home-label { margin-top: 24px; }
+  /* A desktop reads each chat in one line, like a table. */
+  .live-list { background: none; border: 0; border-radius: 0; padding: 0; }
+  .live-list > * + * { border-top-color: var(--border); }
+  .srow-wrap > .lrow { background: var(--bg); }
+  .lrow { grid-template-columns: 28px minmax(0, 1.1fr) minmax(0, 1.3fr) 44px 40px; grid-template-areas: "mark title what where when"; column-gap: 14px; height: 48px; padding: 0 12px; }
+  .lrow:hover, .srow-wrap:hover > .lrow { background: var(--surface); }
+  .lrow-mark { width: 28px; height: 28px; }
+  .lrow-mark > :not(.av-mark) { transform: scale(.8); }
+  .lrow-mark .av-mark { width: 34px; height: 34px; }
+  .lrow-title { font-size: 14px; }
+  .lrow-what { font-size: 14px; }
+  .lrow-where { justify-content: flex-start; }
+  body:has(.page.home) .side-usage { display: none; }
 }
 /* The sidebar's foot: how much of each plan is used, small. */
 .side-usage { display: grid; gap: 8px; margin: auto 4px 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface); }
