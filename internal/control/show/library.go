@@ -30,7 +30,7 @@ const libraryProps = `"summary":{"type":"string","description":"One line on what
 	`"transcript":{"type":"string","description":"For audio: a text file of what's said"},` +
 	`"view":{"type":"boolean","description":"An HTML file is an interactive page: see the tool description"}`
 
-const libraryHelp = " In the library: audio gets a player that remembers where the user stopped (give chapters and a transcript if you " +
+const libraryHelp = " Share a recording whole, never split into parts: the player keeps the user's place. In the library: audio gets a player that remembers where the user stopped (give chapters and a transcript if you " +
 	"have them); a PDF, Markdown or text file opens in a reader that remembers their page; an HTML file with view set runs as an " +
 	"interactive page, sandboxed with no network, so inline everything. Such a page is sent postMessage({sky:'init', theme, accent, " +
 	"progress}) and may post {sky:'progress', value: 0 to 1}, {sky:'done'} and {sky:'height', value: pixels} to the parent. " +

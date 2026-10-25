@@ -37,16 +37,21 @@ type fakeDocker struct {
 	release  chan struct{}
 	imageID  string   // what `docker image inspect` reports; containers run "sha256:old"
 	inputs   [][]byte // what each command run with input was given
+	limits   []int64  // the output limit each command run with input had
 }
 
 func newFakeDocker() *fakeDocker {
 	return &fakeDocker{running: map[string]bool{}, networks: map[string]string{}, tmux: map[string]string{}, sessions: map[string]map[string]bool{}}
 }
 
-func (f *fakeDocker) RunInput(ctx context.Context, stdin io.Reader, _ int64, name string, args ...string) ([]byte, error) {
-	b, _ := io.ReadAll(stdin)
+func (f *fakeDocker) RunInput(ctx context.Context, stdin io.Reader, limit int64, name string, args ...string) ([]byte, error) {
+	var b []byte
+	if stdin != nil {
+		b, _ = io.ReadAll(stdin)
+	}
 	f.mu.Lock()
 	f.inputs = append(f.inputs, b)
+	f.limits = append(f.limits, limit)
 	f.mu.Unlock()
 	// docker exec -i reads like docker exec.
 	if len(args) > 1 && args[0] == "exec" && args[1] == "-i" {
