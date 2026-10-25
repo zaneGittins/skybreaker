@@ -1049,6 +1049,9 @@ async function renderChat(seq, d) {
   // in through textContent, line by line, with hidden characters revealed.
   function showCard(it) {
     const s = it.show;
+    // A file an assistant kept in its library is that item, played or read
+    // with your place kept.
+    if (s.item) return libChatCard(project.name, s);
     const url = `/api/sessions/${encodeURIComponent(id)}/shown/${encodeURIComponent(it.file)}`;
     if (s.kind === 'audio' || s.kind === 'file') return sharedFile(url, { name: s.path, kind: s.kind, size: s.size, title: s.title });
     const image = s.kind === 'image';

@@ -75,6 +75,11 @@ func (a *App) ChatShow(session string, sh chat.Show, data []byte, ext string) er
 	return a.chat.Show(session, sh, data, ext)
 }
 
+// ChatShowItem puts an assistant's library item in front of the user in a chat.
+func (a *App) ChatShowItem(session string, sh chat.Show) error {
+	return a.chat.ShowItem(session, sh)
+}
+
 // ChatPreview puts a preview link in front of the user in a chat.
 func (a *App) ChatPreview(session string, p chat.Preview) error {
 	return a.chat.Preview(session, p)

@@ -890,6 +890,18 @@ func (m *Manager) Show(id string, sh Show, data []byte, ext string) error {
 	return nil
 }
 
+// ShowItem adds a card for an assistant's library item to the chat.
+func (m *Manager) ShowItem(id string, sh Show) error {
+	if _, err := m.chat(id); err != nil {
+		return err
+	}
+	r := m.run(id)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	m.emit(r, Event{Kind: KindShow, Show: &sh})
+	return nil
+}
+
 // Preview adds a preview card to the chat.
 func (m *Manager) Preview(id string, p Preview) error {
 	if _, err := m.chat(id); err != nil {

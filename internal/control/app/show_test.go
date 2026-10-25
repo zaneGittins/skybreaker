@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"github.com/zaneGittins/skybreaker/internal/assistant"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -217,4 +218,10 @@ type noAssistants struct{ *App }
 
 func (noAssistants) IsAssistant(string) bool { return false }
 
-func (noAssistants) AssistantShare(string, chat.Show, []byte, string) error { return nil }
+func (noAssistants) AssistantShare(string, string, assistant.Share) (assistant.Item, error) {
+	return assistant.Item{}, nil
+}
+
+func (noAssistants) AssistantCollection(string, string, assistant.CollectionPatch, *assistant.Blob) (assistant.Collection, error) {
+	return assistant.Collection{}, nil
+}

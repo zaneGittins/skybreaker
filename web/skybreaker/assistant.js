@@ -96,6 +96,8 @@ async function renderAssistant(seq, name, tab) {
   const a = await api('GET', asstAPI(name));
   if (seq !== state.seq) return;
   state.asst = { p, a };
+  // A live update to the Library redraws its rows in place when it can.
+  if (tab === 'library' && !state.moved && await libRefresh(seq, name)) return;
   asstCrumb(p);
   const needs = a.proposals.length + d.pending.length + (d.requests || []).length;
   const look = a.look;
@@ -108,12 +110,13 @@ async function renderAssistant(seq, name, tab) {
       el('span.a-sub', null, (p.harnesses || []).filter(h => h !== 'shell').map(harnessLabel).join(' · '),
         el('span.sep', null, '·'), asstMemories(a.memories?.length || 0),
         el('span.sep', null, '·'), el('a.a-access', { href: '/settings/access/' + enc, 'data-link': true }, 'Access'))));
-  const tabs = [['today', 'Today', 0], ['chat', 'Chat', 0], ['memory', 'Memory', memoryAsks], ['routines', 'Routines', routineAsks], ['look', 'Look', 0], ['browser', 'Browser', 0]];
+  const tabs = [['today', 'Today', 0], ['library', 'Library', 0], ['chat', 'Chat', 0], ['memory', 'Memory', memoryAsks], ['routines', 'Routines', routineAsks], ['look', 'Look', 0], ['browser', 'Browser', 0]];
   const tabBar = tab === 'takeover' ? null : el('nav.p-tabs.a-tabs', { 'aria-label': look.name }, tabs.map(([k, label, n]) =>
     el('a.p-tab' + (k === tab ? '.on' : ''), { href: asstPath(name, k), 'data-link': true, 'aria-current': k === tab ? 'page' : null },
       el('span', null, label), n ? el('span.n.warn', null, String(n)) : null)));
   let body;
   switch (tab) {
+    case 'library': body = await asstLibrary(seq, name, look); break;
     case 'memory': body = asstMemory(name, a); break;
     case 'routines': body = await asstRoutines(seq, name, a); break;
     case 'look': body = asstLook(name, a); break;
@@ -189,6 +192,10 @@ async function asstToday(seq, name, p, a, d) {
   const tasks = (d.sessions || []).filter(s => s.task && s.state === 'idle' && s.resume && Date.parse(s.updated) > Date.now() - 864e5);
   const lately = finished.length + tasks.length + t.updates.length;
   const brief = asstBrief(finished);
+  const cols = new Map(t.collections.map(c => [c.id, c]));
+  // What's new in the library leads, and takes you there.
+  const fresh = t.fresh ? el('a.a-fresh', { href: asstPath(name, 'library'), 'data-link': true, onclick: () => libFilter.set(name, 'new') },
+    `${asstCount(t.fresh)} new in the library.`) : null;
   const site = asstBrowsing(name, t.browser, takeovers.length > 0);
   const pill = needs ? el('button.a-needs-pill', { type: 'button', onclick: () => asstNeedsSheet(name, p) },
     el('i'), takeovers.length ? 'Sign-in needed' : needs + ' for you') : null;
@@ -196,7 +203,7 @@ async function asstToday(seq, name, p, a, d) {
     avatar(t.look, { ...asstState(needs, d.sessions), cls: 'a-hero-mark' }),
     el('div.a-hero-text', null, el('h2.a-greeting', null, asstGreeting()),
       brief ? el('p.a-brief', null, brief.text, ' ', el('a.a-brief-from', { href: '/r/' + encodeURIComponent(brief.run.id), 'data-link': true }, brief.run.job + ', ' + ago(brief.run.finished))) : null,
-      el('p', null, asstSummary(lately), site ? [' ', site] : null, pill)));
+      el('p', null, fresh || asstSummary(lately), site ? [' ', site] : null, pill)));
   return el('div.a-today', null, hero,
     lately ? el('section.a-sec', null, el('h2.a-label', null, 'What ' + t.look.name + ' did'),
       el('div.a-done', null,
@@ -208,19 +215,12 @@ async function asstToday(seq, name, p, a, d) {
           el('span.a-ic', null, svg(ICON.check)),
           el('span.a-row-text', null, el('b', null, chatName(s)), el('span.a-row-sub', null, 'Task')),
           el('span.a-row-end', null, ago(s.updated)))),
-        ...t.updates.map(u => [el('div.a-row' + (u.file ? '.a-row-shared' : ''), null,
-          el('span.a-ic', null, svg(u.file?.kind === 'audio' ? ICON.music : u.file ? ICON.file : ICON.note)),
-          el('span.a-row-text', null, el('b', null, u.text)),
-          el('span.a-row-end', null, ago(u.at))),
-          u.file ? asstShared(name, u.file) : null]))) : null);
-}
-
-// asstShared is a file a routine shared, under its update: an image to
-// see, audio to play, anything else to download.
-function asstShared(name, f) {
-  const url = asstAPI(name) + '/files/' + encodeURIComponent(f.kept);
-  if (f.kind === 'image') return el('a.a-shared.show-img', { href: url, target: '_blank', rel: 'noopener noreferrer' }, el('img', { src: url, alt: f.name, loading: 'lazy' }));
-  return el('div.a-shared', null, sharedFile(url, { name: f.name, kind: f.kind, size: f.size }));
+        ...t.updates.map(u => t.items[u.item]
+          ? libRow(name, t.look, t.items[u.item], cols.get(t.items[u.item].collection))
+          : el('div.a-row', null,
+            el('span.a-ic', null, svg(ICON.note)),
+            el('span.a-row-text', null, el('b', null, u.text)),
+            el('span.a-row-end', null, ago(u.at)))))) : null);
 }
 
 // renderThread opens the assistant's one chat with you, made on the first

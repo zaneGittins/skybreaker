@@ -16,6 +16,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/zaneGittins/skybreaker/internal/assistant"
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
 )
@@ -32,9 +33,13 @@ type Backend interface {
 	ChatShow(session string, sh chat.Show, data []byte, ext string) error
 	// IsAssistant reports whether project is an assistant.
 	IsAssistant(project string) bool
-	// AssistantShare keeps a copy of data and posts it to the assistant's
-	// Today, for a routine, which has no chat to show it in.
-	AssistantShare(project string, sh chat.Show, data []byte, ext string) error
+	// AssistantShare files a file in the assistant's library, from a chat
+	// or, with session "", from a routine, which also posts it to Today.
+	AssistantShare(project, session string, sh assistant.Share) (assistant.Item, error)
+	// AssistantCollection makes or changes a collection in its library.
+	AssistantCollection(project, title string, p assistant.CollectionPatch, cover *assistant.Blob) (assistant.Collection, error)
+	// ChatShowItem adds a card for a library item to a chat.
+	ChatShowItem(session string, sh chat.Show) error
 }
 
 const (
@@ -49,33 +54,38 @@ const (
 var maxShare int64 = 100 << 20
 
 // Tools is the tool set for a caller: show_file and show_image inside a
-// running chat; show_file, to its Today, in an assistant's routine; nothing
+// running chat, with set_collection in an assistant's; show_file, to its
+// library and Today, and set_collection in an assistant's routine; nothing
 // elsewhere (a repository's runs, terminals, the UI mount).
 func Tools(b Backend) func(mcp.Caller) []mcp.Tool {
 	return func(c mcp.Caller) []mcp.Tool {
 		if c.Project != "" && c.Session == "-" && b.IsAssistant(c.Project) {
-			return []mcp.Tool{routineShare(b)}
+			return []mcp.Tool{routineShare(b), setCollection(b)}
 		}
 		if c.Project == "" || c.Session == "" || c.Session == "-" || !b.ChatIn(c.Project, c.Session) {
 			return nil
 		}
-		return []mcp.Tool{
+		library := b.IsAssistant(c.Project)
+		desc := "Show or share a file from your workspace with the user in the Skybreaker chat. Text shows as code with " +
+			"line numbers (a whole Markdown file rendered); audio (MP3, WAV, Ogg, M4A) gets a player; an image is shown; " +
+			"anything else, a PDF or a zip, is offered as a download. Up to 100 MB. Use it for a file the user should look at, " +
+			"hear or have, such as a podcast you made or downloaded. Relative paths are under /workspace; files under /tmp " +
+			"work too. You don't get the content back."
+		props := `"path":{"type":"string","description":"The file, relative to /workspace or absolute"},` +
+			`"start_line":{"type":"integer","minimum":1,"description":"For text: first line to show (default 1)"},` +
+			`"end_line":{"type":"integer","minimum":1,"description":"Last line to show (default the end)"},` +
+			`"title":{"type":"string","description":"A short caption for the user"}`
+		if library {
+			desc += " Audio, PDFs, pages (view) and anything in a collection are also kept in your library." + libraryHelp
+			props += "," + libraryProps
+		}
+		tools := []mcp.Tool{
 			{
-				Name: "show_file",
-				Description: "Show or share a file from your workspace with the user in the Skybreaker chat. Text shows as code with " +
-					"line numbers (a whole Markdown file rendered); audio (MP3, WAV, Ogg, M4A) gets a player; an image is shown; " +
-					"anything else, a PDF or a zip, is offered as a download. Up to 100 MB. Use it for a file the user should look at, " +
-					"hear or have, such as a podcast you made or downloaded. Relative paths are under /workspace; files under /tmp " +
-					"work too. You don't get the content back.",
-				Input: json.RawMessage(`{"type":"object","properties":{` +
-					`"path":{"type":"string","description":"The file, relative to /workspace or absolute"},` +
-					`"start_line":{"type":"integer","minimum":1,"description":"For text: first line to show (default 1)"},` +
-					`"end_line":{"type":"integer","minimum":1,"description":"Last line to show (default the end)"},` +
-					`"title":{"type":"string","description":"A short caption for the user"}},` +
-					`"required":["path"],"additionalProperties":false}`),
+				Name:     "show_file",
+				Input:    json.RawMessage(`{"type":"object","properties":{` + props + `},"required":["path"],"additionalProperties":false}`),
 				ReadOnly: true,
 				Call: func(ctx context.Context, c mcp.Caller, args json.RawMessage) (string, error) {
-					return showFile(ctx, b, c, args)
+					return showFile(ctx, b, c, args, library)
 				},
 			},
 			{
@@ -95,6 +105,11 @@ func Tools(b Backend) func(mcp.Caller) []mcp.Tool {
 				},
 			},
 		}
+		tools[0].Description = desc
+		if library {
+			tools = append(tools, setCollection(b))
+		}
+		return tools
 	}
 }
 
@@ -147,22 +162,23 @@ func showImage(ctx context.Context, b Backend, c mcp.Caller, raw json.RawMessage
 }
 
 // routineShare is show_file for an assistant's routine: whatever the file,
-// it goes on the assistant's Today whole, to play, see or open.
+// it goes in the library whole, and on Today, to play, read or open.
 func routineShare(b Backend) mcp.Tool {
 	return mcp.Tool{
 		Name: "show_file",
-		Description: "Share a file from your workspace with the user: it goes on your Today page, where they'll see it. Audio " +
-			"(MP3, WAV, Ogg, M4A) gets a player; an image is shown; anything else, a report or a PDF, is offered to open. Up to " +
-			"100 MB. Use it for what this routine made for them, such as a podcast. Relative paths are under /workspace.",
+		Description: "Share a file from your workspace with the user: it goes on your Today page, where they'll see it, and in " +
+			"your library. Up to 100 MB. Use it for what this routine made for them, such as a podcast or a report. Relative " +
+			"paths are under /workspace." + libraryHelp,
 		Input: json.RawMessage(`{"type":"object","properties":{` +
 			`"path":{"type":"string","description":"The file, relative to /workspace or absolute"},` +
-			`"title":{"type":"string","description":"One line for the user, e.g. This week's podcast"}},` +
+			`"title":{"type":"string","description":"One line for the user, e.g. This week's podcast"},` + libraryProps + `},` +
 			`"required":["path"],"additionalProperties":false}`),
 		ReadOnly: true,
 		Call: func(ctx context.Context, c mcp.Caller, raw json.RawMessage) (string, error) {
 			var in struct {
 				Path  string `json:"path"`
 				Title string `json:"title"`
+				libraryArgs
 			}
 			if err := mcp.Args(raw, &in); err != nil {
 				return "", err
@@ -170,24 +186,18 @@ func routineShare(b Backend) mcp.Tool {
 			if err := checkPath(in.Path); err != nil {
 				return "", err
 			}
-			resolved, size, data, err := b.ReadSandboxFile(ctx, c.Project, c.Session, in.Path, maxTextRead)
+			it, name, err := librarySave(ctx, b, c, in.Path, in.Title, in.libraryArgs, "")
 			if err != nil {
 				return "", err
 			}
-			if _, err := share(ctx, b, c, in.Title, resolved, size, data, false, func(sh chat.Show, data []byte, ext string) error {
-				return b.AssistantShare(c.Project, sh, data, ext)
-			}); err != nil {
-				return "", err
-			}
-			return "Shared with the user on your Today page: " + chat.Rel(resolved), nil
+			return fmt.Sprintf("Shared with the user on your Today page and kept in your library (%s): %s", it.ID, name), nil
 		},
 	}
 }
 
-// share puts a file that isn't text in front of the user whole: an image to
-// see, audio to play, anything else to download. put is where it goes: the
-// chat, or the assistant's Today.
-func share(ctx context.Context, b Backend, c mcp.Caller, caption, resolved string, size int64, data []byte, ranged bool, put func(chat.Show, []byte, string) error) (string, error) {
+// share puts a file that isn't text in front of the user in the chat
+// whole: an image to see, audio to play, anything else to download.
+func share(ctx context.Context, b Backend, c mcp.Caller, caption, resolved string, size int64, data []byte, ranged bool) (string, error) {
 	name := chat.Rel(resolved)
 	if ranged {
 		return "", fmt.Errorf("%s isn't text: start_line and end_line are for text", name)
@@ -211,23 +221,21 @@ func share(ctx context.Context, b Backend, c mcp.Caller, caption, resolved strin
 	} else if e, ok := chat.AudioType(data, resolved); ok {
 		sh.Kind, ext = chat.ShowAudio, e
 	}
-	if err := put(sh, data, ext); err != nil {
+	if err := b.ChatShow(c.Session, sh, data, ext); err != nil {
 		return "", err
 	}
 	return "Shared with the user: " + name, nil
 }
 
-// toChat puts a shared file in the caller's chat.
-func toChat(b Backend, c mcp.Caller) func(chat.Show, []byte, string) error {
-	return func(sh chat.Show, data []byte, ext string) error { return b.ChatShow(c.Session, sh, data, ext) }
-}
-
-func showFile(ctx context.Context, b Backend, c mcp.Caller, raw json.RawMessage) (string, error) {
+// showFile is show_file in a chat; library is whether it's an assistant's,
+// whose deliverables go in its library too.
+func showFile(ctx context.Context, b Backend, c mcp.Caller, raw json.RawMessage, library bool) (string, error) {
 	var in struct {
 		Path  string `json:"path"`
 		Start int    `json:"start_line"`
 		End   int    `json:"end_line"`
 		Title string `json:"title"`
+		libraryArgs
 	}
 	if err := mcp.Args(raw, &in); err != nil {
 		return "", err
@@ -244,13 +252,19 @@ func showFile(ctx context.Context, b Backend, c mcp.Caller, raw json.RawMessage)
 		return "", err
 	}
 	name := chat.Rel(resolved)
+	if library && inLibrary(data, resolved, in.libraryArgs) {
+		if ranged {
+			return "", errors.New("start_line and end_line show lines in the chat; leave them out to keep a file in the library")
+		}
+		return chatLibraryShare(ctx, b, c, resolved, in.Title, in.libraryArgs)
+	}
 	// Text is what reads as text: a zip or a PDF whose start happens to be
 	// valid UTF-8 is still shared whole.
 	ctype := http.DetectContentType(data)
 	_, image := chat.ImageType(ctype)
 	_, audio := chat.AudioType(data, resolved)
 	if image || audio || !strings.HasPrefix(ctype, "text/") || bytes.IndexByte(data, 0) >= 0 {
-		return share(ctx, b, c, in.Title, resolved, size, data, ranged, toChat(b, c))
+		return share(ctx, b, c, in.Title, resolved, size, data, ranged)
 	}
 	cut := size > int64(len(data))
 	if cut {
@@ -260,7 +274,7 @@ func showFile(ctx context.Context, b Backend, c mcp.Caller, raw json.RawMessage)
 		}
 	}
 	if !utf8.Valid(data) {
-		return share(ctx, b, c, in.Title, resolved, size, data, ranged, toChat(b, c))
+		return share(ctx, b, c, in.Title, resolved, size, data, ranged)
 	}
 	lines := strings.SplitAfter(string(data), "\n")
 	if lines[len(lines)-1] == "" {

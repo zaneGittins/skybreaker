@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -127,15 +128,18 @@ type Update struct {
 	Text    string    `json:"text"`
 	Session string    `json:"session,omitempty"`
 	At      time.Time `json:"at"`
-	File    *File     `json:"file,omitempty"` // a file it shared with it
+	Item    string    `json:"item,omitempty"` // the library item it shared
+	File    *File     `json:"file,omitempty"` // before the library: see migrate
 }
 
 type Assistant struct {
-	Look        Look       `json:"look"`
-	Personality []Version  `json:"personality,omitempty"`
-	Memories    []Memory   `json:"memories,omitempty"`
-	Proposals   []Proposal `json:"proposals,omitempty"`
-	Updates     []Update   `json:"updates,omitempty"`
+	Look        Look         `json:"look"`
+	Personality []Version    `json:"personality,omitempty"`
+	Memories    []Memory     `json:"memories,omitempty"`
+	Proposals   []Proposal   `json:"proposals,omitempty"`
+	Updates     []Update     `json:"updates,omitempty"`
+	Library     []Item       `json:"library,omitempty"`
+	Collections []Collection `json:"collections,omitempty"`
 }
 
 // Current is the personality in use, or "".
@@ -162,8 +166,16 @@ type Store struct {
 	OnChange func(name string)
 	// OnPropose, if set, hears each new proposal, after OnChange.
 	OnPropose func(name string, p Proposal)
+	// OnLibrary, if set, hears each assistant whose library changed in a
+	// way its pages show. Called without the lock held.
+	OnLibrary func(name string)
+	// OnNewItem, if set, hears each item new to the library, and whether
+	// its collection asks to tell the user.
+	OnNewItem func(name string, it Item, notify bool)
 
-	mem map[string]map[string][]byte // shared files, for a store kept in memory
+	mem   map[string]map[string][]byte // kept files, for a store kept in memory
+	held  map[string]int               // files being kept, by assistant/name
+	files sync.Mutex                   // over keeping and tidying files
 }
 
 // Open loads path, or starts empty when it doesn't exist. An empty path
@@ -186,9 +198,12 @@ func Open(path string) (*Store, error) {
 	if s.st.Assistants == nil {
 		s.st.Assistants = map[string]*Assistant{}
 	}
-	for _, a := range s.st.Assistants {
+	for _, name := range slices.Sorted(maps.Keys(s.st.Assistants)) {
+		a := s.st.Assistants[name]
 		a.Look = a.Look.filled()
+		s.migrate(a)
 	}
+	s.Prune()
 	return s, nil
 }
 
@@ -220,6 +235,8 @@ func clone(a *Assistant) Assistant {
 	c.Memories = slices.Clone(a.Memories)
 	c.Proposals = slices.Clone(a.Proposals)
 	c.Updates = slices.Clone(a.Updates)
+	c.Library = slices.Clone(a.Library)
+	c.Collections = slices.Clone(a.Collections)
 	for i, p := range c.Proposals {
 		if p.Routine != nil {
 			r := *p.Routine
@@ -232,6 +249,11 @@ func clone(a *Assistant) Assistant {
 // edit applies change to a copy of name's assistant and saves it; on any
 // error nothing changes, in memory or on disk.
 func (s *Store) edit(name string, change func(a *Assistant) error) error {
+	return s.change(name, change, s.OnChange)
+}
+
+// change is edit, telling after rather than OnChange.
+func (s *Store) change(name string, change func(a *Assistant) error, after func(name string)) error {
 	s.mu.Lock()
 	a := clone(s.assistant(name))
 	next := s.st.Next
@@ -251,8 +273,8 @@ func (s *Store) edit(name string, change func(a *Assistant) error) error {
 		s.st.Next = next
 	}
 	s.mu.Unlock()
-	if err == nil && s.OnChange != nil {
-		s.OnChange(name)
+	if err == nil && after != nil {
+		after(name)
 	}
 	return err
 }
@@ -562,12 +584,10 @@ func (s *Store) PostUpdate(name, session, t string) (Update, error) {
 	if err := line("update", t, MaxUpdate); err != nil {
 		return Update{}, err
 	}
-	u, err := s.postUpdate(name, session, t, nil)
-	s.tidyFiles(name)
-	return u, err
+	return s.postUpdate(name, session, t, "")
 }
 
-func (s *Store) postUpdate(name, session, t string, f *File) (Update, error) {
+func (s *Store) postUpdate(name, session, t, item string) (Update, error) {
 	var u Update
 	err := s.edit(name, func(a *Assistant) error {
 		now := s.now()
@@ -580,7 +600,7 @@ func (s *Store) postUpdate(name, session, t string, f *File) (Update, error) {
 		if today >= maxUpdatesPerDay {
 			return fmt.Errorf("%d updates in a day: %w", maxUpdatesPerDay, ErrTooMany)
 		}
-		u = Update{ID: s.id("u"), Text: t, Session: session, At: now, File: f}
+		u = Update{ID: s.id("u"), Text: ClipLine(t, MaxUpdate), Session: session, At: now, Item: item}
 		a.Updates = append(a.Updates, u)
 		if n := len(a.Updates) - maxUpdates; n > 0 {
 			a.Updates = a.Updates[n:]

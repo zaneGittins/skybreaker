@@ -4,6 +4,7 @@ VERSION ?= $(or $(shell git describe --tags --always --dirty 2>/dev/null | sed '
 LDFLAGS := -s -w -X main.Version=$(VERSION)
 XTERM   := 5.5.0
 FIT     := 0.10.0
+PDFJS   := 6.4.299
 VENDOR  := web/skybreaker/vendor
 
 .PHONY: all build setup dev test vet deps vendor image clean
@@ -36,13 +37,17 @@ deps:
 	go get tailscale.com/tsnet@latest go.yaml.in/yaml/v3@latest
 	go mod tidy
 
-# xterm.js is embedded in the binary; the CSP forbids loading it from a CDN.
+# xterm.js and PDF.js are embedded in the binary; the CSP forbids loading them from a CDN.
 vendor:
 	mkdir -p $(VENDOR)
 	curl -fsSL -o $(VENDOR)/xterm.js     https://cdn.jsdelivr.net/npm/@xterm/xterm@$(XTERM)/lib/xterm.js
 	curl -fsSL -o $(VENDOR)/xterm.css    https://cdn.jsdelivr.net/npm/@xterm/xterm@$(XTERM)/css/xterm.css
 	curl -fsSL -o $(VENDOR)/addon-fit.js https://cdn.jsdelivr.net/npm/@xterm/addon-fit@$(FIT)/lib/addon-fit.js
 	curl -fsSL -o $(VENDOR)/LICENSE      https://cdn.jsdelivr.net/npm/@xterm/xterm@$(XTERM)/LICENSE
+	mkdir -p $(VENDOR)/pdfjs
+	curl -fsSL -o $(VENDOR)/pdfjs/pdf.min.mjs        https://cdn.jsdelivr.net/npm/pdfjs-dist@$(PDFJS)/build/pdf.min.mjs
+	curl -fsSL -o $(VENDOR)/pdfjs/pdf.worker.min.mjs https://cdn.jsdelivr.net/npm/pdfjs-dist@$(PDFJS)/build/pdf.worker.min.mjs
+	curl -fsSL -o $(VENDOR)/pdfjs/LICENSE            https://cdn.jsdelivr.net/npm/pdfjs-dist@$(PDFJS)/LICENSE
 
 image:
 	docker build -t skybreaker-sandbox:$(VERSION) images/sandbox

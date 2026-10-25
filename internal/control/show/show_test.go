@@ -5,19 +5,34 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/zaneGittins/skybreaker/internal/assistant"
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
 )
 
 // fakeBackend is a sandbox with files and one running chat, s1 in p.
 type fakeBackend struct {
-	files  map[string]string // resolved path → content
-	reads  []int64           // the max of each read
-	shown  []shown
-	shared []shown // to an assistant's Today, its project in session
+	files       map[string]string // resolved path → content
+	reads       []int64           // the max of each read
+	shown       []shown
+	shared      []libShare // to an assistant's library
+	items       []chat.Show
+	collections []libCollection
+}
+
+type libShare struct {
+	project, session string
+	sh               assistant.Share
+}
+
+type libCollection struct {
+	project, title string
+	p              assistant.CollectionPatch
+	cover          *assistant.Blob
 }
 
 type shown struct {
@@ -27,12 +42,31 @@ type shown struct {
 	ext     string
 }
 
-func (f *fakeBackend) ChatIn(project, session string) bool { return project == "p" && session == "s1" }
+func (f *fakeBackend) ChatIn(project, session string) bool {
+	return (project == "p" || project == "pip") && session == "s1"
+}
 
 func (f *fakeBackend) IsAssistant(project string) bool { return project == "pip" }
 
-func (f *fakeBackend) AssistantShare(project string, sh chat.Show, data []byte, ext string) error {
-	f.shared = append(f.shared, shown{project, sh, append([]byte(nil), data...), ext})
+func (f *fakeBackend) AssistantShare(project, session string, sh assistant.Share) (assistant.Item, error) {
+	f.shared = append(f.shared, libShare{project, session, sh})
+	return assistant.Item{ID: fmt.Sprintf("i%d", len(f.shared)), Kind: sh.Item.Kind, Title: sh.Item.Title, Size: int64(len(sh.Data))}, nil
+}
+
+func (f *fakeBackend) AssistantCollection(project, title string, p assistant.CollectionPatch, cover *assistant.Blob) (assistant.Collection, error) {
+	f.collections = append(f.collections, libCollection{project, title, p, cover})
+	c := assistant.Collection{Title: title, Layout: "list", KeepDays: 30}
+	if p.Layout != nil {
+		c.Layout = *p.Layout
+	}
+	if p.Keep != nil {
+		c.Keep = *p.Keep
+	}
+	return c, nil
+}
+
+func (f *fakeBackend) ChatShowItem(session string, sh chat.Show) error {
+	f.items = append(f.items, sh)
 	return nil
 }
 
@@ -230,29 +264,125 @@ func TestShareAudioAndBigFiles(t *testing.T) {
 	}
 }
 
-// An assistant's routine has no chat: what it shares goes on its Today.
-// A repository's runs share nothing.
+// An assistant's routine has no chat: what it shares goes in its library
+// and on Today. A repository's runs share nothing.
 func TestShareFromARoutine(t *testing.T) {
-	b := &fakeBackend{files: map[string]string{"/workspace/downloads/podcast.mp3": "ID3\x04\x00podcast", "/workspace/brief.md": "# Brief\n"}}
+	b := &fakeBackend{files: map[string]string{
+		"/workspace/downloads/podcast.mp3": "ID3\x04\x00podcast", "/workspace/brief.md": "# Brief\n",
+		"/workspace/plan.html": "<!doctype html><html><body>plan</body></html>", "/workspace/report.pdf": "%PDF-1.7\n",
+	}}
 	run := mcp.Caller{Project: "pip", Session: "-"}
 	tools := Tools(b)(run)
-	if len(tools) != 1 || tools[0].Name != "show_file" || !strings.Contains(tools[0].Description, "Today") {
+	if len(tools) != 2 || tools[0].Name != "show_file" || tools[1].Name != "set_collection" || !strings.Contains(tools[0].Description, "Today") {
 		t.Fatalf("tools = %+v", tools)
 	}
-	if out, err := call(t, b, run, "show_file", `{"path":"downloads/podcast.mp3","title":"Sunday's podcast"}`); err != nil || !strings.Contains(out, "Today") {
+	if out, err := call(t, b, run, "show_file", `{"path":"downloads/podcast.mp3","title":"Sunday's podcast","collection":"Weekly","summary":"Bread"}`); err != nil || !strings.Contains(out, "Today") {
 		t.Fatalf("%q %v", out, err)
 	}
-	if len(b.shared) != 1 || b.shared[0].session != "pip" || b.shared[0].sh.Kind != chat.ShowAudio || b.shared[0].ext != ".mp3" || b.shared[0].sh.Title != "Sunday's podcast" {
-		t.Fatalf("shared %+v", b.shared)
+	s := b.shared[0]
+	if s.project != "pip" || s.session != "" || s.sh.Item.Kind != assistant.KindAudio || s.sh.Ext != ".mp3" || s.sh.Item.Title != "Sunday's podcast" ||
+		s.sh.Item.Collection != "Weekly" || s.sh.Item.Summary != "Bread" || s.sh.Item.Name != "/workspace/downloads/podcast.mp3" {
+		t.Fatalf("shared %+v", s)
 	}
-	// Text goes as a file to open, not as lines.
-	if _, err := call(t, b, run, "show_file", `{"path":"brief.md"}`); err != nil || b.shared[1].sh.Kind != chat.ShowDownload {
-		t.Errorf("text from a routine: %v %+v", err, b.shared)
+	// Text is read in the reader; HTML from a routine is always a page; a PDF is a PDF.
+	for p, want := range map[string][2]string{"brief.md": {assistant.KindText, ".md"}, "plan.html": {assistant.KindView, ".html"}, "report.pdf": {assistant.KindPDF, ".pdf"}} {
+		if _, err := call(t, b, run, "show_file", `{"path":"`+p+`"}`); err != nil {
+			t.Fatal(err)
+		}
+		if got := b.shared[len(b.shared)-1].sh; got.Item.Kind != want[0] || got.Ext != want[1] {
+			t.Errorf("%s: %s %s", p, got.Item.Kind, got.Ext)
+		}
 	}
-	if len(b.shown) != 0 {
+	if len(b.shown) != 0 || len(b.items) != 0 {
 		t.Error("shown in a chat")
 	}
 	if tools := Tools(b)(mcp.Caller{Project: "p", Session: "-"}); len(tools) != 0 {
 		t.Errorf("a repository's run got %d tools", len(tools))
+	}
+}
+
+var inAssistantChat = mcp.Caller{Project: "pip", Session: "s1"}
+
+// In an assistant's chat, what's made to be played or read later goes in
+// its library, with a card in the chat; screenshots and snippets don't.
+func TestShareInAnAssistantChat(t *testing.T) {
+	b := &fakeBackend{files: map[string]string{
+		"/workspace/ep.mp3": "ID3\x04\x00ep", "/workspace/shot.png": png1x1, "/workspace/notes.md": "# Notes\n",
+		"/workspace/cover.png": png1x1, "/workspace/ep.txt": "Hello there.", "/workspace/page.html": "<html><body>hi</body></html>",
+	}}
+	tools := Tools(b)(inAssistantChat)
+	if len(tools) != 3 || tools[2].Name != "set_collection" || !strings.Contains(string(tools[0].Input), `"collection"`) {
+		t.Fatalf("tools = %+v", tools)
+	}
+	if strings.Contains(string(Tools(b)(inChat)[0].Input), `"collection"`) {
+		t.Error("a repository's chat is offered the library")
+	}
+	out, err := call(t, b, inAssistantChat, "show_file", `{"path":"ep.mp3","title":"Episode 1","cover":"cover.png","transcript":"ep.txt","chapters":[{"at":"1:10","title":"Two"},{"at":0,"title":"One"}]}`)
+	if err != nil || !strings.Contains(out, "library (i1)") {
+		t.Fatalf("%q %v", out, err)
+	}
+	s := b.shared[0].sh
+	if b.shared[0].session != "s1" || s.Cover == nil || s.Cover.Ext != ".png" || string(s.Transcript) != "Hello there." || len(s.Item.Chapters) != 2 || s.Item.Chapters[0].At != 70 {
+		t.Fatalf("share %+v", s)
+	}
+	if len(b.items) != 1 || b.items[0].Item != "i1" || b.items[0].Kind != assistant.KindAudio || b.items[0].Path != "ep.mp3" || len(b.shown) != 0 {
+		t.Fatalf("card %+v, shown %+v", b.items, b.shown)
+	}
+	// A screenshot and a snippet stay in the chat, unless they're in a collection.
+	call(t, b, inAssistantChat, "show_file", `{"path":"shot.png"}`)
+	call(t, b, inAssistantChat, "show_file", `{"path":"notes.md"}`)
+	if len(b.shown) != 2 || len(b.shared) != 1 {
+		t.Errorf("shown %d, shared %d", len(b.shown), len(b.shared))
+	}
+	call(t, b, inAssistantChat, "show_file", `{"path":"notes.md","collection":"Notes"}`)
+	if len(b.shared) != 2 || b.shared[1].sh.Item.Kind != assistant.KindText {
+		t.Errorf("collected notes: %+v", b.shared)
+	}
+	// A page runs only when asked for; otherwise it's source.
+	call(t, b, inAssistantChat, "show_file", `{"path":"page.html","view":true}`)
+	if b.shared[2].sh.Item.Kind != assistant.KindView {
+		t.Errorf("view: %+v", b.shared[2].sh.Item)
+	}
+	for _, bad := range []string{
+		`{"path":"ep.mp3","start_line":2}`,
+		`{"path":"notes.md","collection":"Notes","chapters":[{"at":1,"title":"x"}]}`,
+		`{"path":"ep.mp3","cover":"ep.txt"}`,
+		`{"path":"ep.mp3","chapters":[{"at":"1:99","title":"x"}]}`,
+	} {
+		if _, err := call(t, b, inAssistantChat, "show_file", bad); err == nil {
+			t.Errorf("%s: no error", bad)
+		}
+	}
+}
+
+func TestChapterAt(t *testing.T) {
+	for in, want := range map[string]float64{`70`: 70, `"1:10"`: 70, `"1:02:03"`: 3723, `"0:05.5"`: 5.5, `12.5`: 12.5} {
+		if got, err := chapterAt(json.RawMessage(in)); err != nil || got != want {
+			t.Errorf("%s = %v, %v", in, got, err)
+		}
+	}
+	for _, in := range []string{`"x"`, `"1:60"`, `"1:2:3:4"`, `true`, `"-1"`} {
+		if _, err := chapterAt(json.RawMessage(in)); err == nil {
+			t.Errorf("%s: no error", in)
+		}
+	}
+}
+
+func TestSetCollectionTool(t *testing.T) {
+	b := &fakeBackend{files: map[string]string{"/workspace/cover.png": png1x1, "/workspace/x.txt": "x"}}
+	out, err := call(t, b, inAssistantChat, "set_collection", `{"name":"Morning briefing","layout":"podcast","keep":14,"speed":1.25}`)
+	if err != nil || !strings.Contains(out, "podcast layout") || !strings.Contains(out, "newest 14") {
+		t.Fatalf("%q %v", out, err)
+	}
+	c := b.collections[0]
+	if c.project != "pip" || c.title != "Morning briefing" || *c.p.Speed != 1.25 || c.p.About != nil || c.cover != nil {
+		t.Errorf("collection %+v", c)
+	}
+	call(t, b, inAssistantChat, "set_collection", `{"name":"Morning briefing","cover":"cover.png"}`)
+	if b.collections[1].cover == nil || b.collections[1].cover.Ext != ".png" {
+		t.Errorf("cover %+v", b.collections[1])
+	}
+	if _, err := call(t, b, inAssistantChat, "set_collection", `{"name":"x","cover":"x.txt"}`); err == nil {
+		t.Error("took text for a cover")
 	}
 }

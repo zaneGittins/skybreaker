@@ -62,6 +62,8 @@ An assistant is an agent for everything that isn't a repo. Make one with **New a
 
 **Today.** Its brief: what needs you, what it did lately, and what it can reach.
 
+**Library.** What it makes for you: podcasts, reports, PDFs and pages. Each item keeps your place, on every device, and shows a dot until you open it. Audio plays in a player that carries on as you move around the app, with chapters, a transcript, speed, a sleep timer and lock-screen controls. Ask it to group a series into a collection ("keep two weeks of briefings, play them at 1.25x") and to notify you when something new arrives. Star an item to keep it whatever its collection keeps.
+
 **Its browser.** It browses with logins of its own, which it never sees. When a site wants a password, a code or a CAPTCHA, it asks you to **Take over**: you drive the page live and it waits. Give it accounts of its own, not yours, and make writes `ask` in its bundles.
 
 ## Terminal
