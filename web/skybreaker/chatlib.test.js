@@ -180,16 +180,19 @@ test('sessionTone and inboxGroups', () => {
   assert.equal(sessionTone(s[4]).tone, 'live');
   assert.equal(sessionTone(s[5]).tone, 'ended');
   const g = inboxGroups(s, [{ session: 'e' }], Date.parse(t1));
-  // Waiting on you comes first, then problems, then finished work; newest first within each.
-  assert.deepEqual(g.forYou.map(x => x.id), ['a', 'e', 'g', 'c']);
+  // What needs you: waiting on you first, then problems; newest first within each.
+  assert.deepEqual(g.needs.map(x => x.id), ['a', 'e', 'g']);
   assert.deepEqual(g.working.map(x => x.id), ['b']);
-  assert.deepEqual(g.recent.map(x => x.id), ['d']);
+  // Done: finished work you haven't seen first, then the open chats you have.
+  assert.deepEqual(g.done.map(x => x.id), ['c', 'd']);
+  assert.equal(g.unseen, 1);
   assert.deepEqual(g.ended.map(x => x.id), ['f']);
+  assert.deepEqual(inboxGroups(s, [], Date.parse(t1)).working.map(x => x.id), ['b', 'e'], 'an open terminal is working');
   // A day on, the idle chat you've seen rests with the ended ones; the rest stay.
   const later = inboxGroups(s, [{ session: 'e' }], Date.parse(t0) + 25 * 3600e3);
-  assert.deepEqual(later.recent.map(x => x.id), []);
+  assert.deepEqual(later.done.map(x => x.id), ['c']);
   assert.deepEqual(later.ended.map(x => x.id), ['f', 'd']);
-  assert.deepEqual(later.forYou.map(x => x.id), ['a', 'e', 'g', 'c']);
+  assert.deepEqual(later.needs.map(x => x.id), ['a', 'e', 'g']);
 });
 
 test('resting and closable', () => {
