@@ -2,7 +2,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { ago, until, route, samePage, toolSummary, toolInput, reveal, duration, messageBytes, termFont, sgrRuns } = require('./lib.js');
+const { agentCursor, ago, until, route, samePage, toolSummary, toolInput, reveal, duration, messageBytes, termFont, sgrRuns } = require('./lib.js');
 
 test('ago', () => {
   const now = Date.parse('2026-10-17T12:00:00Z');
@@ -35,7 +35,7 @@ test('route', () => {
   assert.deepEqual(route('/s/%'), { name: 'notfound' });
   // An assistant's pages.
   assert.deepEqual(route('/a/pip'), { name: 'assistant', project: 'pip', tab: 'today' });
-  for (const tab of ['memory', 'routines', 'look', 'browser']) assert.deepEqual(route('/a/pip/' + tab), { name: 'assistant', project: 'pip', tab });
+  for (const tab of ['memory', 'routines', 'look', 'browser', 'takeover']) assert.deepEqual(route('/a/pip/' + tab), { name: 'assistant', project: 'pip', tab });
   // Its one thread, where an old link to its chats lands too.
   assert.deepEqual(route('/a/pip/chat'), { name: 'thread', project: 'pip' });
   assert.deepEqual(route('/a/pip/chats'), { name: 'thread', project: 'pip' });
@@ -272,4 +272,23 @@ test('samePage: a tab or a settings section is the same page, so it redraws with
   assert.equal(same('/s/abc', '/s/def'), false);
   assert.equal(same('/', '/activity'), false);
   assert.equal(samePage(undefined, route('/')), false);
+});
+
+test('agentCursor follows where the agent acts on the page', () => {
+  const size = { w: 1280, h: 900 };
+  let c = agentCursor(null, { act: 'click', x: 640, y: 225 }, size, 1000);
+  assert.deepEqual(c, { left: 50, top: 25, act: 'click', at: 1000, hideAt: null });
+  // Typing moves it too; a click elsewhere moves it on.
+  c = agentCursor(c, { act: 'type', x: 320, y: 450 }, size, 2000);
+  assert.deepEqual([c.left, c.top, c.act, c.hideAt], [25, 50, 'type', null]);
+  // A page loaded right after a click lets the press show before it goes.
+  assert.equal(agentCursor(c, { act: 'page' }, size, 2100).hideAt, 3200);
+  assert.equal(agentCursor(c, { act: 'page' }, size, 5000).hideAt, 5000);
+  // Scrolling or a take-over leaves it pointing at nothing: it goes now.
+  for (const act of ['scroll', 'taken']) assert.equal(agentCursor(c, { act }, size, 3000).hideAt, 3000);
+  // Nothing shown yet stays nothing; an unknown act changes nothing.
+  assert.equal(agentCursor(null, { act: 'page' }, size, 1), null);
+  assert.equal(agentCursor(c, { act: 'free' }, size, 1), c);
+  // A phone-sized page maps by its own size.
+  assert.deepEqual([agentCursor(null, { act: 'click', x: 195, y: 700 }, { w: 390, h: 700 }, 0).left, agentCursor(null, { act: 'click', x: 195, y: 700 }, { w: 390, h: 700 }, 0).top], [50, 100]);
 });

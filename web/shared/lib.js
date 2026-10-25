@@ -57,7 +57,7 @@ function route(path) {
     return { name: 'notfound' };
   }
   // An assistant: Today, another of its pages, or its one thread.
-  const a = /^\/a\/([^/]+)(?:\/(chats?|memory|routines|look|browser))?$/.exec(path);
+  const a = /^\/a\/([^/]+)(?:\/(chats?|memory|routines|look|browser|takeover))?$/.exec(path);
   if (a) {
     let v;
     try { v = decodeURIComponent(a[1]) } catch { return { name: 'notfound' } }
@@ -294,4 +294,17 @@ function limitLabel(l) {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-if (typeof module !== 'undefined') module.exports = { activitySeries, usageSeries, compactCount, limitLabel, boardSeries, hostsFromText, ago, until, duration, route, samePage, auditRow, dropPosition, columnPage, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal };
+// agentCursor is where to draw the assistant's last click or typing over
+// its browser, as percentages of the page of size, and when to hide it:
+// a scroll, a take-over or a new page leaves it pointing at nothing.
+function agentCursor(cur, cue, size, now) {
+  if (cue.act === 'click' || cue.act === 'type') {
+    return { left: cue.x / size.w * 100, top: cue.y / size.h * 100, act: cue.act, at: now, hideAt: null };
+  }
+  if (!cur) return cur;
+  if (cue.act === 'page') return { ...cur, hideAt: Math.max(now, cur.at + 1200) };
+  if (cue.act === 'scroll' || cue.act === 'taken') return { ...cur, hideAt: now };
+  return cur;
+}
+
+if (typeof module !== 'undefined') module.exports = { agentCursor, activitySeries, usageSeries, compactCount, limitLabel, boardSeries, hostsFromText, ago, until, duration, route, samePage, auditRow, dropPosition, columnPage, messageBytes, termFont, sgrRuns, toolSummary, toolInput, reveal };

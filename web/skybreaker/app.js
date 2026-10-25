@@ -140,9 +140,9 @@ function busy() {
 // refresh re-renders the current view in place after a live event, except
 // the terminal, which streams on its own. A focused link stays focused.
 const refresh = debounce(() => {
-  // A chat streams on its own; a browser you've taken over must not be
-  // closed and handed back by a redraw.
-  if (!state.route || state.route.name === 'session' || state.route.name === 'thread' || state.route.tab === 'browser') return;
+  // A chat streams on its own, and so does a browser; one you've taken over
+  // must not be closed and handed back by a redraw.
+  if (!state.route || state.route.name === 'session' || state.route.name === 'thread' || state.route.tab === 'browser' || state.route.tab === 'takeover') return;
   // An open sheet that can redraw itself does, so what you answer there
   // leaves it; the page waits until the sheet closes.
   if (busy()) { state.stale = true; state.sheetReload?.(); return }

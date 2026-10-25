@@ -80,6 +80,11 @@ type Browser struct {
 	held    int // the mouse buttons you hold down, as the buttons field counts them
 	world   int // Skybreaker's isolated world in the page, 0 until made
 	frames  chan Frame
+	// watchers see the page too, without taking it.
+	watchers map[*watcher]struct{}
+	// cast is held to start or stop the frames, so a watch and a take-over
+	// starting and ending together leave them running for whoever remains.
+	cast    sync.Mutex
 	loaded  chan struct{}
 	dl      map[string]*download // by guid
 	dlBegin chan string
@@ -255,6 +260,7 @@ func (b *Browser) events() {
 		case "Fetch.requestPaused":
 			go b.paused(ctx, e)
 		case "Page.loadEventFired":
+			go b.cuePage(ctx)
 			select {
 			case b.loaded <- struct{}{}:
 			default:
@@ -636,6 +642,7 @@ func (b *Browser) Click(ctx context.Context, ref int) error {
 		return err
 	}
 	b.drainLoaded()
+	b.cue(Cue{Kind: "click", X: s.X, Y: s.Y})
 	if err := b.click(ctx, s.X, s.Y); err != nil {
 		return err
 	}
@@ -673,6 +680,7 @@ func (b *Browser) Type(ctx context.Context, ref int, text string, submit bool) e
 	if !s.Editable {
 		return fmt.Errorf("element %d isn't a field", ref)
 	}
+	b.cue(Cue{Kind: "type", X: s.X, Y: s.Y})
 	if err := b.click(ctx, s.X, s.Y); err != nil {
 		return err
 	}
@@ -722,6 +730,7 @@ func (b *Browser) Scroll(ctx context.Context, down bool) error {
 	if !down {
 		dy = -dy
 	}
+	b.cue(Cue{Kind: "scroll"})
 	return b.call(ctx, b.page, "Input.dispatchMouseEvent", map[string]any{"type": "mouseWheel", "x": 640, "y": 450, "deltaX": 0, "deltaY": dy}, nil)
 }
 
@@ -840,6 +849,7 @@ drain:
 			break drain
 		}
 	}
+	b.cue(Cue{Kind: "click", X: s.X, Y: s.Y})
 	err = b.click(ctx, s.X, s.Y)
 	done() // the wait for the file needn't hold you up
 	if err != nil {
