@@ -20,7 +20,7 @@ import (
 
 // Event kinds.
 const (
-	KindUser     = "user"     // a message the user sent: ID, Text
+	KindUser     = "user"     // a message the user sent: ID, Text, and Handback for a hand-back
 	KindText     = "text"     // a finished block of agent text: ID, Text
 	KindDelta    = "delta"    // streamed agent text to append to ID; never stored
 	KindThinking = "thinking" // the agent's reasoning summary: ID, Text
@@ -54,6 +54,14 @@ type Event struct {
 	Card    *Card     `json:"card,omitempty"`
 	// Attach is what the user sent with a message.
 	Attach []Attachment `json:"attach,omitempty"`
+	// Handback marks a message that hands an assistant's browser back.
+	Handback *Handback `json:"handback,omitempty"`
+}
+
+// Handback is you handing an assistant's browser back: Text tells the
+// agent, and the conversation shows a line about it instead.
+type Handback struct {
+	Site string `json:"site,omitempty"`
 }
 
 // Tool kinds, for the card's icon and its one-line summary.

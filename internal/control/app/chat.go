@@ -377,6 +377,15 @@ func (a *App) chatSession(id string) (store.Session, error) {
 
 // ChatSend sends a chat a message, carrying it on first if it had ended.
 func (a *App) ChatSend(ctx context.Context, id, text string, files ...chat.File) error {
+	return a.chatSend(id, func() error { return a.chat.Send(ctx, id, text, files...) })
+}
+
+// ChatHandback tells a chat you've handed its browser back, on site.
+func (a *App) ChatHandback(ctx context.Context, id, text, site string) error {
+	return a.chatSend(id, func() error { return a.chat.Handback(ctx, id, text, site) })
+}
+
+func (a *App) chatSend(id string, send func() error) error {
 	if _, err := a.chatSession(id); err != nil {
 		return err
 	}
@@ -388,7 +397,7 @@ func (a *App) ChatSend(ctx context.Context, id, text string, files ...chat.File)
 		x.Seen = time.Now().UTC()
 		x.Pull.Rounds, x.Pull.Paused = 0, false
 	})
-	return a.chat.Send(ctx, id, text, files...)
+	return send()
 }
 
 func (a *App) ChatAnswer(ctx context.Context, id, ask string, ans chat.Answer) error {

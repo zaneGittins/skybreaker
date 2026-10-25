@@ -59,6 +59,10 @@ func (b *fakeBackend) NewChat(_ context.Context, p, h string, o app.NewOptions) 
 	b.chat.call("new " + p + " " + h + optsCall(o))
 	return store.Session{ID: "c1", Project: p, Harness: h, Mode: store.ModeChat, Status: store.StatusRunning}, nil
 }
+func (b *fakeBackend) ChatHandback(_ context.Context, id, text, site string) error {
+	b.chat.call("handback " + id + " " + site + " " + text)
+	return nil
+}
 func (b *fakeBackend) ChatSend(_ context.Context, id, text string, files ...chat.File) error {
 	call := "send " + id + " " + text
 	for _, f := range files {

@@ -144,3 +144,21 @@ func TestShorten(t *testing.T) {
 		}
 	}
 }
+
+// Handing the browser back tells the agent so, and the conversation shows
+// it as a hand-back on the site, not as something you wrote.
+func TestManagerHandback(t *testing.T) {
+	h := newHarness(t)
+	s := h.session("claude")
+	if err := h.m.Handback(context.Background(), s.ID, "I'm done in the browser.", "accounts.google.com"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the turn", func() bool { return len(find(h.events(s.ID), KindTurn)) == 2 })
+	users := find(h.events(s.ID), KindUser)
+	if len(users) != 1 || users[0].Handback == nil || users[0].Handback.Site != "accounts.google.com" || users[0].Text != "I'm done in the browser." {
+		t.Fatalf("shown %+v", users)
+	}
+	if h.state(s.ID).Title != "" {
+		t.Errorf("a hand-back named the chat %q", h.state(s.ID).Title)
+	}
+}

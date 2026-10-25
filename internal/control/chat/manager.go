@@ -198,6 +198,15 @@ func (m *Manager) enqueue(r *run, job func()) {
 // images among them to the model too. It returns once the message is
 // recorded; delivery failures show in the conversation.
 func (m *Manager) Send(ctx context.Context, id, text string, files ...File) error {
+	return m.send(ctx, id, text, nil, files)
+}
+
+// Handback tells a chat you've handed its browser back, on site.
+func (m *Manager) Handback(ctx context.Context, id, text, site string) error {
+	return m.send(ctx, id, text, &Handback{Site: site}, nil)
+}
+
+func (m *Manager) send(ctx context.Context, id, text string, hb *Handback, files []File) error {
 	s, err := m.chat(id)
 	if err != nil {
 		return err
@@ -229,10 +238,10 @@ func (m *Manager) Send(ctx context.Context, id, text string, files ...File) erro
 	r.imaging.Add(imaging)
 	r.mu.Lock()
 	r.used = time.Now()
-	m.emit(r, Event{Kind: KindUser, ID: "u" + strconv.FormatInt(time.Now().UnixNano(), 36), Text: text, Attach: atts})
+	m.emit(r, Event{Kind: KindUser, ID: "u" + strconv.FormatInt(time.Now().UnixNano(), 36), Text: text, Attach: atts, Handback: hb})
 	m.emit(r, Event{Kind: KindTurn, Turn: &Turn{State: TurnWorking}})
 	r.mu.Unlock()
-	if s.Title == "" {
+	if s.Title == "" && hb == nil {
 		title := firstLine(text)
 		if title == "" {
 			title = atts[0].Name

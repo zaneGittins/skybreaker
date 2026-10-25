@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"slices"
 	"time"
 
@@ -432,10 +431,7 @@ func (s *server) today(w http.ResponseWriter, r *http.Request) {
 	var bv *browserView
 	if s.Browsers != nil {
 		if st, ok := s.Browsers.BrowserStatus(r.Context(), name); ok {
-			bv = &browserView{Taken: st.TakenBy != ""}
-			if u, err := url.Parse(st.URL); err == nil && (u.Scheme == "https" || u.Scheme == "http") {
-				bv.Site = u.Hostname()
-			}
+			bv = &browserView{Site: browser.SiteOf(st.URL), Taken: st.TakenBy != ""}
 		}
 	}
 	webutil.WriteJSON(w, http.StatusOK, map[string]any{
@@ -500,7 +496,9 @@ func (s *server) browserLive(w http.ResponseWriter, r *http.Request) {
 	}
 	// Going away or quiet leaves the ask waiting: only Done answers it.
 	if done {
-		takeoverDone(context.WithoutCancel(r.Context()), s.Assistants, s.Store, s.Backend, name)
+		ctx := context.WithoutCancel(r.Context())
+		st, _ := b.Status(ctx)
+		takeoverDone(ctx, s.Assistants, s.Store, s.Backend, name, browser.SiteOf(st.URL))
 	}
 }
 
@@ -546,15 +544,16 @@ func (s *server) restartBrowser(w http.ResponseWriter, r *http.Request) {
 const takeoverDoneMessage = "I'm done in the browser. Check where it is now with browser_status, and carry on."
 
 // takeoverDone answers an assistant's take-over requests, and sends the
-// chat that asked on its way, if it's waiting rather than working.
-func takeoverDone(ctx context.Context, as *assistant.Store, st *store.Store, b Backend, name string) {
+// chat that asked on its way, if it's waiting rather than working. site is
+// where you left the page.
+func takeoverDone(ctx context.Context, as *assistant.Store, st *store.Store, b Backend, name, site string) {
 	for _, p := range as.Get(name).Proposals {
 		if p.Kind != assistant.ProposeTakeover {
 			continue
 		}
 		as.Dismiss(name, p.ID)
 		if sess, ok := st.Session(p.Session); ok && sess.Project == name && sess.Mode == store.ModeChat && sess.Status == store.StatusRunning && sess.State == store.ChatIdle {
-			if err := b.ChatSend(ctx, sess.ID, takeoverDoneMessage); err != nil {
+			if err := b.ChatHandback(ctx, sess.ID, takeoverDoneMessage, site); err != nil {
 				log.Printf("skybreaker: telling %s the take-over is done: %v", sess.ID, err)
 			}
 		}
