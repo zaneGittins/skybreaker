@@ -39,18 +39,28 @@ func (b *Browser) Take(ctx context.Context, by string) (<-chan Frame, error) {
 	b.act.Lock()
 	b.act.Unlock()
 	// The size a phone left is the old view's, not this one's.
+	b.cast.Lock()
 	b.call(ctx, b.page, "Emulation.clearDeviceMetricsOverride", nil, nil)
-	if err := b.screencast(ctx, 1280*pixelRatio, 900*pixelRatio); err != nil {
+	err := b.screencast(ctx, 1280*pixelRatio, 900*pixelRatio)
+	b.cast.Unlock()
+	if err != nil {
 		b.Release(ctx)
 		return nil, err
 	}
-	b.firstFrame(ctx, frames)
+	if f, ok := b.capture(ctx); ok {
+		b.mu.Lock()
+		if b.frames == frames { // not handed back, or taken over again, meanwhile
+			offer(frames, f)
+		}
+		b.mu.Unlock()
+	}
+	b.cue(Cue{Kind: "taken"})
 	return out, nil
 }
 
-// firstFrame sends the page as it is now: a screencast only sends a frame
-// when the page paints, and a sign-in form waiting for you may not.
-func (b *Browser) firstFrame(ctx context.Context, frames chan Frame) {
+// capture is the page as it is now: a screencast only sends a frame when
+// the page paints, and a sign-in form waiting for you may not.
+func (b *Browser) capture(ctx context.Context) (Frame, bool) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	var m struct {
@@ -61,19 +71,13 @@ func (b *Browser) firstFrame(ctx context.Context, frames chan Frame) {
 	}
 	if b.call(ctx, b.page, "Page.getLayoutMetrics", nil, &m) != nil ||
 		b.call(ctx, b.page, "Page.captureScreenshot", map[string]any{"format": "jpeg", "quality": 80}, &s) != nil {
-		return
+		return Frame{}, false
 	}
 	img, err := base64.StdEncoding.DecodeString(s.Data)
 	if err != nil {
-		return
+		return Frame{}, false
 	}
-	f := Frame{JPEG: img, Width: int(m.CSSVisualViewport.ClientWidth), Height: int(m.CSSVisualViewport.ClientHeight)}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.frames != frames {
-		return // handed back, or taken over again, meanwhile
-	}
-	offer(frames, f)
+	return Frame{JPEG: img, Width: int(m.CSSVisualViewport.ClientWidth), Height: int(m.CSSVisualViewport.ClientHeight)}, true
 }
 
 // Release hands the browser back to the agent.
@@ -94,11 +98,18 @@ func (b *Browser) release(ctx context.Context, frames <-chan Frame) {
 		b.frames = nil
 	}
 	b.mu.Unlock()
+	b.cue(Cue{Kind: "free"})
 	// A browser that stops answering mustn't hold the hand-back up forever.
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	b.cast.Lock()
 	b.call(ctx, b.page, "Page.stopScreencast", nil, nil)
 	b.call(ctx, b.page, "Emulation.clearDeviceMetricsOverride", nil, nil)
+	// Those watching go on seeing it, at the agent's size again.
+	if b.watching() > 0 {
+		b.screencast(ctx, 1280*pixelRatio, 900*pixelRatio)
+	}
+	b.cast.Unlock()
 	// What you opened, the agent mayn't: leave it a blank page instead.
 	if u, err := b.current(ctx); err == nil && denied(u, b.deny()) {
 		b.navigate(ctx, "about:blank")
@@ -135,6 +146,8 @@ func (b *Browser) Fit(ctx context.Context, w, h int) error {
 		return err
 	}
 	// Frames at the phone's own pixels, so the text is sharp.
+	b.cast.Lock()
+	defer b.cast.Unlock()
 	b.call(ctx, b.page, "Page.stopScreencast", nil, nil)
 	return b.screencast(ctx, w*pixelRatio, h*pixelRatio)
 }
@@ -157,15 +170,17 @@ func (b *Browser) frame(ctx context.Context, e Event) {
 	f := Frame{JPEG: img, Width: int(p.Metadata.DeviceWidth), Height: int(p.Metadata.DeviceHeight)}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.frames == nil {
-		return
+	if b.frames != nil {
+		offer(b.frames, f)
 	}
-	offer(b.frames, f)
+	for w := range b.watchers {
+		offer(w.frames, f)
+	}
 }
 
 // offer queues a frame without waiting: a view that's behind loses the
 // oldest one waiting, so the page as it is now always gets through.
-func offer(ch chan Frame, f Frame) {
+func offer[T any](ch chan T, f T) {
 	for {
 		select {
 		case ch <- f:

@@ -239,6 +239,21 @@ func TestBrowserLiveRefusals(t *testing.T) {
 	}
 }
 
+// Watching the browser is a WebSocket from the app's own pages only, too.
+func TestBrowserWatchRefusals(t *testing.T) {
+	f, _ := assistantFixture(t)
+	host := strings.TrimPrefix(f.ts.URL, "http://")
+	if code, _ := f.do(t, "GET", "/api/assistants/pip/browser/watch", "", map[string]string{"Origin": "https://evil.example.ts.net"}); code != 403 {
+		t.Errorf("cross-origin: %d", code)
+	}
+	if code, _ := f.do(t, "GET", "/api/assistants/orbit/browser/watch", "", map[string]string{"Origin": "http://" + host}); code != 404 {
+		t.Errorf("a coding project: %d", code)
+	}
+	if code, _ := f.do(t, "GET", "/api/assistants/pip/browser/watch", "", map[string]string{"Origin": "http://" + host}); code != 404 {
+		t.Errorf("no browsers: %d", code)
+	}
+}
+
 // A chat with an assistant knows it is one, to leave out repo controls.
 func TestAssistantSession(t *testing.T) {
 	f, _ := assistantFixture(t)
@@ -254,6 +269,7 @@ type fakeBrowsers struct{ st *browser.Status }
 func (f fakeBrowsers) Browser(context.Context, string) (*browser.Browser, error) {
 	return nil, errors.New("no browser here")
 }
+func (f fakeBrowsers) RunningBrowser(string) (*browser.Browser, bool) { return nil, false }
 func (f fakeBrowsers) BrowserStatus(context.Context, string) (browser.Status, bool) {
 	if f.st == nil {
 		return browser.Status{}, false

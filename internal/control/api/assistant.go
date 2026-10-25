@@ -35,6 +35,7 @@ func (s *server) assistantRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/assistants/{a}/files/{name}", s.assistantFile)
 	m.HandleFunc("POST /api/assistants/{a}/thread", s.thread)
 	m.HandleFunc("GET /api/assistants/{a}/browser/live", s.browserLive)
+	m.HandleFunc("GET /api/assistants/{a}/browser/watch", s.browserWatch)
 	m.HandleFunc("GET /api/assistants/{a}/routines", s.routines)
 	m.HandleFunc("POST /api/assistants/{a}/routines", s.addRoutine)
 	m.HandleFunc("PUT /api/assistants/{a}/routines/{name}", s.editRoutine)
@@ -450,6 +451,8 @@ type Browsers interface {
 	Browser(ctx context.Context, project string) (*browser.Browser, error)
 	// BrowserStatus is where a running browser is; false when none runs.
 	BrowserStatus(ctx context.Context, project string) (browser.Status, bool)
+	// RunningBrowser is an assistant's browser if one runs; it never starts one.
+	RunningBrowser(project string) (*browser.Browser, bool)
 }
 
 // browserView is a browser as the brief shows it: the site, never the
@@ -496,6 +499,29 @@ func (s *server) browserLive(w http.ResponseWriter, r *http.Request) {
 	if done {
 		takeoverDone(context.WithoutCancel(r.Context()), s.Assistants, s.Store, s.Backend, name)
 	}
+}
+
+// browserWatch shows an assistant's browser over a WebSocket without
+// taking it, waiting while none runs: watching never starts one.
+func (s *server) browserWatch(w http.ResponseWriter, r *http.Request) {
+	if !tsauth.SameOrigin(r) {
+		webutil.Error(w, http.StatusForbidden, "cross-origin browser refused")
+		return
+	}
+	name, ok := s.named(w, r)
+	if !ok {
+		return
+	}
+	if s.Browsers == nil {
+		webutil.Error(w, http.StatusNotFound, "browsers are off here")
+		return
+	}
+	conn, err := s.Upgrade(w, r)
+	if err != nil {
+		return // the upgrader has answered
+	}
+	defer conn.Close(1000, "")
+	browser.LiveWatch(r.Context(), conn, func() (*browser.Browser, bool) { return s.Browsers.RunningBrowser(name) })
 }
 
 // takeoverDoneMessage tells the chat that asked that you've finished.

@@ -1,7 +1,7 @@
 'use strict';
 
 // An assistant's pages: Today (its brief), Memory, Routines, Look, and its
-// browser when you take it over. What the assistant wrote (memories,
+// browser, to watch or take over. What the assistant wrote (memories,
 // updates, page frames) only goes in through textContent or a canvas.
 
 // asstLookOf is a project's assistant look, or a plain one until it has its own.
@@ -102,8 +102,8 @@ async function renderAssistant(seq, name, tab) {
       el('span.a-sub', null, (p.harnesses || []).filter(h => h !== 'shell').map(harnessLabel).join(' · '),
         el('span.sep', null, '·'), asstMemories(a.memories?.length || 0),
         el('span.sep', null, '·'), el('a.a-access', { href: '/settings/access/' + enc, 'data-link': true }, 'Access'))));
-  const tabs = [['today', 'Today', 0], ['chat', 'Chat', 0], ['memory', 'Memory', memoryAsks], ['routines', 'Routines', routineAsks], ['look', 'Look', 0]];
-  const tabBar = tab === 'browser' ? null : el('nav.p-tabs.a-tabs', { 'aria-label': look.name }, tabs.map(([k, label, n]) =>
+  const tabs = [['today', 'Today', 0], ['chat', 'Chat', 0], ['memory', 'Memory', memoryAsks], ['routines', 'Routines', routineAsks], ['look', 'Look', 0], ['browser', 'Browser', 0]];
+  const tabBar = tab === 'takeover' ? null : el('nav.p-tabs.a-tabs', { 'aria-label': look.name }, tabs.map(([k, label, n]) =>
     el('a.p-tab' + (k === tab ? '.on' : ''), { href: asstPath(name, k), 'data-link': true, 'aria-current': k === tab ? 'page' : null },
       el('span', null, label), n ? el('span.n.warn', null, String(n)) : null)));
   let body;
@@ -111,16 +111,19 @@ async function renderAssistant(seq, name, tab) {
     case 'memory': body = asstMemory(name, a); break;
     case 'routines': body = await asstRoutines(seq, name, a); break;
     case 'look': body = asstLook(name, a); break;
-    case 'browser': body = asstBrowser(name, look); break;
+    case 'browser': body = asstWatch(name, look); break;
+    case 'takeover': body = asstTakeover(name, look); break;
     default: body = await asstToday(seq, name, p, a, d);
   }
   if (seq !== state.seq) return;
-  const page = el('div.page.assistant.a-tab-' + tab, null, tab === 'browser' ? null : head, tabBar, body);
+  const page = el('div.page.assistant.a-tab-' + tab, null, tab === 'takeover' ? null : head, tabBar, body);
   asstAccent(page, look.color);
   // On a phone, which has no sidebar, the + opens its thread.
-  const fab = tab === 'browser' ? null : el('a.fab', { href: asstPath(name, 'chat'), 'data-link': true, 'aria-label': 'Message ' + look.name }, svg(ICON.plus));
+  const fab = tab === 'takeover' ? null : el('a.fab', { href: asstPath(name, 'chat'), 'data-link': true, 'aria-label': 'Message ' + look.name }, svg(ICON.plus));
   if (fab) asstAccent(fab, look.color);
   $('#app').replaceChildren(...[page, fab].filter(Boolean));
+  // A phone scrolls its tabs: the one you're on stays in sight.
+  tabBar?.querySelector('.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 function asstCrumb(p) {
@@ -232,7 +235,7 @@ function asstTakeoverCard(name, x) {
     el('div.a-need-text', null, el('div.a-kick', null, 'The browser needs you'), el('b', null, x.title),
       el('p', null, 'Take over to sign in or enter a code. The assistant can’t see what you type.')),
     el('div.a-acts', null,
-      el('a.btn.primary.sm', { href: asstPath(name, 'browser'), 'data-link': true }, svg(ICON.hand), 'Take over'),
+      el('a.btn.primary.sm', { href: asstPath(name, 'takeover'), 'data-link': true }, svg(ICON.hand), 'Take over'),
       el('button.btn.ghost.sm', { type: 'button', onclick: e => asstDo(asstProposal(name, x, 'dismiss'), 'Dismissed', {}, e) }, 'Not now')));
 }
 
@@ -544,9 +547,96 @@ function asstPersonality(name, a) {
 
 // --- browser ------------------------------------------------------------------
 
-// asstBrowser shows the assistant's browser live and hands it to you: the
+// asstWatch shows the assistant's browser as it works, with a cursor where
+// it last clicked or typed. Watching never pauses it; Take over does.
+function asstWatch(name, look) {
+  const canvas = el('canvas.a-screen.a-watch-screen', { width: '1280', height: '900', 'aria-label': look.name + '’s browser, live' });
+  const arrow = svg(['M5 2.5v16.2l4.3-4.1 2.7 6.2 2.6-1.1-2.7-6.1h5.9z'], 'a-cursor-arrow');
+  const cursor = el('div.a-cursor', { 'aria-hidden': 'true' }, arrow);
+  const empty = el('p.a-watch-empty', null, look.name + '’s browser opens when it needs a website.');
+  const wrap = el('div.a-screen-wrap.a-watch-wrap.closed', null, canvas, cursor, empty);
+  const dot = el('span.dot');
+  const where = el('span.a-watch-site', null, 'Connecting…');
+  const ctx = canvas.getContext('2d');
+  let size = { w: 1280, h: 900 }, site = '', cur = null, hide = 0, rest = 0, ws = null, retry = 0, closed = false;
+  const say = (cls, text, mono) => {
+    dot.className = 'dot' + (cls ? ' ' + cls : '');
+    where.replaceChildren(text);
+    where.classList.toggle('mono', !!mono);
+  };
+  const shown = taken => {
+    wrap.classList.toggle('taken', taken);
+    if (taken) say('warn', 'Taken over');
+    else say('ok', site || 'Blank page', !!site);
+  };
+  // The cursor glides to each click, dips as it presses, then rests faint
+  // where it was until the page moves on.
+  const draw = () => {
+    clearTimeout(hide);
+    clearTimeout(rest);
+    if (!cur) { cursor.classList.remove('on'); return }
+    const fresh = !cursor.classList.contains('on');
+    cursor.classList.toggle('glide', !fresh);
+    cursor.style.left = cur.left + '%';
+    cursor.style.top = cur.top + '%';
+    cursor.classList.add('on');
+    cursor.classList.remove('rest');
+    rest = setTimeout(() => cursor.classList.add('rest'), 3000);
+    if (cur.hideAt !== null) hide = setTimeout(() => { cur = null; cursor.classList.remove('on') }, Math.max(0, cur.hideAt - performance.now()));
+  };
+  const press = () => {
+    arrow.classList.remove('press');
+    void arrow.getBoundingClientRect(); // a new press restarts the dip
+    arrow.classList.add('press');
+  };
+  const connect = () => {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host + asstAPI(name) + '/browser/watch');
+    ws.binaryType = 'blob';
+    ws.onopen = () => { retry = 0 };
+    ws.onmessage = async e => {
+      if (typeof e.data !== 'string') {
+        const img = await createImageBitmap(e.data);
+        if (canvas.width !== img.width || canvas.height !== img.height) { canvas.width = img.width; canvas.height = img.height }
+        ctx.drawImage(img, 0, 0);
+        img.close();
+        wrap.classList.remove('closed');
+        return;
+      }
+      const m = JSON.parse(e.data);
+      if (m.t === 'size') size = { w: m.w, h: m.h };
+      if (m.t === 'state' && !m.running) {
+        wrap.classList.add('closed');
+        cur = null;
+        draw();
+        say('', 'Closed');
+      }
+      if (m.t === 'state' && m.running) { site = m.site || ''; shown(!!m.taken) }
+      if (m.t !== 'cue') return;
+      if (m.act === 'page') { site = m.site || ''; shown(wrap.classList.contains('taken')) }
+      if (m.act === 'taken' || m.act === 'free') shown(m.act === 'taken');
+      cur = agentCursor(cur, m, size, performance.now());
+      draw();
+      if (m.act === 'click' || m.act === 'type') press();
+    };
+    // A dropped connection (a phone asleep, a network change) comes back.
+    ws.onclose = () => {
+      if (closed) return;
+      say('bad', 'Reconnecting…');
+      setTimeout(() => { if (!closed) connect() }, Math.min(1000 * 2 ** retry++, 15000));
+    };
+  };
+  connect();
+  state.asstLive = { close: () => { closed = true; clearTimeout(hide); clearTimeout(rest); try { ws.close() } catch { } } };
+  return el('div.a-browser.a-watch', null,
+    el('div.a-live-bar', null, el('span.a-live-status', null, dot, where), el('span.grow'),
+      el('a.btn.sm', { href: asstPath(name, 'takeover'), 'data-link': true }, svg(ICON.hand), 'Take over')),
+    wrap);
+}
+
+// asstTakeover shows the assistant's browser live and hands it to you: the
 // assistant's browser tools pause until you're done.
-function asstBrowser(name, look) {
+function asstTakeover(name, look) {
   const touch = matchMedia('(pointer: coarse)').matches;
   // On a phone the canvas takes no focus, or a tap would take it from the
   // field below and close the keyboard.
@@ -563,7 +653,7 @@ function asstBrowser(name, look) {
   const ws = new WebSocket(proto + '//' + location.host + asstAPI(name) + '/browser/live');
   ws.binaryType = 'blob';
   const send = m => { if (ws.readyState === 1) ws.send(JSON.stringify(m)) };
-  const done = () => { send({ t: 'done' }); navigate(asstPath(name)) };
+  const done = () => { send({ t: 'done' }); navigate(asstPath(name, 'browser')) };
   // A phone gets the page laid out for its own screen, and again when it
   // turns; the keyboard coming and going leaves it be.
   let fitW = 0;
@@ -589,7 +679,7 @@ function asstBrowser(name, look) {
     const m = JSON.parse(e.data);
     if (m.t === 'size') size = { w: m.w, h: m.h };
     if (m.t === 'error') toast(m.error, 'error');
-    if (m.t === 'state' && m.taken === false && m.why === 'idle') { toast('Handed back after a quiet while'); navigate(asstPath(name)) }
+    if (m.t === 'state' && m.taken === false && m.why === 'idle') { toast('Handed back after a quiet while'); navigate(asstPath(name, 'browser')) }
     if (m.t === 'state' && m.taken === false && m.why === 'elsewhere') gone = 'Opened on another screen.';
   };
   // A dropped connection (a phone asleep, a network change) leaves the ask

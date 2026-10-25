@@ -214,6 +214,17 @@ func (a *App) BrowserStatus(ctx context.Context, project string) (browser.Status
 	return st, err == nil
 }
 
+// RunningBrowser is an assistant's browser if one runs; it never starts one.
+func (a *App) RunningBrowser(project string) (*browser.Browser, bool) {
+	a.browsers.mu.Lock()
+	lb := a.browsers.m[project]
+	a.browsers.mu.Unlock()
+	if lb == nil {
+		return nil, false
+	}
+	return lb.b, true
+}
+
 // StopBrowser closes an assistant's browser, if it runs.
 func (a *App) StopBrowser(project string) {
 	a.browsers.mu.Lock()
