@@ -154,56 +154,40 @@ function renderNotFound() {
     el('h2', null, 'Nothing here'), el('p', null, 'That page does not exist. '), el('a.btn', { href: '/', 'data-link': true }, 'Back home'))));
 }
 
-// --- home: the inbox -----------------------------------------------------------
+// --- home: what's live ----------------------------------------------------------
 
 async function renderHome(seq) {
   const [d, use] = await Promise.all([api('GET', '/api/inbox'), api('GET', '/api/usage').catch(() => null)]);
-  if (seq !== state.seq) return;
-  const assistants = d.projects.filter(p => p.kind === 'assistant');
-  const todays = await Promise.all(assistants.map(p => api('GET', asstAPI(p.name) + '/today').catch(() => null)));
   if (seq !== state.seq) return;
   crumb(null);
   state.projects = d.projects;
   sidebar(d);
   sideUsage(use);
-  const tints = Object.fromEntries(d.projects.map(p => [p.name, p.tint]));
-  const g = inboxGroups(d.sessions, d.pending);
-  const pendingFor = id => d.pending.filter(a => a.session === id).length;
-  const row = s => sessionRow(s, { project: true, tint: tints[s.project], pending: pendingFor(s.id) });
-  const requests = d.requests || [];
-  const review = d.review || [];
-  const orphans = d.pending.filter(a => !d.sessions.some(s => s.id === a.session));
-  const needs = [
-    ...requests.map(a => homeAsk(svg(ICON.globe), a.view?.title || `${a.method} ${a.host}${a.path}`, a.project, tints[a.project], 'wants to reach out',
-      () => sheet('Network request', requestCard(a, tints[a.project], { done: closeSheet })))),
-    ...orphans.map(a => homeAsk(svg(ICON.shield), toolWord(a.tool) || 'A tool', a.project, tints[a.project], 'wants to run',
-      () => sheet('Approval', approvalCard(a, tints[a.project], { done: closeSheet })))),
-    ...g.needs.map(row),
-    ...review.map(it => itemRow(it, tints[it.project])),
-  ];
-  // An assistant's asks count too, though they sit on its own line.
-  const asks = assistants.reduce((n, p, i) => n + (todays[i] ? asstNeeds(p.name, p, todays[i]).length : p.asks || 0), 0);
-  const waiting = needs.length + asks;
+  const places = Object.fromEntries(d.projects.map(p => [p.name, p]));
+  const asked = new Set(d.pending.map(a => a.session));
+  const g = liveGroups(d.sessions, d.pending);
+  const waiting = waitingByPlace(d);
+  const asks = Object.values(waiting).reduce((a, b) => a + b, 0);
   const words = [
-    g.working.length ? `${asstCount(g.working.length).toLowerCase()} working` : '',
-    waiting ? `${asstCount(waiting).toLowerCase()} need${waiting === 1 ? 's' : ''} you` : '',
-    g.done.length ? `${asstCount(g.done.length).toLowerCase()} done` : '',
+    g.running.length ? `${asstCount(g.running.length)} agent${g.running.length === 1 ? '' : 's'} working` : '',
+    asks ? `${asstCount(asks)} waiting on you` : '',
   ].filter(Boolean);
-  const summary = words.length ? words.join(', ').replace(/^./, c => c.toUpperCase()) + '.' : 'All quiet.';
-  const composer = homeComposer(d.projects);
-  const briefs = assistants.map((p, i) => homeBrief(p, todays[i], d)).filter(Boolean);
-  const sec = (title, rows) => rows.length ? el('section.home-sec', null, el('h2.home-label', null, title), el('div.row-list', null, rows)) : null;
+  const summary = words.length ? words.join(', ').toLowerCase().replace(/^./, c => c.toUpperCase()) + '.' : 'All quiet.';
+  const row = s => liveRow(s, places[s.project], asked.has(s.id));
+  const live = [...g.waiting, ...g.running, ...g.finished];
+  const rail = use ? [limitsCard(use.limits), tokensCard(use.hours)].filter(Boolean) : [];
   $('#app').replaceChildren(el('div.page.home', null,
-    d.projects.length ? el('nav.home-places.phone-only', { 'aria-label': 'Assistants and projects' }, homePlaces(d, g)) : null,
     el('header.home-head', null, el('h1', null, asstGreeting()), el('p', null, summary)),
-    composer ? el('div.home-compose', null, composer) : homeWelcome(),
-    briefs.length ? el('div.home-briefs', null, briefs) : null,
-    sec('Needs you', needs),
-    sec('Working', g.working.map(row)),
-    sec('Done', g.done.map(row)),
-    g.ended.length ? el('details.earlier', { open: prefs.get('earlierOpen') === '1', ontoggle: e => prefs.set('earlierOpen', e.target.open ? '1' : '0') },
-      el('summary', null, el('span', null, 'Earlier'), el('span.n', null, String(g.ended.length)), svg(ICON.chevron, 'chev')),
-      el('div.row-list', null, g.ended.map(row))) : null));
+    d.projects.length ? null : homeWelcome(),
+    el('div.home-grid', null,
+      el('div.home-main', null,
+        live.length ? el('section', null, el('h2.home-label', null, 'Live', el('span.n', null, String(live.length))), el('div.live-list', null, live.map(row)))
+          : d.projects.length ? el('p.home-quiet', null, 'Nothing running. Chats show up here while they work, and for a while after.') : null,
+        g.earlier.length ? el('details.earlier', { open: prefs.get('earlierOpen') === '1', ontoggle: e => prefs.set('earlierOpen', e.target.open ? '1' : '0') },
+          el('summary', null, el('span', null, 'Earlier'), el('span.n', null, String(g.earlier.length)), svg(ICON.chevron, 'chev')),
+          el('div.live-list', null, g.earlier.map(row))) : null),
+      rail.length ? el('aside.home-rail.desk-only', null, rail) : null),
+    d.projects.length ? homeDock(d, waiting) : null));
 }
 
 // homeWelcome is home before there's anywhere to send work: the two kinds
@@ -213,101 +197,63 @@ function homeWelcome() {
     el('span.home-start-ic', null, svg(icon)), el('span.home-start-text', null, el('b', null, title), el('span', null, sub)), svg(ICON.chevron, 'chev'));
   return el('div.home-welcome', null,
     opt(ICON.branch, 'Add a project', 'Agents work on a GitHub repository, in a sandbox of its own', newProjectSheet),
-    opt(ICON.sparkle, 'Make an assistant', 'Your own agent for everything that isn\u2019t code', newAssistantSheet));
+    opt(ICON.sparkle, 'Make an assistant', 'Your own agent for everything that isn’t code', newAssistantSheet));
 }
 
-// homeAsk is something waiting on you that isn't a chat: a network request
-// or a tool to approve. Review opens it in full.
-function homeAsk(icon, title, project, tint, what, open) {
-  return el('div.srow.home-ask', null,
-    el('span.avatar.sm.home-ask-ic', null, icon),
-    el('div.who', null, el('div.title', null, title),
-      el('div.meta', null, el('span.proj.tint-' + (tint ?? 0), null, el('span.pdot'), project), el('span.sep', null, '·'), el('span', null, what))),
-    el('button.btn.sm.primary', { type: 'button', onclick: open }, 'Review'));
+// liveRow is a chat on home: what it is, what it's doing or asking, and
+// where. A phone reads it in two lines, a desktop in one.
+function liveRow(s, p, pending) {
+  const t = sessionTone(s);
+  const tone = pending ? 'wait' : t.tone;
+  const asst = p?.kind === 'assistant';
+  const link = el('a.lrow.tone-' + tone, { href: '/s/' + s.id, 'data-link': true },
+    el('span.lrow-mark', null, asst ? avatar(asstLookOf(p)) : agentMark(s.harness, '.sm')),
+    el('span.lrow-title', null, t.tone === 'done' ? el('i.lrow-new', null, el('span.sr-only', null, 'New: ')) : null,
+      el('span', null, s.mode === 'chat' ? chatName(s) : sessionName(s))),
+    el('span.lrow-what', null, pending ? 'Waiting for approval' : t.label),
+    el('span.lrow-where', null, p && !asst ? placeMark(p) : null),
+    el('span.lrow-when', null, ago(rowTime(s))));
+  if (p) link.title = (asst ? asstLookOf(p).name : p.name) + ': ' + (s.mode === 'chat' ? chatName(s) : sessionName(s));
+  return endable(s, link, pending);
 }
 
-// homeBrief is an assistant on the home page, in a line: its mark, what it
-// last told you, and a pill for what waits on you.
-function homeBrief(p, t, d) {
-  const look = asstLookOf(p);
-  const needs = t ? asstNeeds(p.name, p, t).length : p.asks || 0;
-  const finished = (t?.runs || []).filter(r => r.status !== 'running');
-  const brief = asstBrief(finished)?.text || t?.updates?.[0]?.text || 'Nothing new today.';
-  const takeover = (t?.proposals || []).some(x => x.kind === 'takeover');
-  return el('a.home-brief', { href: asstPath(p.name), 'data-link': true },
-    avatar(look, { ...asstState(needs, d.sessions.filter(s => s.project === p.name)) }),
-    el('p', null, el('b', null, look.name), ' · ', brief,
-      needs ? el('button.a-needs-pill', { type: 'button', onclick: e => { e.preventDefault(); asstNeedsSheet(p.name, p) } },
-        el('i'), takeover ? 'Sign-in needed' : needs + ' for you') : null));
+const placePath = p => p.kind === 'assistant' ? asstPath(p.name) : '/p/' + encodeURIComponent(p.name);
+const placeName = p => p.kind === 'assistant' ? asstLookOf(p).name : p.name;
+
+// placeMark is how a place looks small: an assistant's own mark, or a
+// project's key in its tint.
+function placeMark(p) {
+  if (p.kind === 'assistant') return avatar(asstLookOf(p));
+  const k = placeKey(p);
+  return el('span.place-key.tint-' + p.tint + (k.length > 3 ? '.long' : ''), { 'aria-hidden': 'true' }, k);
 }
 
-// homePlaces is the phone's row of assistants and projects, each a tap
-// away, marked when something there needs you.
-function homePlaces(d, g) {
-  const needy = new Set([...g.needs.map(s => s.project), ...(d.requests || []).map(a => a.project), ...(d.review || []).map(it => it.project)]);
-  const place = (href, mark, name, hot) => el('a.home-place', { href, 'data-link': true },
-    el('span.home-place-o', null, mark, hot ? el('span.home-place-dot', null, el('span.sr-only', null, 'needs you')) : null), el('span', null, name));
-  return [
-    ...d.projects.filter(p => p.kind === 'assistant').map(p => place(asstPath(p.name), avatar(asstLookOf(p)), asstLookOf(p).name, p.asks || p.pending)),
-    ...d.projects.filter(p => p.kind !== 'assistant').map(p => place('/p/' + encodeURIComponent(p.name), el('span.home-place-dot-big.tint-' + p.tint, null, el('span.pdot')), p.name, needy.has(p.name))),
-    el('button.home-place', { type: 'button', onclick: e => menu(e.currentTarget, [
-      { label: 'New project', desc: 'From a GitHub repo', run: newProjectSheet },
-      { label: 'New assistant', desc: 'For everything that isn’t code', run: newAssistantSheet },
-    ]) }, el('span.home-place-o', null, svg(ICON.plus)), el('span', null, 'New')),
-  ];
+// homeDock is the phone's way around: the places that matter a tap away,
+// each counting what waits on you there, and + for all of them.
+function homeDock(d, waiting) {
+  const place = p => el('a.dock-place', { href: placePath(p), 'data-link': true, 'aria-label': placeName(p) + (waiting[p.name] ? `, ${waiting[p.name]} waiting` : '') },
+    placeMark(p), waiting[p.name] ? el('i.dock-n', { 'aria-hidden': 'true' }, String(waiting[p.name])) : null);
+  return el('nav.home-dock.phone-only', { 'aria-label': 'Assistants and projects' },
+    dockPlaces(d.projects, d.sessions, waiting).map(place),
+    el('button.dock-place.dock-all', { type: 'button', onclick: () => placesSheet(d, waiting), 'aria-label': 'All assistants and projects' }, svg(ICON.plus)));
 }
 
-// homeComposer starts work from the home page: what to do, where, and with
-// which agent. Where and who are remembered for next time.
-function homeComposer(projects) {
-  const chatty = h => !!state.meta?.chat?.[h];
-  const places = projects.filter(p => p.harnesses.some(chatty)).sort((a, b) => (b.kind === 'assistant') - (a.kind === 'assistant'));
-  let place = places.find(p => p.name === prefs.get('lastProject')) || places[0];
-  let harness;
-  const pickHarnessFor = p => { const hs = p.harnesses.filter(chatty); return hs.includes(prefs.get('lastHarness')) ? prefs.get('lastHarness') : hs[0] };
-  const input = el('textarea.composer-input.home-input', { rows: '2', 'aria-label': 'What should we work on?', placeholder: 'What should we work on?', enterkeyhint: coarse() ? 'enter' : 'send' });
-  const send = el('button.send-btn', { type: 'submit', 'aria-label': 'Start', disabled: true }, svg(ICON.send));
-  const placeChip = el('button.home-chip', { type: 'button' });
-  const agentChip = el('button.home-chip', { type: 'button' });
-  const draw = () => {
-    if (!place) return;
-    harness = pickHarnessFor(place);
-    placeChip.replaceChildren(place.kind === 'assistant' ? avatar(asstLookOf(place), { mini: true }) : el('span.pdot.tint-' + place.tint),
-      place.kind === 'assistant' ? asstLookOf(place).name : place.name, svg(ICON.caret));
-    const many = place.harnesses.filter(chatty).length > 1;
-    agentChip.hidden = !many;
-    agentChip.replaceChildren(harnessLabel(harness), svg(ICON.caret));
-    input.placeholder = place.kind === 'assistant' ? 'Message ' + asstLookOf(place).name : 'What should we work on?';
+// placesSheet is every assistant and project with how it's doing, and
+// the way to make another.
+function placesSheet(d, waiting) {
+  const busy = name => d.sessions.filter(s => s.project === name && !s.parent && ['work', 'live'].includes(sessionTone(s).tone)).length;
+  const tile = p => {
+    const n = waiting[p.name], b = busy(p.name);
+    return el('a.place-tile', { href: placePath(p), 'data-link': true, onclick: closeSheet },
+      el('span.place-o', null, placeMark(p)), el('b', null, placeName(p)),
+      el('small' + (n ? '.hot' : ''), null, n ? `${n} waiting` : b ? `${b} working` : 'Quiet'));
   };
-  placeChip.onclick = () => menu(placeChip, places.map(p => ({
-    label: p.kind === 'assistant' ? asstLookOf(p).name : p.name, desc: p.kind === 'assistant' ? 'Assistant' : p.repo || 'Project',
-    on: p === place, run: () => { place = p; prefs.set('lastProject', p.name); draw() },
-  })));
-  agentChip.onclick = () => menu(agentChip, place.harnesses.filter(chatty).map(h => ({
-    label: harnessLabel(h), on: h === harness, run: () => { prefs.set('lastHarness', h); draw() },
-  })));
-  input.value = state.homeDraft || '';
-  const fit = () => { send.disabled = !input.value.trim() || !place };
-  fit();
-  input.addEventListener('input', () => { state.homeDraft = input.value; fit() });
-  let busy = false;
-  const submit = async () => {
-    const text = input.value.trim();
-    if (!text || !place || busy) return;
-    busy = true;
-    send.disabled = true;
-    try {
-      const s = await api('POST', `/api/projects/${encodeURIComponent(place.name)}/sessions`, { harness, title: '', own_branch: place.kind !== 'assistant' && ownBranch() });
-      await api('POST', `/api/sessions/${encodeURIComponent(s.id)}/messages`, { text });
-      state.homeDraft = '';
-      navigate('/s/' + s.id);
-    } catch (e) { toast(e.message, 'error'); fit() } finally { busy = false }
-  };
-  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !coarse() && !e.isComposing) { e.preventDefault(); submit() } });
-  if (!place) return null;
-  draw();
-  return el('form.composer.home-composer', { onsubmit: e => { e.preventDefault(); submit() } },
-    input, el('div.home-compose-row', null, placeChip, agentChip, el('span.grow'), send));
+  const make = (label, sub, run) => el('button.place-tile.new', { type: 'button', onclick: run },
+    el('span.place-o', null, svg(ICON.plus)), el('b', null, label), el('small', null, sub));
+  const kind = a => d.projects.filter(p => (p.kind === 'assistant') === a);
+  sheet('Places', el('div.places', null,
+    el('h3', null, 'Assistants'), el('div.place-grid', null, kind(true).map(tile), make('New assistant', 'Beyond code', newAssistantSheet)),
+    el('h3', null, 'Projects'), el('div.place-grid', null, kind(false).map(tile), make('New project', 'From GitHub', newProjectSheet))));
 }
 
 // sideUsage is how much of each plan is used, small at the sidebar's foot;
@@ -390,6 +336,8 @@ function limitsCard(limits) {
     }));
 }
 
+const rowTime = s => s.updated && !s.updated.startsWith('0001') ? s.updated : s.ended || s.created;
+
 // sessionRow is one session on one line: who, what it's doing, where and
 // when. Tap it to open it; end a chat that's done with its check or a swipe.
 function sessionRow(s, opts = {}) {
@@ -407,15 +355,21 @@ function sessionRow(s, opts = {}) {
         opts.project ? el('span.sep', null, '·') : null,
         opts.project ? el('span.proj.tint-' + (opts.tint ?? 0), null, el('span.pdot'), s.project) : null,
         el('span.sep', null, '·'),
-        el('span', null, ago(s.updated && !s.updated.startsWith('0001') ? s.updated : s.ended || s.created)))),
+        el('span', null, ago(rowTime(s))))),
     svg(ICON.chevron, 'chev'));
-  if (opts.pending || !closable(s) || resting(s)) return link;
+  return endable(s, link, opts.pending);
+}
+
+// endable lets a chat that's finished be ended from its row: a button on
+// hover, a swipe on a phone.
+function endable(s, link, pending) {
+  if (pending || !closable(s) || resting(s)) return link;
   const done = el('button.srow-done', { type: 'button', 'aria-label': 'End ' + chatName(s), title: 'End chat' }, svg(ICON.check));
   done.onclick = async e => {
     done.disabled = true;
     if (!await endChat(s.id)) { done.disabled = false; return }
     // From the keyboard, focus goes to the next row.
-    const rows = [...document.querySelectorAll('.srow-open')], at = rows.indexOf(link);
+    const rows = [...document.querySelectorAll('.srow-open, .lrow')], at = rows.indexOf(link);
     if (!e.detail) (rows[at + 1] || rows[at - 1])?.focus();
   };
   const row = el('div.srow-wrap', null, link, done);
@@ -1577,10 +1531,9 @@ const wide = () => matchMedia('(min-width: 1024px)').matches;
 // you, and each project with its live chats.
 function sidebar(d) {
   state.inbox = d;
-  const g = inboxGroups(d.sessions, d.pending);
-  const asks = d.projects.reduce((n, p) => n + (p.asks || 0), 0);
   // What waits on you, and finished work you haven't seen.
-  const needs = g.needs.length + g.unseen + (d.requests || []).length + (d.review || []).length + asks;
+  const waiting = Object.values(waitingByPlace(d)).reduce((a, b) => a + b, 0);
+  const needs = waiting + liveGroups(d.sessions, d.pending).unseen;
   // The logo's ring turns while any agent is working, like the halo in a chat.
   const working = d.sessions.some(s => s.status === 'running' && s.state === 'working');
   for (const b of document.querySelectorAll('.brand')) b.classList.toggle('working', working);
@@ -1646,9 +1599,6 @@ function markSidebar() {
 }
 
 function startNewChat() {
-  // Home has its own message box: the button goes there.
-  const box = $('.home-input');
-  if (box) { box.focus(); return }
   const projects = state.inbox?.projects || state.projects || [];
   const p = projects.find(x => x.name === state.newChatIn);
   p ? pickHarness(p) : newSessionSheet(projects);

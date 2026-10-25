@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, inboxGroups, resting, closable, openCount, chatGroups, recentChats, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages } = require('./chatlib.js');
+const { mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, liveGroups, waitingByPlace, dockPlaces, placeKey, resting, closable, openCount, chatGroups, recentChats, currentModel, currentEffort, effortChoice, effortName, modelLine, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages } = require('./chatlib.js');
 
 test('mdBlocks: headings, paragraphs, rules, quotes', () => {
   const b = mdBlocks('# Title\n\nOne line\nnext line\n\n---\n> quoted\n> more');
@@ -163,7 +163,7 @@ test('foldChat: asks open and close; failures and logins show', () => {
   assert.equal(c.info.model, 'm1');
 });
 
-test('sessionTone and inboxGroups', () => {
+test('sessionTone and liveGroups', () => {
   const t0 = '2026-10-18T10:00:00Z', t1 = '2026-10-18T11:00:00Z';
   const s = [
     { id: 'a', mode: 'chat', status: 'running', state: 'waiting', note: 'Run make', updated: t0 },
@@ -173,26 +173,64 @@ test('sessionTone and inboxGroups', () => {
     { id: 'e', status: 'running', created: t0 },
     { id: 'f', status: 'killed', created: t0, ended: t1 },
     { id: 'g', mode: 'chat', status: 'running', state: 'failed', note: 'boom', updated: t0 },
+    { id: 'h', status: 'running', created: t1, parent: 'b' },
   ];
   assert.deepEqual(sessionTone(s[0]), { tone: 'wait', label: 'Run make' });
   assert.equal(sessionTone(s[2]).label, 'Finished');
   assert.equal(sessionTone(s[3]).tone, 'idle');
   assert.equal(sessionTone(s[4]).tone, 'live');
   assert.equal(sessionTone(s[5]).tone, 'ended');
-  const g = inboxGroups(s, [{ session: 'e' }], Date.parse(t1));
-  // What needs you: waiting on you first, then problems; newest first within each.
-  assert.deepEqual(g.needs.map(x => x.id), ['a', 'e', 'g']);
-  assert.deepEqual(g.working.map(x => x.id), ['b']);
-  // Done: finished work you haven't seen first, then the open chats you have.
-  assert.deepEqual(g.done.map(x => x.id), ['c', 'd']);
+  const g = liveGroups(s, [{ session: 'e' }], Date.parse(t1));
+  // Waiting on you first, then problems; newest first within each.
+  assert.deepEqual(g.waiting.map(x => x.id), ['a', 'e', 'g']);
+  assert.deepEqual(g.running.map(x => x.id), ['b']);
+  // Finished lately, seen or not; a chat's own terminal isn't listed.
+  assert.deepEqual(g.finished.map(x => x.id), ['c', 'd']);
   assert.equal(g.unseen, 1);
-  assert.deepEqual(g.ended.map(x => x.id), ['f']);
-  assert.deepEqual(inboxGroups(s, [], Date.parse(t1)).working.map(x => x.id), ['b', 'e'], 'an open terminal is working');
-  // A day on, the idle chat you've seen rests with the ended ones; the rest stay.
-  const later = inboxGroups(s, [{ session: 'e' }], Date.parse(t0) + 25 * 3600e3);
-  assert.deepEqual(later.done.map(x => x.id), ['c']);
-  assert.deepEqual(later.ended.map(x => x.id), ['f', 'd']);
-  assert.deepEqual(later.needs.map(x => x.id), ['a', 'e', 'g']);
+  assert.deepEqual(g.earlier.map(x => x.id), ['f']);
+  assert.deepEqual(liveGroups(s, [], Date.parse(t1)).running.map(x => x.id), ['b', 'e'], 'an open terminal is running');
+  // Hours on, a chat you've seen goes to Earlier; one you haven't stays.
+  const later = liveGroups(s, [], Date.parse(t1) + 4 * 3600e3);
+  assert.deepEqual(later.finished.map(x => x.id), ['c']);
+  assert.deepEqual(later.earlier.map(x => x.id), ['f', 'd']);
+});
+
+test('waitingByPlace counts what waits on you in each place', () => {
+  const sessions = [
+    { id: 'a', project: 'sky', mode: 'chat', status: 'running', state: 'waiting' },
+    { id: 'b', project: 'sky', mode: 'chat', status: 'running', state: 'idle' },
+    { id: 'c', project: 'bif', mode: 'chat', status: 'running', state: 'failed' },
+    { id: 'd', project: 'bif', mode: 'chat', status: 'running', state: 'working' },
+  ];
+  const n = waitingByPlace({
+    sessions,
+    // Two approvals in one chat count once; one with no chat counts too.
+    pending: [{ session: 'b', project: 'sky' }, { session: 'b', project: 'sky' }, { session: 'gone', project: 'bif' }],
+    requests: [{ project: 'sky' }],
+    projects: [{ name: 'sky' }, { name: 'bif' }, { name: 'pip', kind: 'assistant', asks: 2 }, { name: 'dot' }],
+  });
+  assert.deepEqual(n, { sky: 3, bif: 2, pip: 2, dot: 0 });
+});
+
+test('dockPlaces keeps the places that matter, in a steady order', () => {
+  const projects = [{ name: 'bif' }, { name: 'dot' }, { name: 'pip', kind: 'assistant' }, { name: 'sky' }, { name: 'web' }, { name: 'zed' }];
+  const at = h => new Date(Date.parse('2026-10-18T00:00:00Z') + h * 3600e3).toISOString();
+  const sessions = [
+    { project: 'sky', updated: at(5) }, { project: 'web', updated: at(4) }, { project: 'bif', updated: at(3) },
+    { project: 'zed', updated: at(2) }, { project: 'pip', updated: at(6) },
+  ];
+  // Five fit: dot waits on you, so it makes the cut over zed, the quietest.
+  const picked = dockPlaces(projects, sessions, { dot: 1 }, 5);
+  // Assistants first, then projects as listed.
+  assert.deepEqual(picked.map(p => p.name), ['pip', 'bif', 'dot', 'sky', 'web']);
+  assert.deepEqual(dockPlaces(projects.slice(0, 2), [], {}, 5).map(p => p.name), ['bif', 'dot']);
+});
+
+test('placeKey is a short label for a project', () => {
+  assert.equal(placeKey({ name: 'skybreaker', key: 'SKY' }), 'SKY');
+  assert.equal(placeKey({ name: 'bifract', key: 'BIF2' }), 'BIF2');
+  assert.equal(placeKey({ name: 'website', key: 'WEBSITE' }), 'WEB');
+  assert.equal(placeKey({ name: 'dotfiles' }), 'DOT');
 });
 
 test('resting and closable', () => {
