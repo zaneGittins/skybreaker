@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -420,27 +421,40 @@ func (s *server) pushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 
 // shownTypes are the only types a kept file is served as, by its
 // extension: an image's type was checked from its bytes when it was kept.
-// Any other file a user attached is .bin, served only as a download.
+// Audio's type was too. Any other file, attached or shared, is .bin, served
+// only as a download.
 var shownTypes = func() map[string]string {
 	t := map[string]string{".txt": "text/plain; charset=utf-8", ".bin": "application/octet-stream"}
 	for mime, ext := range chat.ImageTypes() {
 		t[ext] = mime
 	}
+	maps.Copy(t, chat.AudioTypes())
 	return t
 }()
 
 // chatShown serves the kept copy of a file an agent showed or the user
-// attached. It's served as inert content in a sandbox of its own: even
-// opened directly, it can't run script with the UI's origin.
+// attached.
 func (s *server) chatShown(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	ctype, ok := shownTypes[path.Ext(name)]
-	if !ok {
+	if _, ok := shownTypes[path.Ext(name)]; !ok {
 		http.NotFound(w, r)
 		return
 	}
 	b, err := s.Backend.ChatShown(r.PathValue("id"), name)
 	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	serveKept(w, r, name, b)
+}
+
+// serveKept serves a kept file as inert content in a sandbox of its own:
+// even opened directly, it can't run script with the UI's origin. A .bin
+// goes as a download, named as the link says; the rest inline, in ranges,
+// so audio can seek (a phone's player asks for them).
+func serveKept(w http.ResponseWriter, r *http.Request, name string, b []byte) {
+	ctype, ok := shownTypes[path.Ext(name)]
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
@@ -458,5 +472,5 @@ func (s *server) chatShown(w http.ResponseWriter, r *http.Request) {
 		h.Set("Content-Disposition", "inline")
 	}
 	h.Set("Cache-Control", "private, max-age=31536000, immutable")
-	w.Write(b)
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(b))
 }

@@ -66,6 +66,7 @@ Object.assign(ICON, {
   alert: ['M12 3l10 18H2z', 'M12 10v4', 'M12 17h.01'],
   branch: ['M6 3v12', 'M18 3a3 3 0 1 0 0 6a3 3 0 1 0 0-6', 'M6 15a3 3 0 1 0 0 6a3 3 0 1 0 0-6', 'M18 9a9 9 0 0 1-9 9'],
   image: ['M4 5h16v14H4z', 'M4 16l5-5 4 4 3-3 4 4', 'M15.5 8.5h.01'],
+  music: ['M9 18V5l12-2v13', 'M6 21a3 3 0 1 0 0-6a3 3 0 0 0 0 6z', 'M18 19a3 3 0 1 0 0-6a3 3 0 0 0 0 6z'],
   clip: ['M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.1-8.1a3.3 3.3 0 0 1 4.7 4.7l-8.1 8.1a1.7 1.7 0 0 1-2.4-2.4l7.4-7.4'],
 });
 
@@ -288,6 +289,23 @@ async function makeThumb(bmp, blob) {
   if (w === bmp.width && blob.size <= ATTACH.thumb) return '';
   const t = await encodeFit(bmp, w, h, blob.type, ATTACH.thumb, 0.8);
   return t.size <= ATTACH.thumb ? dataURL(t) : '';
+}
+// sharedFile is a file an agent shared, as it is: audio to play here, or
+// any other file to download under its own name. A chat and an assistant's
+// Today draw it the same way.
+function sharedFile(url, f) {
+  const base = String(f.name || 'file').split('/').pop();
+  const audio = f.kind === 'audio';
+  const get = { href: url + '?name=' + encodeURIComponent(base), download: base };
+  const head = el('div.show-head', null,
+    el('span.ticon', null, svg(audio ? ICON.music : ICON.file)),
+    el('span.show-path.sf-name', { title: reveal(f.name) }, reveal(base)),
+    el('span.show-lines', null, fmtSize(f.size || 0)),
+    audio ? el('a.icon-btn.bare', { ...get, title: 'Download', 'aria-label': 'Download ' + base }, svg(ICON.down))
+      : el('a.btn.sm.sf-get', get, svg(ICON.down), 'Download'));
+  const caption = f.title && f.title !== base ? el('div.show-title', null, reveal(f.title)) : null;
+  return el('div.show-card.sf-card', null, head, caption,
+    audio ? el('div.sf-audio', null, el('audio', { controls: true, preload: 'metadata', src: url, 'aria-label': reveal(f.title || base) })) : null);
 }
 
 async function renderChat(seq, d) {
@@ -1006,6 +1024,7 @@ async function renderChat(seq, d) {
   function showCard(it) {
     const s = it.show;
     const url = `/api/sessions/${encodeURIComponent(id)}/shown/${encodeURIComponent(it.file)}`;
+    if (s.kind === 'audio' || s.kind === 'file') return sharedFile(url, { name: s.path, kind: s.kind, size: s.size, title: s.title });
     const image = s.kind === 'image';
     const lines = !image && s.start ? (s.start === s.end ? `line ${s.start}` : `lines ${s.start}–${s.end}`) : '';
     const head = el('div.show-head', null,

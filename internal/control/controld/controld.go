@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -256,10 +257,10 @@ func Run(ctx context.Context, o Options) error {
 
 	// One MCP server for agents and for you: the board, showing files and
 	// images in a chat, and previews of a sandbox's web server.
-	host := browserHost{a, assistants}
+	host := browserHost{a, assistants, cfg.Assistant}
 	tools := &mcp.Server{Name: "skybreaker", Version: o.Version,
 		Instructions: board.Instructions + "\n\n" + preview.Instructions + "\n\n" + assistant.ToolInstructions + "\n\n" + browser.ToolInstructions,
-		Tools: []func(mcp.Caller) []mcp.Tool{board.Tools(boards), show.Tools(a), preview.Tools(previews, a),
+		Tools: []func(mcp.Caller) []mcp.Tool{board.Tools(boards), show.Tools(host), preview.Tools(previews, a),
 			assistant.Tools(assistants, cfg.Assistant), browser.Tools(host, cfg.Assistant)}}
 
 	hk := hooks.New(a.CheckHookToken, a.HookEvent)
@@ -583,7 +584,17 @@ func within(ctx context.Context, d time.Duration, f func(context.Context)) {
 // assistant's proposals for a take-over request.
 type browserHost struct {
 	*app.App
-	assistants *assistant.Store
+	assistants  *assistant.Store
+	isAssistant func(project string) bool
+}
+
+// IsAssistant and AssistantShare give show_file an assistant's routine:
+// what it shares goes on the assistant's Today.
+func (h browserHost) IsAssistant(project string) bool { return h.isAssistant(project) }
+
+func (h browserHost) AssistantShare(project string, sh chat.Show, data []byte, ext string) error {
+	_, err := h.assistants.ShareFile(project, "", sh.Title, assistant.File{Name: path.Base(sh.Path), Kind: sh.Kind}, data, ext)
+	return err
 }
 
 func (h browserHost) RequestTakeover(project, session, reason string) error {

@@ -105,6 +105,7 @@ type Update struct {
 	Text    string    `json:"text"`
 	Session string    `json:"session,omitempty"`
 	At      time.Time `json:"at"`
+	File    *File     `json:"file,omitempty"` // a file it shared with it
 }
 
 type Assistant struct {
@@ -139,6 +140,8 @@ type Store struct {
 	OnChange func(name string)
 	// OnPropose, if set, hears each new proposal, after OnChange.
 	OnPropose func(name string, p Proposal)
+
+	mem map[string]map[string][]byte // shared files, for a store kept in memory
 }
 
 // Open loads path, or starts empty when it doesn't exist. An empty path
@@ -527,6 +530,12 @@ func (s *Store) PostUpdate(name, session, t string) (Update, error) {
 	if err := line("update", t, MaxUpdate); err != nil {
 		return Update{}, err
 	}
+	u, err := s.postUpdate(name, session, t, nil)
+	s.tidyFiles(name)
+	return u, err
+}
+
+func (s *Store) postUpdate(name, session, t string, f *File) (Update, error) {
 	var u Update
 	err := s.edit(name, func(a *Assistant) error {
 		now := s.now()
@@ -539,7 +548,7 @@ func (s *Store) PostUpdate(name, session, t string) (Update, error) {
 		if today >= maxUpdatesPerDay {
 			return fmt.Errorf("%d updates in a day: %w", maxUpdatesPerDay, ErrTooMany)
 		}
-		u = Update{ID: s.id("u"), Text: t, Session: session, At: now}
+		u = Update{ID: s.id("u"), Text: t, Session: session, At: now, File: f}
 		a.Updates = append(a.Updates, u)
 		if n := len(a.Updates) - maxUpdates; n > 0 {
 			a.Updates = a.Updates[n:]

@@ -32,6 +32,7 @@ func (s *server) assistantRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/assistants/{a}/proposals/{id}/dismiss", s.dismissProposal)
 	m.HandleFunc("POST /api/assistants/{a}/proposals/{id}/approve", s.approveProposal)
 	m.HandleFunc("GET /api/assistants/{a}/today", s.today)
+	m.HandleFunc("GET /api/assistants/{a}/files/{name}", s.assistantFile)
 	m.HandleFunc("GET /api/assistants/{a}/browser/live", s.browserLive)
 	m.HandleFunc("GET /api/assistants/{a}/routines", s.routines)
 	m.HandleFunc("POST /api/assistants/{a}/routines", s.addRoutine)
@@ -368,6 +369,21 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// assistantFile serves a file one of the assistant's routines shared.
+func (s *server) assistantFile(w http.ResponseWriter, r *http.Request) {
+	name, ok := s.named(w, r)
+	if !ok {
+		return
+	}
+	kept := r.PathValue("name")
+	b, err := s.Assistants.Shared(name, kept)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	serveKept(w, r, kept, b)
 }
 
 // --- today ------------------------------------------------------------------

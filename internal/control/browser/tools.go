@@ -250,7 +250,7 @@ func (t *tools) download() mcp.Tool {
 			if err != nil {
 				return "", err
 			}
-			return "Downloaded to " + path + ".", nil
+			return "Downloaded to " + path + ". To give it to the user (a podcast, a report), share it with show_file.", nil
 		}, "ref")
 }
 

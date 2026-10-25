@@ -14,9 +14,10 @@ import (
 
 // fakeBackend is a sandbox with files and one running chat, s1 in p.
 type fakeBackend struct {
-	files map[string]string // resolved path → content
-	reads []int64           // the max of each read
-	shown []shown
+	files  map[string]string // resolved path → content
+	reads  []int64           // the max of each read
+	shown  []shown
+	shared []shown // to an assistant's Today, its project in session
 }
 
 type shown struct {
@@ -27,6 +28,13 @@ type shown struct {
 }
 
 func (f *fakeBackend) ChatIn(project, session string) bool { return project == "p" && session == "s1" }
+
+func (f *fakeBackend) IsAssistant(project string) bool { return project == "pip" }
+
+func (f *fakeBackend) AssistantShare(project string, sh chat.Show, data []byte, ext string) error {
+	f.shared = append(f.shared, shown{project, sh, append([]byte(nil), data...), ext})
+	return nil
+}
 
 func (f *fakeBackend) ReadSandboxFile(_ context.Context, project, _, path string, max int64) (string, int64, []byte, error) {
 	f.reads = append(f.reads, max)
@@ -149,14 +157,19 @@ func TestShowFile(t *testing.T) {
 	if _, err := call(t, b, inChat, "show_file", `{"path":"README.md","start_line":1,"end_line":1}`); err != nil || b.shown[4].sh.Kind != chat.ShowText {
 		t.Errorf("markdown range: %v %+v", err, b.shown[4].sh)
 	}
-	n := len(b.shown)
-	for p, want := range map[string]string{"bin": "binary", "shot.png": "show_image", "latin1.txt": "UTF-8"} {
-		if _, err := call(t, b, inChat, "show_file", `{"path":"`+p+`"}`); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: %v, want %q", p, err, want)
+	// Anything that isn't text is shared as what it is: an image to see, a
+	// download otherwise.
+	for p, want := range map[string]struct{ kind, ext string }{"bin": {chat.ShowDownload, ".bin"}, "shot.png": {chat.ShowImage, ".png"}, "latin1.txt": {chat.ShowDownload, ".bin"}} {
+		n := len(b.shown)
+		if _, err := call(t, b, inChat, "show_file", `{"path":"`+p+`"}`); err != nil || len(b.shown) != n+1 {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if s := b.shown[n]; s.sh.Kind != want.kind || s.ext != want.ext || string(s.data) != b.files["/workspace/"+p] || s.sh.Path != p {
+			t.Errorf("%s: %+v %s", p, s.sh, s.ext)
 		}
 	}
-	if len(b.shown) != n {
-		t.Error("a refused file was shown")
+	if _, err := call(t, b, inChat, "show_file", `{"path":"bin","start_line":1}`); err == nil {
+		t.Error("lines of a binary file")
 	}
 	for _, args := range []string{`{}`, `{"path":""}`, `{"path":"main.go","extra":1}`, `{"path":"a\u0000b"}`, `{"path":"` + strings.Repeat("a", 5000) + `"}`} {
 		if _, err := call(t, b, inChat, "show_file", args); err == nil {
@@ -194,3 +207,52 @@ func TestCaptionsAreBounded(t *testing.T) {
 }
 
 func itoa(n int) string { b, _ := json.Marshal(n); return string(b) }
+
+// A podcast the agent made, or downloaded, is shared to be played: read
+// whole, past what's read of text, up to the limit.
+func TestShareAudioAndBigFiles(t *testing.T) {
+	was := maxShare
+	maxShare = 64 << 10
+	t.Cleanup(func() { maxShare = was })
+	mp3 := "ID3\x04\x00\x00\x00\x00\x00\x00" + strings.Repeat("\xff\xfb", int(maxShare/4))
+	b := &fakeBackend{files: map[string]string{
+		"/workspace/downloads/podcast.mp3": mp3,
+		"/workspace/huge.zip":              "PK\x03\x04" + strings.Repeat("z", int(maxShare)),
+	}}
+	if out, err := call(t, b, inChat, "show_file", `{"path":"downloads/podcast.mp3","title":"This week's podcast"}`); err != nil || !strings.Contains(out, "podcast.mp3") {
+		t.Fatalf("%q %v", out, err)
+	}
+	if s := b.shown[0]; s.sh.Kind != chat.ShowAudio || s.ext != ".mp3" || string(s.data) != mp3 || s.sh.Title != "This week's podcast" {
+		t.Errorf("audio: %+v %s %d bytes", s.sh, s.ext, len(s.data))
+	}
+	if _, err := call(t, b, inChat, "show_file", `{"path":"huge.zip"}`); err == nil || !strings.Contains(err.Error(), "MB") {
+		t.Errorf("past the limit: %v", err)
+	}
+}
+
+// An assistant's routine has no chat: what it shares goes on its Today.
+// A repository's runs share nothing.
+func TestShareFromARoutine(t *testing.T) {
+	b := &fakeBackend{files: map[string]string{"/workspace/downloads/podcast.mp3": "ID3\x04\x00podcast", "/workspace/brief.md": "# Brief\n"}}
+	run := mcp.Caller{Project: "pip", Session: "-"}
+	tools := Tools(b)(run)
+	if len(tools) != 1 || tools[0].Name != "show_file" || !strings.Contains(tools[0].Description, "Today") {
+		t.Fatalf("tools = %+v", tools)
+	}
+	if out, err := call(t, b, run, "show_file", `{"path":"downloads/podcast.mp3","title":"Sunday's podcast"}`); err != nil || !strings.Contains(out, "Today") {
+		t.Fatalf("%q %v", out, err)
+	}
+	if len(b.shared) != 1 || b.shared[0].session != "pip" || b.shared[0].sh.Kind != chat.ShowAudio || b.shared[0].ext != ".mp3" || b.shared[0].sh.Title != "Sunday's podcast" {
+		t.Fatalf("shared %+v", b.shared)
+	}
+	// Text goes as a file to open, not as lines.
+	if _, err := call(t, b, run, "show_file", `{"path":"brief.md"}`); err != nil || b.shared[1].sh.Kind != chat.ShowDownload {
+		t.Errorf("text from a routine: %v %+v", err, b.shared)
+	}
+	if len(b.shown) != 0 {
+		t.Error("shown in a chat")
+	}
+	if tools := Tools(b)(mcp.Caller{Project: "p", Session: "-"}); len(tools) != 0 {
+		t.Errorf("a repository's run got %d tools", len(tools))
+	}
+}
