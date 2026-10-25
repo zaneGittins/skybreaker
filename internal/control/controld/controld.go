@@ -212,7 +212,7 @@ func Run(ctx context.Context, o Options) error {
 		case assistant.ProposeRoutine:
 			page = "routines"
 		case assistant.ProposeTakeover:
-			page, title = "today", "The browser needs you"
+			page, title = "browser", "The browser needs you"
 		}
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

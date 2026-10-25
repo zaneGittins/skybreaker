@@ -342,3 +342,54 @@ func TestThroughTheBroker(t *testing.T) {
 		t.Fatalf("page %+v, credentials asked %d times", p, asked)
 	}
 }
+
+// A phone that takes over sees the page laid out for its own screen, and
+// the agent gets the desktop back after.
+func TestFitForAPhone(t *testing.T) {
+	ts := site(t)
+	b := start(t, Options{})
+	ctx := ctxT(t)
+	b.Open(ctx, ts.URL+"/")
+	if err := b.Fit(ctx, 390, 700); err == nil {
+		t.Error("fit without taking the browser")
+	}
+	frames, err := b.Take(ctx, "zane@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range [][2]int{{0, 700}, {390, 50}, {5000, 700}} {
+		if err := b.Fit(ctx, bad[0], bad[1]); err == nil {
+			t.Errorf("fit %v", bad)
+		}
+	}
+	if err := b.Fit(ctx, 390, 700); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(10 * time.Second)
+	for f := range frames {
+		if f.Width == 390 && f.Height == 700 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("still %dx%d", f.Width, f.Height)
+		default:
+		}
+	}
+	width := func() float64 {
+		var out struct {
+			Result struct{ Value float64 } `json:"result"`
+		}
+		if err := b.call(ctx, b.page, "Runtime.evaluate", map[string]any{"expression": "screen.width", "returnByValue": true}, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Result.Value
+	}
+	if w := width(); w != 390 {
+		t.Errorf("page width %v while fitted", w)
+	}
+	b.Release(ctx)
+	if w := width(); w == 390 {
+		t.Error("the agent kept the phone's width")
+	}
+}
