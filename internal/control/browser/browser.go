@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,7 +28,13 @@ var (
 	ErrDenied = errors.New("that page is off limits to the assistant")
 	// ErrSecret is typing into a password, one-time code or card field.
 	ErrSecret = errors.New("that's a password, one-time code or card field: ask the user to take over the browser and type it themselves")
+	// ErrDownloading is a download while another is still going.
+	ErrDownloading = errors.New("a download is already going: check on it with browser_status")
 )
+
+// downloadStall is how long a download may receive nothing before it's
+// canceled.
+var downloadStall = 2 * time.Minute
 
 // Launch starts Chromium with args (its own, after the binary) and returns
 // its DevTools pipe: what it writes, what it reads, and how to stop it.
@@ -64,10 +71,11 @@ var DefaultDeny = []string{
 
 // Browser is one running Chromium with a single page.
 type Browser struct {
-	opts Options
-	conn *Conn
-	stop func()
-	page string // the page's target session
+	opts    Options
+	conn    *Conn
+	stop    func()
+	closing sync.Once
+	page    string // the page's target session
 
 	target string // the page's target
 
@@ -86,14 +94,19 @@ type Browser struct {
 	// starting and ending together leave them running for whoever remains.
 	cast    sync.Mutex
 	loaded  chan struct{}
-	dl      map[string]*download // by guid
+	dl      []*download // oldest first, until forgotten
 	dlBegin chan string
+	stall   time.Duration // see downloadStall
+	// While a download is awaited, new tabs are held, by session, to open
+	// what they would load in the page: see attached.
+	wantDL bool
+	popups map[string]string // target by session
 }
 
 type download struct {
-	name  string
-	state string // inProgress, completed, canceled
-	done  chan struct{}
+	Downloaded
+	last time.Time // when it last received anything
+	done chan struct{}
 }
 
 // Frame is one screencast image of the page, for you to see while you
@@ -138,7 +151,7 @@ func Start(ctx context.Context, o Options) (*Browser, error) {
 	if err != nil {
 		return nil, err
 	}
-	b := &Browser{opts: o, conn: NewConn(from, to), stop: stop, loaded: make(chan struct{}, 1), dl: map[string]*download{}, dlBegin: make(chan string, 4)}
+	b := &Browser{opts: o, conn: NewConn(from, to), stop: stop, loaded: make(chan struct{}, 1), dlBegin: make(chan string, 4), stall: downloadStall, popups: map[string]string{}}
 	// Events wait until the page is set up: answering them needs to know
 	// which page is the browser's own.
 	if err := b.open(ctx); err != nil {
@@ -202,6 +215,7 @@ func (b *Browser) open(ctx context.Context) error {
 		// and closed: the agent has one page, under the deny list.
 		{"Target.setAutoAttach", map[string]any{"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true}},
 		{"Page.enable", nil},
+		{"Inspector.enable", nil},
 		{"Fetch.enable", map[string]any{"handleAuthRequests": true, "patterns": []any{map[string]any{"urlPattern": "*", "requestStage": "Request"}}}},
 		{"Browser.setDownloadBehavior", map[string]any{"behavior": "allowAndName", "downloadPath": b.opts.Downloads, "eventsEnabled": true}},
 	} {
@@ -219,12 +233,14 @@ func (b *Browser) open(ctx context.Context) error {
 // Done is closed once Chromium has gone.
 func (b *Browser) Done() <-chan struct{} { return b.conn.Done() }
 
-// Close stops Chromium.
+// Close stops Chromium, once however often it's called.
 func (b *Browser) Close() {
-	b.conn.Close()
-	if b.stop != nil {
-		b.stop()
-	}
+	b.closing.Do(func() {
+		b.conn.Close()
+		if b.stop != nil {
+			b.stop()
+		}
+	})
 }
 
 func (b *Browser) call(ctx context.Context, session, method string, params, out any) error {
@@ -271,23 +287,42 @@ func (b *Browser) events() {
 			// No one sees a headless page's alert, confirm or "leave this
 			// page?": answer yes, or the page and every action on it hang.
 			go b.call(ctx, e.Session, "Page.handleJavaScriptDialog", map[string]any{"accept": true}, nil)
+		case "Inspector.targetCrashed":
+			// A crashed page answers nothing again: the next use starts
+			// another browser.
+			if e.Session == b.page {
+				go b.Close()
+			}
 		case "Browser.downloadWillBegin":
 			var p struct{ GUID, SuggestedFilename string }
 			json.Unmarshal(e.Params, &p)
 			b.mu.Lock()
-			b.dl[p.GUID] = &download{name: p.SuggestedFilename, state: "inProgress", done: make(chan struct{})}
+			b.dl = append(b.dl, &download{Downloaded: Downloaded{GUID: p.GUID, Name: p.SuggestedFilename, Path: path.Join(b.opts.Downloads, p.GUID), State: "inProgress"},
+				last: time.Now(), done: make(chan struct{})})
 			b.mu.Unlock()
+			go b.watchStall(p.GUID)
 			select {
 			case b.dlBegin <- p.GUID:
 			default:
 			}
 		case "Browser.downloadProgress":
-			var p struct{ GUID, State string }
+			var p struct {
+				GUID          string
+				State         string
+				TotalBytes    float64
+				ReceivedBytes float64
+			}
 			json.Unmarshal(e.Params, &p)
 			b.mu.Lock()
-			if d := b.dl[p.GUID]; d != nil && d.state == "inProgress" && p.State != "inProgress" {
-				d.state = p.State
-				close(d.done)
+			if d := b.find(p.GUID); d != nil && d.State == "inProgress" {
+				if r := int64(p.ReceivedBytes); r != d.Received {
+					d.Received, d.last = r, time.Now()
+				}
+				d.Total = int64(p.TotalBytes)
+				if p.State != "inProgress" {
+					d.State = p.State
+					close(d.done)
+				}
 			}
 			b.mu.Unlock()
 		}
@@ -295,7 +330,8 @@ func (b *Browser) events() {
 }
 
 // attached answers a target held at its start: another page is closed
-// before it loads; a frame or worker of the page gets the deny list too.
+// before it loads, unless a download is awaited (see popup); a frame or
+// worker of the page gets the deny list too.
 func (b *Browser) attached(ctx context.Context, e Event) {
 	var p struct {
 		SessionID  string `json:"sessionId"`
@@ -309,7 +345,20 @@ func (b *Browser) attached(ctx context.Context, e Event) {
 		return
 	}
 	if p.TargetInfo.Type == "page" {
-		b.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": p.TargetInfo.TargetID}, nil)
+		b.mu.Lock()
+		want := b.wantDL
+		if want {
+			b.popups[p.SessionID] = p.TargetInfo.TargetID
+		}
+		b.mu.Unlock()
+		if !want {
+			b.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": p.TargetInfo.TargetID}, nil)
+			return
+		}
+		b.call(ctx, p.SessionID, "Fetch.enable", map[string]any{"patterns": []any{map[string]any{"urlPattern": "*", "requestStage": "Request"}}}, nil)
+		b.call(ctx, p.SessionID, "Runtime.runIfWaitingForDebugger", nil, nil)
+		// One that never asks for a page is closed all the same.
+		time.AfterFunc(10*time.Second, func() { b.popup(context.Background(), p.SessionID, "") })
 		return
 	}
 	b.call(ctx, p.SessionID, "Fetch.enable", map[string]any{"handleAuthRequests": true, "patterns": []any{map[string]any{"urlPattern": "*", "requestStage": "Request"}}}, nil)
@@ -338,17 +387,46 @@ func (b *Browser) auth(ctx context.Context, e Event) {
 
 func (b *Browser) paused(ctx context.Context, e Event) {
 	var p struct {
-		RequestID string `json:"requestId"`
-		Request   struct {
+		RequestID    string `json:"requestId"`
+		ResourceType string `json:"resourceType"`
+		Request      struct {
 			URL string `json:"url"`
 		} `json:"request"`
 	}
 	json.Unmarshal(e.Params, &p)
+	b.mu.Lock()
+	_, popup := b.popups[e.Session]
+	b.mu.Unlock()
+	if popup {
+		// Nothing loads in a new tab: a page it would show opens in the
+		// page, under the deny list, where a download begins as any other.
+		b.call(ctx, e.Session, "Fetch.failRequest", map[string]any{"requestId": p.RequestID, "errorReason": "BlockedByClient"}, nil)
+		if p.ResourceType == "Document" {
+			b.popup(ctx, e.Session, p.Request.URL)
+		}
+		return
+	}
 	if !b.Allowed(p.Request.URL) {
 		b.call(ctx, e.Session, "Fetch.failRequest", map[string]any{"requestId": p.RequestID, "errorReason": "BlockedByClient"}, nil)
 		return
 	}
 	b.call(ctx, e.Session, "Fetch.continueRequest", map[string]any{"requestId": p.RequestID}, nil)
+}
+
+// popup closes a new tab held for a download, and opens u, if any, in
+// the page instead.
+func (b *Browser) popup(ctx context.Context, session, u string) {
+	b.mu.Lock()
+	target, ok := b.popups[session]
+	delete(b.popups, session)
+	b.mu.Unlock()
+	if !ok {
+		return
+	}
+	b.call(ctx, "", "Target.closeTarget", map[string]any{"targetId": target}, nil)
+	if p, err := url.Parse(u); err == nil && (p.Scheme == "http" || p.Scheme == "https") {
+		b.call(ctx, b.page, "Page.navigate", map[string]any{"url": u}, nil)
+	}
 }
 
 // Allowed reports whether the browser may load u now: the deny list holds
@@ -824,14 +902,39 @@ func (b *Browser) Status(ctx context.Context) (Status, error) {
 	return s, nil
 }
 
-// Downloaded is a file the browser saved, by its name where it runs.
+// Downloaded is a file the browser saves, by its name where it runs.
 type Downloaded struct {
-	Name string // as the site named it
-	Path string // in Downloads
+	GUID  string
+	Name  string // as the site named it
+	Path  string // in Downloads
+	State string // inProgress, completed, canceled, interrupted
+	// Received and Total are its bytes so far and in all; Total is 0 when
+	// the site doesn't say.
+	Received, Total int64
 }
 
-// Download clicks an element that downloads a file and waits for it.
-func (b *Browser) Download(ctx context.Context, ref int) (Downloaded, error) {
+// find is the download with guid; b.mu is held.
+func (b *Browser) find(guid string) *download {
+	for _, d := range b.dl {
+		if d.GUID == guid {
+			return d
+		}
+	}
+	return nil
+}
+
+// Download clicks an element that downloads a file and waits up to wait
+// for it. One still going comes back in progress, and carries on: see
+// Downloads. One download goes at a time.
+func (b *Browser) Download(ctx context.Context, ref int, wait time.Duration) (Downloaded, error) {
+	b.mu.Lock()
+	for _, d := range b.dl {
+		if d.State == "inProgress" {
+			b.mu.Unlock()
+			return Downloaded{}, ErrDownloading
+		}
+	}
+	b.mu.Unlock()
 	done, err := b.begin(ctx, false)
 	if err != nil {
 		return Downloaded{}, err
@@ -850,6 +953,8 @@ drain:
 		}
 	}
 	b.cue(Cue{Kind: "click", X: s.X, Y: s.Y})
+	b.setWantDL(true)
+	defer b.setWantDL(false)
 	err = b.click(ctx, s.X, s.Y)
 	done() // the wait for the file needn't hold you up
 	if err != nil {
@@ -863,21 +968,88 @@ drain:
 	case <-ctx.Done():
 		return Downloaded{}, ctx.Err()
 	}
+	b.setWantDL(false)
 	b.mu.Lock()
-	d := b.dl[guid]
+	d := b.find(guid)
 	b.mu.Unlock()
+	t := time.NewTimer(wait)
+	defer t.Stop()
 	select {
 	case <-d.done:
-	case <-time.After(10 * time.Minute):
-		return Downloaded{}, errors.New("the download took too long")
+	case <-t.C:
 	case <-ctx.Done():
-		return Downloaded{}, ctx.Err()
 	}
 	b.mu.Lock()
-	state := d.state
+	defer b.mu.Unlock()
+	return d.Downloaded, nil
+}
+
+func (b *Browser) setWantDL(v bool) {
+	b.mu.Lock()
+	b.wantDL = v
 	b.mu.Unlock()
-	if state != "completed" {
-		return Downloaded{}, fmt.Errorf("the download was %s", state)
+}
+
+// Downloads are the browser's downloads, going or ended, until forgotten.
+func (b *Browser) Downloads() []Downloaded {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]Downloaded, len(b.dl))
+	for i, d := range b.dl {
+		out[i] = d.Downloaded
 	}
-	return Downloaded{Name: d.name, Path: path.Join(b.opts.Downloads, guid)}, nil
+	return out
+}
+
+// Forget stops tracking an ended download.
+func (b *Browser) Forget(guid string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.dl = slices.DeleteFunc(b.dl, func(d *download) bool { return d.GUID == guid && d.State != "inProgress" })
+}
+
+// watchStall cancels a download that stops receiving.
+func (b *Browser) watchStall(guid string) {
+	stall := b.stall
+	t := time.NewTicker(stall / 4)
+	defer t.Stop()
+	for {
+		select {
+		case <-b.Done():
+			return
+		case <-t.C:
+		}
+		b.mu.Lock()
+		d := b.find(guid)
+		if d == nil || d.State != "inProgress" {
+			b.mu.Unlock()
+			return
+		}
+		stalled := time.Since(d.last) > stall
+		b.mu.Unlock()
+		if !stalled {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := b.call(ctx, "", "Browser.cancelDownload", map[string]any{"guid": guid}, nil)
+		cancel()
+		if err == nil {
+			b.mu.Lock()
+			if d.State == "inProgress" {
+				d.State = "canceled"
+				close(d.done)
+			}
+			b.mu.Unlock()
+		}
+		return
+	}
+}
+
+// Alive checks the page still answers: one stuck in a script, or a browser
+// that's stopped, doesn't.
+func (b *Browser) Alive(ctx context.Context) error {
+	if err := b.call(ctx, b.page, "Runtime.evaluate", map[string]any{"expression": "1", "returnByValue": true}, nil); err != nil {
+		return fmt.Errorf("the browser doesn't answer: %w", err)
+	}
+	return nil
 }

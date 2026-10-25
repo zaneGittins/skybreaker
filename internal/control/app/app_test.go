@@ -173,6 +173,7 @@ type fakeBroker struct {
 	revoked         []string
 	revokedProjects []string
 	n               int
+	ca              []byte // a real CA's PEM, for a browser to pin
 }
 
 func (b *fakeBroker) Mint(_ context.Context, project string, ttl time.Duration) (Minted, error) {
@@ -199,6 +200,9 @@ func (b *fakeBroker) RevokeProject(_ context.Context, project string) error {
 }
 
 func (b *fakeBroker) CA(context.Context) ([]byte, error) {
+	if b.ca != nil {
+		return b.ca, nil
+	}
 	return []byte("-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n"), nil
 }
 

@@ -295,7 +295,7 @@ func TestScreenshotAndDownload(t *testing.T) {
 		t.Fatalf("screenshot %d bytes %v", len(png), err)
 	}
 	p, _ := b.Read(ctx)
-	d, err := b.Download(ctx, ref(t, p, "Get the podcast"))
+	d, err := b.Download(ctx, ref(t, p, "Get the podcast"), 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
