@@ -131,6 +131,25 @@ func TestReadSandboxFileRunsInTheSandbox(t *testing.T) {
 	}
 }
 
+// A big file, a podcast, is read whole: past the default limit on what a
+// sandbox command may print, up to what was asked for.
+func TestReadSandboxFileReadsBigFiles(t *testing.T) {
+	f := newFixture(t)
+	f.docker.set(func() {
+		f.docker.running["skybreaker-orbit"] = true
+		f.docker.execOut = func([]string) (string, error) { return "ok\x00/workspace/ep.mp3\x003\x00ID3", nil }
+	})
+	const want = 100 << 20
+	if _, _, _, err := f.app.ReadSandboxFile(context.Background(), "orbit", "", "ep.mp3", want); err != nil {
+		t.Fatal(err)
+	}
+	f.docker.mu.Lock()
+	defer f.docker.mu.Unlock()
+	if n := len(f.docker.limits); n == 0 || f.docker.limits[n-1] < want {
+		t.Errorf("read with output limits %v, want at least %d", f.docker.limits, want)
+	}
+}
+
 // An agent in a chat calls show_image over the skybreaker MCP server, as
 // it's mounted on the hook listener, and the chat gets the card and a
 // copy it can serve.
