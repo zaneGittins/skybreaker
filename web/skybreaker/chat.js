@@ -1072,7 +1072,9 @@ async function renderChat(seq, d) {
     // A network request the broker holds for this project waits here too:
     // the agent's command is stuck on it.
     const req = v.requests?.[0];
-    const key = ask ? 'ask:' + ask.id + ':' + chat.asks.size : chat.login ? 'login:' + JSON.stringify(chat.login) : req ? 'req:' + req.id : '';
+    // So does an assistant's browser, waiting for you to sign in.
+    const take = v.takeover;
+    const key = ask ? 'ask:' + ask.id + ':' + chat.asks.size : chat.login ? 'login:' + JSON.stringify(chat.login) : req ? 'req:' + req.id : take ? 'take:' + take.id : '';
     syncComposer();
     if (key === dockKey) return;
     dockKey = key;
@@ -1080,6 +1082,7 @@ async function renderChat(seq, d) {
     if (ask) dock.replaceChildren(ask.ask.kind === 'question' ? questionCard(ask) : permissionCard(ask, chat.asks.size));
     else if (chat.login) dock.replaceChildren(loginCard(chat.login));
     else if (req) dock.replaceChildren(requestCard(req, project.tint, { dock: true }));
+    else if (take) dock.replaceChildren(asstTakeoverCard(project.name, take));
     else leave([...dock.children].filter(n => !n.classList.contains('leaving')), 160);
   }
   v.project = session.project;
@@ -1092,6 +1095,16 @@ async function renderChat(seq, d) {
     } catch { }
   }, 300);
   v.refreshRequests();
+  v.refreshTakeover = debounce(async () => {
+    if (!asst) return;
+    try {
+      const a = await api('GET', asstAPI(project.name));
+      if (v.closed) return;
+      v.takeover = a.proposals.find(x => x.kind === 'takeover');
+      drawDock();
+    } catch { }
+  }, 300);
+  v.refreshTakeover();
 
   const answer = async (ask, body) => {
     try { await api('POST', `/api/sessions/${id}/answer`, { ask: ask.id, ...body }) } catch (e) { toast(e.message, 'error') }
@@ -1206,7 +1219,7 @@ async function renderChat(seq, d) {
   const drawWorking = () => {
     const agents = runningAgents(chat);
     working.hidden = !(chat.working || agents.length) || chat.asks.size > 0;
-    avSet(asstMark, asstMotion(chat.asks.size, (chat.working ? 1 : 0) + agents.length));
+    avSet(asstMark, asstMotion(chat.asks.size + (v.takeover ? 1 : 0), (chat.working ? 1 : 0) + agents.length));
     const lead = agents[agents.length - 1];
     agentsBtn.hidden = !lead;
     if (lead) {

@@ -1601,6 +1601,7 @@ async function boot() {
       toast(`${ev.project} wants to reach out`, '', { label: 'Review', run: () => navigate('/') });
     }
     if (ev.type === 'request') { state.chat?.refreshRequests?.(); activityBadge() }
+    if (ev.type === 'assistant') state.chat?.refreshTakeover?.();
     if (ev.type === 'board' && state.itemSheet && state.itemSheet.ref === ev.data) state.itemSheet.reload();
     if (ev.type === 'usage') { if (state.route?.name === 'home') refresh(); return }
     if (here && state.chat) state.chat.refreshMeta();

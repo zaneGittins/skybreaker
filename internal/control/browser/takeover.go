@@ -30,8 +30,7 @@ func (b *Browser) Take(ctx context.Context, by string) (<-chan Frame, error) {
 	// No new action of the agent's starts now; wait out any running.
 	b.act.Lock()
 	b.act.Unlock()
-	err := b.call(ctx, b.page, "Page.startScreencast", map[string]any{"format": "jpeg", "quality": 70, "maxWidth": 1280, "maxHeight": 900}, nil)
-	if err != nil {
+	if err := b.screencast(ctx, 1280, 900); err != nil {
 		b.Release(ctx)
 		return nil, err
 	}
@@ -52,10 +51,34 @@ func (b *Browser) Release(ctx context.Context) {
 	}
 	b.mu.Unlock()
 	b.call(ctx, b.page, "Page.stopScreencast", nil, nil)
+	b.call(ctx, b.page, "Emulation.clearDeviceMetricsOverride", nil, nil)
 	// What you opened, the agent mayn't: leave it a blank page instead.
 	if u, err := b.current(ctx); err == nil && denied(u, b.deny()) {
 		b.navigate(ctx, "about:blank")
 	}
+}
+
+func (b *Browser) screencast(ctx context.Context, w, h int) error {
+	return b.call(ctx, b.page, "Page.startScreencast", map[string]any{"format": "jpeg", "quality": 70, "maxWidth": w, "maxHeight": h}, nil)
+}
+
+// Fit lays the page out for your screen, w by h CSS pixels, as a phone
+// would, while you have the browser: a desktop page shrunk to a phone is
+// too small to read or tap. Release gives the agent its own size back.
+func (b *Browser) Fit(ctx context.Context, w, h int) error {
+	if err := b.taken(); err != nil {
+		return err
+	}
+	if w < 240 || w > 1600 || h < 240 || h > 2000 {
+		return fmt.Errorf("can't fit the page to %dx%d", w, h)
+	}
+	err := b.call(ctx, b.page, "Emulation.setDeviceMetricsOverride", map[string]any{"width": w, "height": h, "deviceScaleFactor": 2, "mobile": true}, nil)
+	if err != nil {
+		return err
+	}
+	// Frames at the phone's own pixels, so the text is sharp.
+	b.call(ctx, b.page, "Page.stopScreencast", nil, nil)
+	return b.screencast(ctx, 2*w, 2*h)
 }
 
 func (b *Browser) frame(ctx context.Context, e Event) {

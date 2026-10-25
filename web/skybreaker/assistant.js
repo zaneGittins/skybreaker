@@ -114,7 +114,7 @@ async function renderAssistant(seq, name, tab) {
   // On a phone, which has no sidebar, the + starts a chat with it.
   const fab = tab === 'browser' ? null : el('button.fab', { type: 'button', onclick: () => pickHarness(p), 'aria-label': 'Message ' + look.name }, svg(ICON.plus));
   if (fab) asstAccent(fab, look.color);
-  $('#app').replaceChildren(page, fab);
+  $('#app').replaceChildren(...[page, fab].filter(Boolean));
 }
 
 // asstHomeRow is an assistant on the inbox, with what it asks of you.
@@ -518,12 +518,16 @@ function asstPersonality(name, a) {
 // asstBrowser shows the assistant's browser live and hands it to you: the
 // assistant's browser tools pause until you're done.
 function asstBrowser(name, look) {
-  const canvas = el('canvas.a-screen', { tabindex: '0', width: '1280', height: '900', 'aria-label': look.name + '\u2019s browser. Escape leaves the page.' });
+  const touch = matchMedia('(pointer: coarse)').matches;
+  // On a phone the canvas takes no focus, or a tap would take it from the
+  // field below and close the keyboard.
+  const canvas = el('canvas.a-screen', { tabindex: touch ? null : '0', width: '1280', height: '900', 'aria-label': look.name + '\u2019s browser. Escape leaves the page.' });
   // A phone's keyboard comes up for a field, not a canvas: this one passes
   // what you type to the page.
   const keys = el('input.a-keys', { type: 'text', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Type into the page' });
   const status = el('span.a-live-status', null, el('span.spinner'), 'Starting the browser\u2026');
   const url = el('input.np-input.a-url', { type: 'url', placeholder: 'https://', 'aria-label': 'Address' });
+  const wrap = el('div.a-screen-wrap', null, canvas, keys);
   const ctx = canvas.getContext('2d');
   let size = { w: 1280, h: 900 }, open = false;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -531,7 +535,19 @@ function asstBrowser(name, look) {
   ws.binaryType = 'blob';
   const send = m => { if (ws.readyState === 1) ws.send(JSON.stringify(m)) };
   const done = () => { send({ t: 'done' }); navigate(asstPath(name)) };
-  state.asstLive = { close: () => { try { ws.close() } catch { } } };
+  // A phone gets the page laid out for its own screen, and again when it
+  // turns; the keyboard coming and going leaves it be.
+  let fitW = 0;
+  const fit = () => {
+    const w = Math.round(wrap.clientWidth);
+    if (!touch || !w || w === fitW) return;
+    fitW = w;
+    const h = Math.round(Math.min(window.innerHeight - wrap.getBoundingClientRect().top - 16, w * 2));
+    send({ t: 'fit', w, h: Math.max(h, 240) });
+  };
+  ws.onopen = () => requestAnimationFrame(fit);
+  window.addEventListener('resize', fit);
+  state.asstLive = { close: () => { window.removeEventListener('resize', fit); try { ws.close() } catch { } } };
   ws.onmessage = async e => {
     if (typeof e.data !== 'string') {
       const img = await createImageBitmap(e.data);
@@ -564,7 +580,9 @@ function asstBrowser(name, look) {
   };
   canvas.addEventListener('pointerdown', e => {
     canvas.setPointerCapture(e.pointerId);
-    if (e.pointerType === 'touch') keys.focus({ preventScroll: true }); else canvas.focus();
+    // A touch keeps the keyboard's field focused: no mouse events follow
+    // to move the focus away.
+    if (e.pointerType === 'touch') { e.preventDefault(); keys.focus({ preventScroll: true }) } else canvas.focus();
     send({ t: 'mouse', type: 'mousePressed', ...at(e), button: buttons[e.button] || 'left', click_count: clicks(e), modifiers: mods(e) });
   });
   canvas.addEventListener('pointerup', e => send({ t: 'mouse', type: 'mouseReleased', ...at(e), button: buttons[e.button] || 'left', click_count: last.n, modifiers: mods(e) }));
@@ -581,6 +599,8 @@ function asstBrowser(name, look) {
     send({ t: 'mouse', type: 'mouseWheel', ...at(e), dx: e.deltaX * scale, dy: e.deltaY * scale });
   }, { passive: false });
   canvas.addEventListener('contextmenu', e => e.preventDefault());
+  // iOS opens the keyboard only for a focus in a tap's own click.
+  canvas.addEventListener('click', () => { if (touch) keys.focus({ preventScroll: true }) });
   const keyDown = e => {
     if (e.key === 'Escape') { e.target.blur(); return } // the way out, for the keyboard
     if ((e.metaKey || e.ctrlKey) && !e.getModifierState('AltGraph') && e.key.toLowerCase() === 'v') return; // paste comes as text
@@ -608,8 +628,8 @@ function asstBrowser(name, look) {
     el('div.a-live-bar', null, avatar(look, { state: 'needs', mini: true }), status, el('span.grow'),
       el('button.btn.primary.sm', { type: 'button', onclick: done }, svg(ICON.check), 'Done')),
     go,
-    el('div.a-screen-wrap', null, canvas, keys),
-    el('p.np-hint', null, 'Tap or click the page to type. What you type goes straight to the browser; the assistant never sees it.'));
+    wrap,
+    el('p.np-hint', null, (touch ? 'Tap' : 'Click') + ' the page to type. What you type goes straight to the browser; ' + look.name + ' never sees it.'));
 }
 
 // --- making one ------------------------------------------------------------------

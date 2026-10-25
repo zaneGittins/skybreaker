@@ -68,6 +68,23 @@ func TestLive(t *testing.T) {
 		t.Errorf("agent not paused: %v", err)
 	}
 	msg := func(v any) { m, _ := json.Marshal(v); ws.in <- m }
+	msg(map[string]any{"t": "fit", "w": 390, "h": 700})
+	sized := func() bool {
+		ws.mu.Lock()
+		defer ws.mu.Unlock()
+		for _, m := range ws.text {
+			if m == `{"h":700,"t":"size","w":390}` {
+				return true
+			}
+		}
+		return false
+	}
+	for !sized() && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !sized() {
+		t.Error("fitting to a phone didn't resize the frames")
+	}
 	msg(map[string]any{"t": "go", "url": ts.URL + "/next"})
 	msg(map[string]any{"t": "mouse", "type": "mouseMoved", "x": 10, "y": 10})
 	msg(map[string]any{"t": "nonsense"})

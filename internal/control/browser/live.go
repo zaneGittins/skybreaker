@@ -21,7 +21,7 @@ const liveIdle = 15 * time.Minute
 // errors. In come their mouse, keys, text and addresses, as JSON:
 //
 //	{"t":"mouse", ...Mouse} {"t":"key", ...Key} {"t":"text","s":"..."}
-//	{"t":"go","url":"..."} {"t":"done"}
+//	{"t":"go","url":"..."} {"t":"fit","w":390,"h":700} {"t":"done"}
 func Live(ctx context.Context, ws WS, b *Browser, by string) error {
 	frames, err := b.Take(ctx, by)
 	if err != nil {
@@ -95,6 +95,8 @@ func handle(ctx context.Context, b *Browser, m []byte, say func(any)) (done bool
 		T   string `json:"t"`
 		S   string `json:"s"`
 		URL string `json:"url"`
+		W   int    `json:"w"`
+		H   int    `json:"h"`
 	}
 	if json.Unmarshal(m, &head) != nil {
 		say(map[string]any{"t": "error", "error": "not JSON"})
@@ -118,6 +120,8 @@ func handle(ctx context.Context, b *Browser, m []byte, say func(any)) (done bool
 		err = b.Text(ctx, head.S)
 	case "go":
 		err = b.Go(ctx, head.URL)
+	case "fit":
+		err = b.Fit(ctx, head.W, head.H)
 	default:
 		say(map[string]any{"t": "error", "error": "unknown message " + head.T})
 		return false
