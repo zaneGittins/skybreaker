@@ -142,7 +142,8 @@ func TestDownloadInANewTab(t *testing.T) {
 func TestCrashedPageClosesTheBrowser(t *testing.T) {
 	b := start(t, Options{})
 	ctx := ctxT(t)
-	b.call(ctx, b.page, "Page.navigate", map[string]any{"url": "chrome://crash"}, nil)
+	// The renderer dies without answering.
+	go b.call(ctx, b.page, "Page.crash", nil, nil)
 	select {
 	case <-b.Done():
 	case <-time.After(15 * time.Second):

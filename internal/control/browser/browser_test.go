@@ -567,3 +567,23 @@ func TestLooksLikeChrome(t *testing.T) {
 		t.Errorf("Accept-Language = %q", l)
 	}
 }
+
+// Back to a page Chrome kept in its back/forward cache fires no load
+// event: it mustn't wait out the load timeout.
+func TestBackFromTheCacheIsQuick(t *testing.T) {
+	ts := site(t)
+	b := start(t, Options{})
+	ctx := ctxT(t)
+	b.Open(ctx, ts.URL+"/")
+	b.Open(ctx, ts.URL+"/next")
+	at := time.Now()
+	if err := b.Back(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(at); d > 5*time.Second {
+		t.Fatalf("back took %v", d)
+	}
+	if s, _ := b.Status(ctx); s.Title != "Home" {
+		t.Fatalf("after back: %+v", s)
+	}
+}
