@@ -105,6 +105,7 @@ type ProjectPolicy struct {
 	Name   string
 	Repo   string
 	hosts  map[string]*HostRule
+	wild   []*HostRule  // "*.example.com" hosts, longest first
 	routes []*RouteRule // longest prefix first
 }
 
@@ -141,9 +142,23 @@ func (r *RouteRule) Strip(path string) string {
 	return rest
 }
 
-// Host returns the rule for a host, ignoring case and a trailing dot.
+// Host returns the rule for a host, ignoring case and a trailing dot: the
+// host's own, else the most specific wildcard over it. The rule's Host may
+// be that wildcard, so callers dial and name the host they were asked for.
 func (p *ProjectPolicy) Host(host string) *HostRule {
-	return p.hosts[normHost(host)]
+	host = normHost(host)
+	if !hostRe.MatchString(host) {
+		return nil
+	}
+	if h := p.hosts[host]; h != nil {
+		return h
+	}
+	for _, h := range p.wild {
+		if strings.HasSuffix(host, h.Host[1:]) {
+			return h
+		}
+	}
+	return nil
 }
 
 // Route returns the route whose prefix owns path, matching whole segments.
@@ -209,6 +224,31 @@ var (
 )
 
 func normHost(h string) string { return strings.TrimSuffix(strings.ToLower(h), ".") }
+
+// publicSuffixes are two-label suffixes anyone can register under, so a
+// wildcard over one would reach strangers' sites. Not the full list: enough
+// to catch the common slip.
+var publicSuffixes = map[string]bool{
+	"co.uk": true, "org.uk": true, "ac.uk": true, "gov.uk": true, "com.au": true, "net.au": true, "org.au": true,
+	"co.nz": true, "co.jp": true, "co.za": true, "com.br": true, "com.cn": true, "co.in": true, "com.mx": true,
+	"github.io": true, "appspot.com": true, "herokuapp.com": true, "vercel.app": true, "netlify.app": true, "pages.dev": true,
+}
+
+// checkHost accepts a bare host name, or "*." before one of two labels or
+// more: every subdomain of it, at any depth, but not the domain itself.
+func checkHost(host string) error {
+	if strings.Contains(host, "*") {
+		rest, ok := strings.CutPrefix(host, "*.")
+		if !ok || !hostRe.MatchString(rest) || strings.Count(rest, ".") < 1 || publicSuffixes[rest] {
+			return errors.New("a wildcard must be *. before a domain of two labels or more, such as *.example.com")
+		}
+		return nil
+	}
+	if !hostRe.MatchString(host) {
+		return errors.New("must be a bare host name, or *.example.com for its subdomains: no scheme or port")
+	}
+	return nil
+}
 
 func (c *Config) resolve() error {
 	var errs []error
@@ -292,6 +332,9 @@ func (c *Config) resolveProject(name string, p *Project) (*ProjectPolicy, error)
 			return fmt.Errorf("host %s is listed twice", h.Host)
 		}
 		pp.hosts[h.Host] = h
+		if strings.HasPrefix(h.Host, "*.") {
+			pp.wild = append(pp.wild, h)
+		}
 		return nil
 	}
 	for _, e := range p.Allow {
@@ -317,13 +360,17 @@ func (c *Config) resolveProject(name string, p *Project) (*ProjectPolicy, error)
 		}
 	}
 	slices.SortFunc(pp.routes, func(a, b *RouteRule) int { return len(b.Prefix) - len(a.Prefix) })
+	slices.SortFunc(pp.wild, func(a, b *HostRule) int { return len(b.Host) - len(a.Host) })
 	return pp, nil
 }
 
 func buildHost(capName string, e *Entry, vars map[string]string) (*HostRule, error) {
 	host := normHost(e.Host)
-	if !hostRe.MatchString(host) {
-		return nil, errors.New("must be a bare host name: no scheme, port or wildcard")
+	if err := checkHost(host); err != nil {
+		return nil, err
+	}
+	if strings.HasPrefix(host, "*.") && e.Inject != nil {
+		return nil, errors.New("a wildcard host can't carry a secret: secrets go to hosts named exactly")
 	}
 	h := &HostRule{Host: host, Mode: e.Mode, Ports: e.Ports, Inject: e.Inject, Capability: capName}
 	if len(h.Ports) == 0 {

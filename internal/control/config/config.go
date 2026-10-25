@@ -67,6 +67,7 @@ type Config struct {
 	added      map[string]bool  // projects created in the app (projects.json)
 	fileAccess map[string]Grant // each project's access as the config file gives it
 	appBundles map[string]bool  // bundles made in the app (access.json)
+	builtins   map[string]bool  // Skybreaker's own bundles, not replaced
 	appJobs    map[string]bool  // assistants' routines, made in the app (routines.json)
 	appContent *content.Rules   // content rules made in the app (access.json)
 }
@@ -201,6 +202,7 @@ func loadWith(path string, staged *Paths) (*Config, error) {
 	if err := c.mergeAccess(a, paths.Access); err != nil {
 		return nil, err
 	}
+	c.addBuiltins()
 	var routines []*Job
 	if err := readJSON(paths.Routines, &routines); err != nil {
 		return nil, err

@@ -193,7 +193,8 @@ func splice(a, b net.Conn) {
 // mitm terminates the client's TLS with a leaf from the broker CA and serves
 // HTTP/1.1 on the inner connection, so every request goes through the rules.
 func (s *Server) mitm(w http.ResponseWriter, r *http.Request, e audit.Entry, pp *config.ProjectPolicy, rule *config.HostRule, port int, token string) {
-	host := rule.Host
+	// The host asked for at CONNECT: rule.Host may be a wildcard over it.
+	host := e.Host
 	conn, err := hijack(w)
 	if err != nil {
 		return

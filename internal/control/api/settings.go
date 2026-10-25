@@ -181,7 +181,7 @@ type secretView struct {
 
 type bundleView struct {
 	Name    string          `json:"name"`
-	Source  string          `json:"source"`
+	Source  string          `json:"source"` // file, app or builtin
 	Entries []*policy.Entry `json:"entries"`
 	UsedBy  []string        `json:"used_by"`
 }
@@ -279,6 +279,8 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		src := "file"
 		if c.AppBundle(name) {
 			src = "app"
+		} else if c.BuiltinBundle(name) {
+			src = "builtin"
 		}
 		out.Bundles = append(out.Bundles, bundleView{Name: name, Source: src, Entries: nonNil(c.Capabilities[name]), UsedBy: nonNil(usedBy[name])})
 	}

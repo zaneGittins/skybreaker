@@ -250,7 +250,7 @@ func TestAccessAPI(t *testing.T) {
 	if len(v.Projects) != 1 || len(v.Projects[0].App.Capabilities) != 1 || len(v.Projects[0].App.Allow) != 1 {
 		t.Fatalf("projects %+v", v.Projects)
 	}
-	if len(v.Bundles) != 1 || v.Bundles[0].Source != "app" {
+	if len(v.Bundles) != 2 || v.Bundles[0].Name != "google" || v.Bundles[0].Source != "builtin" || v.Bundles[1].Source != "app" {
 		t.Fatalf("bundles %+v", v.Bundles)
 	}
 	for name, c := range map[string][2]string{
