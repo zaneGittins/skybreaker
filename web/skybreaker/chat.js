@@ -308,6 +308,67 @@ function sharedFile(url, f) {
     audio ? el('div.sf-audio', null, el('audio', { controls: true, preload: 'metadata', src: url, 'aria-label': reveal(f.title || base) })) : null);
 }
 
+function thinkingRow(it) {
+  return el('details.thinking', null,
+    el('summary', null, svg(ICON.brain), el('span', null, 'Thought'), svg(ICON.chevron, 'chev')),
+    markdown(it.text));
+}
+
+function toolLine(it, asks = new Map()) {
+  const t = it.tool;
+  const waiting = t.status === 'running' && !!it.waiting && asks.has(it.waiting);
+  const running = t.status === 'running' && !waiting;
+  const verb = waiting ? { command: 'Run', edit: 'Edit', read: 'Read', search: 'Search', web: 'Fetch' }[t.kind] || t.name : {
+    command: running ? 'Running' : 'Ran', edit: running ? 'Editing' : 'Edited', read: running ? 'Reading' : 'Read',
+    search: running ? 'Searching' : 'Searched', web: running ? 'Fetching' : 'Fetched', agent: 'Agent', todo: 'Updated the plan', mcp: t.name, other: t.name,
+  }[t.kind] || t.name;
+  const agent = t.kind === 'agent';
+  const status = waiting ? el('span.tstat.wait', null, svg(ICON.shield), 'Needs approval')
+    : running ? el('span.spinner')
+    : t.status === 'failed' ? el('span.tstat.bad', { title: 'Failed' }, svg(ICON.x))
+      : t.status === 'declined' ? el('span.tstat.muted', null, agent ? 'stopped' : 'declined') : null;
+  const n = it.children?.length;
+  const title = t.kind === 'todo' ? '' : reveal(t.title || '');
+  return [
+    el('span.ticon', null, svg(ICON[TOOL_ICON[t.kind] || 'bolt'])),
+    el('span.tverb', null, verb),
+    // A running subagent says what it's doing under its name.
+    agent && running && !it.parent
+      ? el('span.ttitle.tstack', null, el('span', null, title), el('span.tnow', null, reveal(agentActivity(it))))
+      : el('span.ttitle' + (t.kind === 'command' || t.kind === 'edit' || t.kind === 'read' ? '.mono' : ''), null, title),
+    n ? el('span.tcount', null, `${n} step${n === 1 ? '' : 's'}`) : null,
+    t.added || t.removed ? el('span.tdiff', null, el('span.plus', null, '+' + (t.added || 0)), el('span.minus', null, '−' + (t.removed || 0))) : null,
+    t.exit ? el('span.tstat.bad', null, 'exit ' + t.exit) : null,
+    status,
+  ];
+}
+
+// toolRow draws a tool call: asks are the chat's open ones, and open the
+// subagent cards to keep open as they redraw.
+function toolRow(it, asks = new Map(), open = new Set()) {
+  const t = it.tool;
+  let body = null;
+  if (t.kind === 'todo' && t.output) {
+    return el('div.tool.todo', null, el('div.tline', null, toolLine(it, asks)),
+      el('ul.todos', null, t.output.split('\n').map(l => {
+        const m = /^\[(.)\] (.*)$/.exec(l) || [null, ' ', l];
+        const st = m[1] === 'x' ? 'done' : m[1] === '~' ? 'doing' : 'todo';
+        return el('li.' + st, null, el('span.box', null, st === 'done' ? svg(ICON.check) : null), reveal(m[2]));
+      })));
+  }
+  if (t.diff) body = diffView(t.diff, { open: 1, limit: 120 });
+  else if (t.kind === 'agent' && t.output && !it.children?.length) body = el('div.tagent-out', null, markdown(t.output));
+  else if (t.kind === 'command') body = el('pre.tout', null, '$ ' + reveal(t.title) + (t.output ? '\n' + plainOut(t.output) : ''));
+  else if (t.output) body = el('pre.tout', null, plainOut(t.output));
+  else if (t.input && t.kind !== 'read' && t.kind !== 'search') body = el('pre.tout', null, toolInput(t.input));
+  if (it.children?.length) body = el('div.tchildren', null, it.children.map(c => el('div.tool.child.' + c.tool.status, null, el('div.tline', null, toolLine(c, asks)))),
+    t.kind === 'agent' && t.output ? el('div.tagent-out', null, markdown(t.output)) : null);
+  const cls = 'tool.' + (it.waiting && t.status === 'running' && asks.has(it.waiting) ? 'waiting' : t.status) + (t.kind === 'agent' ? '.agent' : '');
+  if (!body) return el('div.' + cls, null, el('div.tline', null, toolLine(it, asks)));
+  return el('details.' + cls, { open: (t.status === 'failed' && t.kind === 'command') || open.has(it.id) ? true : null, ontoggle: t.kind === 'agent' ? e => { if (e.currentTarget.open) open.add(it.id); else open.delete(it.id) } : null },
+    el('summary.tline', null, toolLine(it, asks), svg(ICON.chevron, 'chev')), body);
+}
+
 async function renderChat(seq, d) {
   const id = d.session.id;
   let session = d.session, project = d.project;
@@ -468,7 +529,7 @@ async function renderChat(seq, d) {
       case 'user': return userBubble(it);
       case 'text': return el('div.msg.agent' + (it.streaming ? '.streaming' : ''), null, markdown(it.text));
       case 'thinking': return thinkingRow(it);
-      case 'tool': return toolRow(it);
+      case 'tool': return toolRow(it, chat.asks, openAgents);
       case 'ask': return askLine(it);
       case 'error': return errorCard(it);
       case 'notice': return el('div.notice', null, it.text);
@@ -985,65 +1046,6 @@ async function renderChat(seq, d) {
     }));
   }
 
-  function thinkingRow(it) {
-    return el('details.thinking', null,
-      el('summary', null, svg(ICON.brain), el('span', null, 'Thought'), svg(ICON.chevron, 'chev')),
-      markdown(it.text));
-  }
-
-  function toolLine(it) {
-    const t = it.tool;
-    const waiting = t.status === 'running' && !!it.waiting && chat.asks.has(it.waiting);
-    const running = t.status === 'running' && !waiting;
-    const verb = waiting ? { command: 'Run', edit: 'Edit', read: 'Read', search: 'Search', web: 'Fetch' }[t.kind] || t.name : {
-      command: running ? 'Running' : 'Ran', edit: running ? 'Editing' : 'Edited', read: running ? 'Reading' : 'Read',
-      search: running ? 'Searching' : 'Searched', web: running ? 'Fetching' : 'Fetched', agent: 'Agent', todo: 'Updated the plan', mcp: t.name, other: t.name,
-    }[t.kind] || t.name;
-    const agent = t.kind === 'agent';
-    const status = waiting ? el('span.tstat.wait', null, svg(ICON.shield), 'Needs approval')
-      : running ? el('span.spinner')
-      : t.status === 'failed' ? el('span.tstat.bad', { title: 'Failed' }, svg(ICON.x))
-        : t.status === 'declined' ? el('span.tstat.muted', null, agent ? 'stopped' : 'declined') : null;
-    const n = it.children?.length;
-    const title = t.kind === 'todo' ? '' : reveal(t.title || '');
-    return [
-      el('span.ticon', null, svg(ICON[TOOL_ICON[t.kind] || 'bolt'])),
-      el('span.tverb', null, verb),
-      // A running subagent says what it's doing under its name.
-      agent && running && !it.parent
-        ? el('span.ttitle.tstack', null, el('span', null, title), el('span.tnow', null, reveal(agentActivity(it))))
-        : el('span.ttitle' + (t.kind === 'command' || t.kind === 'edit' || t.kind === 'read' ? '.mono' : ''), null, title),
-      n ? el('span.tcount', null, `${n} step${n === 1 ? '' : 's'}`) : null,
-      t.added || t.removed ? el('span.tdiff', null, el('span.plus', null, '+' + (t.added || 0)), el('span.minus', null, '−' + (t.removed || 0))) : null,
-      t.exit ? el('span.tstat.bad', null, 'exit ' + t.exit) : null,
-      status,
-    ];
-  }
-
-  function toolRow(it) {
-    const t = it.tool;
-    let body = null;
-    if (t.kind === 'todo' && t.output) {
-      return el('div.tool.todo', null, el('div.tline', null, toolLine(it)),
-        el('ul.todos', null, t.output.split('\n').map(l => {
-          const m = /^\[(.)\] (.*)$/.exec(l) || [null, ' ', l];
-          const st = m[1] === 'x' ? 'done' : m[1] === '~' ? 'doing' : 'todo';
-          return el('li.' + st, null, el('span.box', null, st === 'done' ? svg(ICON.check) : null), reveal(m[2]));
-        })));
-    }
-    if (t.diff) body = diffView(t.diff, { open: 1, limit: 120 });
-    else if (t.kind === 'agent' && t.output && !it.children?.length) body = el('div.tagent-out', null, markdown(t.output));
-    else if (t.kind === 'command') body = el('pre.tout', null, '$ ' + reveal(t.title) + (t.output ? '\n' + plainOut(t.output) : ''));
-    else if (t.output) body = el('pre.tout', null, plainOut(t.output));
-    else if (t.input && t.kind !== 'read' && t.kind !== 'search') body = el('pre.tout', null, toolInput(t.input));
-    if (it.children?.length) body = el('div.tchildren', null, it.children.map(c => el('div.tool.child.' + c.tool.status, null, el('div.tline', null, toolLine(c)))),
-      t.kind === 'agent' && t.output ? el('div.tagent-out', null, markdown(t.output)) : null);
-    const cls = 'tool.' + (it.waiting && t.status === 'running' && chat.asks.has(it.waiting) ? 'waiting' : t.status) + (t.kind === 'agent' ? '.agent' : '');
-    if (!body) return el('div.' + cls, null, el('div.tline', null, toolLine(it)));
-    return el('details.' + cls, { open: (t.status === 'failed' && t.kind === 'command') || openAgents.has(it.id) ? true : null, ontoggle: t.kind === 'agent' ? e => { if (e.currentTarget.open) openAgents.add(it.id); else openAgents.delete(it.id) } : null },
-      el('summary.tline', null, toolLine(it), svg(ICON.chevron, 'chev')), body);
-  }
-
   // showCard is a file the agent showed: Skybreaker's kept copy, checked
   // when it was shown. Images load as images; text comes as text and goes
   // in through textContent, line by line, with hidden characters revealed.
@@ -1105,11 +1107,32 @@ async function renderChat(seq, d) {
     const status = WORK[c.status] ? c.status : 'done';
     const [word, icon] = WORK[status];
     const href = (c.kind === 'run' ? '/r/' : '/s/') + encodeURIComponent(c.ref);
-    return el('a.work-card.wc-' + status, { href, 'data-link': true },
+    const kind = el('span.wc-kind', null, c.kind === 'run' ? 'Routine' : 'Task');
+    const card = el('a.work-card.wc-' + status, { href, 'data-link': true },
       el('span.wc-ic', null, icon()),
       el('span.wc-text', null, el('b', null, reveal(c.title)),
         el('span.wc-sub', null, c.summary ? [el('span.sr-only', null, word + ': '), reveal(c.summary)] : word)),
-      el('span.wc-kind', null, c.kind === 'run' ? 'Routine' : 'Task'));
+      kind);
+    if (c.kind !== 'run' || status !== 'working') return card;
+    // A routine under way can be stopped here: the first tap asks, the
+    // second stops it, and its card then says so.
+    const stop = el('button.wc-stop', { type: 'button', 'aria-label': `Stop ${c.title}`, title: 'Stop' }, svg(ICON.stop));
+    stop.addEventListener('click', async () => {
+      if (!stop.classList.contains('sure')) {
+        stop.classList.add('sure');
+        stop.append(el('span', null, 'Stop'));
+        setTimeout(() => { if (stop.isConnected && !stop.disabled) { stop.classList.remove('sure'); stop.lastChild.remove() } }, 3000);
+        return;
+      }
+      stop.disabled = true;
+      stop.lastChild.textContent = 'Stopping';
+      try { await api('POST', '/api/runs/' + encodeURIComponent(c.ref) + '/stop', {}) } catch (e) {
+        toast(e.message, 'error');
+        stop.disabled = false;
+      }
+    });
+    kind.remove();
+    return el('div.wc-row', null, card, stop);
   }
 
   // earlierSheet lists the chats from before the assistant had one thread.

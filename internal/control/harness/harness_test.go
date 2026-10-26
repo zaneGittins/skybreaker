@@ -101,17 +101,18 @@ func TestTUIArgs(t *testing.T) {
 func TestHeadlessArgsClaude(t *testing.T) {
 	m := Builtins()["claude"]
 	got, err := m.HeadlessArgs(RunOptions{
-		Prompt:       "fix the bug",
-		BudgetUSD:    2.5,
-		AllowedTools: []string{"Read", "Edit", "Bash(git:*)"},
-		MCP:          MCP{Config: "/etc/skybreaker/orbit-mcp.json"},
-		Model:        "claude-opus-5-5",
+		Prompt:         "fix the bug",
+		BudgetUSD:      2.5,
+		AllowedTools:   []string{"Read", "Edit", "Bash(git:*)"},
+		MCP:            MCP{Config: "/etc/skybreaker/orbit-mcp.json"},
+		Model:          "claude-opus-5-5",
+		PermissionMode: "bypassPermissions",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"claude", "-p", "fix the bug", "--output-format", "stream-json", "--verbose",
-		"--permission-prompts", "none", "--max-budget-usd", "2.50", "--allowedTools", "Read,Edit,Bash(git:*)",
+		"--permission-prompts", "none", "--permission-mode", "bypassPermissions", "--max-budget-usd", "2.50", "--allowedTools", "Read,Edit,Bash(git:*)",
 		"--mcp-config", "/etc/skybreaker/orbit-mcp.json", "--model", "claude-opus-5-5"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %q\nwant %q", got, want)

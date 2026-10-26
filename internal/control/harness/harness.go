@@ -49,7 +49,7 @@ var (
 	chats        = []string{"", "claude", "codex", "pi"}
 	validName    = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 	placeholder  = regexp.MustCompile(`\{[a-z_]+\}`)
-	placeholders = []string{"{prompt}", "{budget}", "{allowed_tools}", "{mcp_config}", "{mcp_url}", "{model}"}
+	placeholders = []string{"{prompt}", "{budget}", "{allowed_tools}", "{mcp_config}", "{mcp_url}", "{model}", "{permission_mode}"}
 	// mcpFlags are the placeholders that hand a harness Skybreaker's MCP
 	// server: a config file naming it, or its URL.
 	mcpFlags = []string{"{mcp_config}", "{mcp_url}"}
@@ -86,7 +86,7 @@ func Builtins() map[string]Manifest {
 			// reads no subscription sign-in, no hooks and no CLAUDE.md, so
 			// a scheduled run would fail, unapproved and unbriefed.
 			Headless: []string{"claude", "-p", "{prompt}", "--output-format", "stream-json", "--verbose",
-				"--permission-prompts", "none", "--max-budget-usd", "{budget}", "--allowedTools", "{allowed_tools}",
+				"--permission-prompts", "none", "--permission-mode", "{permission_mode}", "--max-budget-usd", "{budget}", "--allowedTools", "{allowed_tools}",
 				"--mcp-config", "{mcp_config}", "--model", "{model}"},
 			Approval: "claude-hooks",
 			Login:    []string{".claude", ".claude.json"},
@@ -203,6 +203,8 @@ type RunOptions struct {
 	AllowedTools []string
 	MCP          MCP
 	Model        string
+	// PermissionMode is the harness's own name for the mode a run starts in.
+	PermissionMode string
 }
 
 // Takes reports whether the headless command has placeholder p, so a job
@@ -226,7 +228,8 @@ func (m Manifest) endsOptionsBeforePrompt() bool {
 }
 
 // HeadlessArgs fills the headless template (see fill). Placeholders are
-// {prompt}, {budget}, {allowed_tools}, {mcp_config}, {mcp_url} and {model}.
+// {prompt}, {budget}, {allowed_tools}, {mcp_config}, {mcp_url}, {model}
+// and {permission_mode}.
 func (m Manifest) HeadlessArgs(o RunOptions) ([]string, error) {
 	if len(m.Headless) == 0 {
 		return nil, fmt.Errorf("harness %s: no headless command", m.Name)
@@ -240,11 +243,12 @@ func (m Manifest) HeadlessArgs(o RunOptions) ([]string, error) {
 		return nil, fmt.Errorf("harness %s: a prompt must not start with '-' unless the headless command has \"--\" before {prompt}", m.Name)
 	}
 	values := map[string]string{
-		"{prompt}":        o.Prompt,
-		"{allowed_tools}": strings.Join(o.AllowedTools, ","),
-		"{mcp_config}":    o.MCP.Config,
-		"{mcp_url}":       plainURL(o.MCP.URL),
-		"{model}":         o.Model,
+		"{prompt}":          o.Prompt,
+		"{allowed_tools}":   strings.Join(o.AllowedTools, ","),
+		"{mcp_config}":      o.MCP.Config,
+		"{mcp_url}":         plainURL(o.MCP.URL),
+		"{model}":           o.Model,
+		"{permission_mode}": o.PermissionMode,
 	}
 	if o.BudgetUSD > 0 {
 		values["{budget}"] = strconv.FormatFloat(o.BudgetUSD, 'f', 2, 64)

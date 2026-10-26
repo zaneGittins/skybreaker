@@ -126,6 +126,7 @@ type Usage interface {
 
 type Runs interface {
 	Trigger(ctx context.Context, job string) (store.Run, error)
+	Stop(id string) error
 }
 
 type Deps struct {
@@ -233,6 +234,8 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("POST /api/jobs/{name}/run", s.runJob)
 	m.HandleFunc("GET /api/runs", s.runs)
 	m.HandleFunc("GET /api/runs/{id}/log", s.runLog)
+	m.HandleFunc("GET /api/runs/{id}/events", s.runEvents)
+	m.HandleFunc("POST /api/runs/{id}/stop", s.stopRun)
 	m.Handle("GET /", webutil.Static(d.Static))
 	return tsauth.RequireUsers(d.Identifier, d.Config.Users)(webutil.HardenWith(webutil.AppCSP, m)), nil
 }
@@ -625,30 +628,58 @@ func (s *server) runJob(w http.ResponseWriter, r *http.Request) {
 	webutil.WriteJSON(w, http.StatusOK, run)
 }
 
+func (s *server) stopRun(w http.ResponseWriter, r *http.Request) {
+	if err := s.Runs.Stop(r.PathValue("id")); err != nil {
+		webutil.Error(w, http.StatusConflict, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *server) runs(w http.ResponseWriter, r *http.Request) {
 	webutil.WriteJSON(w, http.StatusOK, nonNil(s.Store.ListRuns(r.URL.Query().Get("project"), 100)))
 }
 
 // runLog returns the tail of a run's output.
 func (s *server) runLog(w http.ResponseWriter, r *http.Request) {
+	_, b, ok := s.readRunLog(w, r, 256<<10)
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(b)
+}
+
+// runEvents returns a run as the chat events its log reads back as, none
+// when its harness's output isn't a chat's.
+func (s *server) runEvents(w http.ResponseWriter, r *http.Request) {
+	run, b, ok := s.readRunLog(w, r, 8<<20)
+	if !ok {
+		return
+	}
+	m, _ := s.Config.Harnesses.Get(run.Harness)
+	webutil.WriteJSON(w, http.StatusOK, nonNil(chat.Replay(m.Chat, b)))
+}
+
+// readRunLog reads the last max bytes of a run's log, or answers why it can't.
+func (s *server) readRunLog(w http.ResponseWriter, r *http.Request, max int64) (store.Run, []byte, bool) {
 	run, ok := s.Store.Run(r.PathValue("id"))
 	if !ok || run.LogPath == "" {
 		webutil.Error(w, http.StatusNotFound, "no such run")
-		return
+		return run, nil, false
 	}
 	// The run directory is writable from the sandbox: never follow links.
-	b, err := scheduler.ReadRunFile(run.LogPath, 256<<10)
+	b, err := scheduler.ReadRunFile(run.LogPath, max)
 	if err != nil {
 		webutil.Error(w, http.StatusNotFound, "no log yet")
-		return
+		return run, nil, false
 	}
 	// A harness can print Skybreaker's MCP URL (Codex does when it can't
 	// connect), and the project's hook token is in it.
 	if tok := s.Backend.HookToken(run.Project); tok != "" {
 		b = bytes.ReplaceAll(b, []byte(tok), []byte("[hook token]"))
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(b)
+	return run, b, true
 }
 
 func (s *server) boardCounts(project string) map[string]int {

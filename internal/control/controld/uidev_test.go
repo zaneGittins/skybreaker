@@ -450,6 +450,7 @@ func devAssistant(dataDir string) {
 	s.SetPersonality("pip", "dev@example.com", "Warm but brief. Dry humor is fine.\nLead with what needs me. Skip the pleasantries.\nBatch updates into the morning and 1 PM check-ins.")
 	s.AddMemory("pip", "dev@example.com", "Pip's Google account is its own", "Not yours. Used for NotebookLM and Drive only.")
 	s.AddMemory("pip", "dev@example.com", "Never send email without asking", "Every send from Pip's Gmail is held for approval.")
+	s.AddMemory("pip", "dev@example.com", "How I like the weekly podcast", "Two hosts, under 20 minutes, no intro music.\nLead with anything about self-hosting or gVisor, then the week's saved articles in the order I saved them.\nSkip anything I've already marked as read in the library.\nEnd with one sentence on what's coming up next week, taken from my calendar.\nKeep the tone dry; no hype words like \"game-changer\".")
 	s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeMemory, Title: "Interested in home labs and self-hosting", Body: "Especially gVisor, Tailscale and running services from home.", Session: "s-dev"})
 	m, _ := s.Propose("pip", assistant.Proposal{Kind: assistant.ProposeMemory, Title: "Bakes sourdough on weekends", Body: "Fine to include in the podcast."})
 	s.Remember("pip", m.ID, "", "")
@@ -469,12 +470,28 @@ func devAssistant(dataDir string) {
 	  {"host": "accounts.google.com", "mode": "tunnel"}, {"host": "tailscale.com", "mode": "tunnel"}, {"host": "gvisor.dev", "mode": "tunnel"}]}}}`), 0o600)
 	st, _ := store.Open(filepath.Join(dataDir, "state.json"))
 	done := time.Now().Add(-90 * time.Minute).UTC()
-	st.CreateRun(store.Run{ID: "r-dev-brief", Job: "morning-brief", Project: "pip", Harness: "claude", Status: store.RunOK, Started: done.Add(-2 * time.Minute), Finished: done,
+	runLog := filepath.Join(dataDir, "r-dev-brief.jsonl")
+	os.WriteFile(runLog, []byte(devRunLog), 0o600)
+	st.CreateRun(store.Run{ID: "r-dev-brief", Job: "morning-brief", Project: "pip", Harness: "claude", Status: store.RunOK, Started: done.Add(-2 * time.Minute), Finished: done, LogPath: runLog, CostUSD: 0.08,
+		Prompt:  "Write my morning brief: weather, calendar and anything that needs me.",
 		Summary: "Quiet day: two meetings after lunch, and rain from 4, so take the bike early.\n\nCalendar: ..."})
-	b, _ := json.Marshal([]map[string]any{{"name": "morning-brief", "project": "pip", "schedule": "30 7 * * 1-5", "prompt": "Write my morning brief: weather, calendar and anything that needs me."}})
+	b, _ := json.Marshal([]map[string]any{{"name": "morning-brief", "project": "pip", "schedule": "30 7 * * 1-5", "prompt": "Write my morning brief: weather, calendar and anything that needs me.\n\nWeather: check the forecast for home and say if I should bike or take the train.\nCalendar: list today's meetings with times, and flag any that clash or moved overnight.\nEmail: read Pip's inbox in the browser and pull out anything that needs a reply from me today.\nLibrary: note any holds due back this week.\nKeep it under ten lines, most urgent first."}})
 	os.WriteFile(filepath.Join(dataDir, "settings", "routines.json"), b, 0o600)
 	devThread(dataDir, st)
 }
+
+// devRunLog is the morning brief's run as Claude logs it headless: a look
+// in the browser, then the brief.
+const devRunLog = `{"type":"system","subtype":"init","session_id":"c-dev-brief","model":"claude-sonnet-5-5","permissionMode":"bypassPermissions"}
+{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","id":"tb1","name":"mcp__skybreaker__browser_open","input":{"url":"https://calendar.google.com"}}]}}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"tb1","type":"tool_result","content":"Opened Google Calendar: Today, 2 events"}]}}
+{"type":"assistant","message":{"id":"m2","role":"assistant","content":[{"type":"tool_use","id":"tb2","name":"mcp__skybreaker__browser_read","input":{}}]}}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"tb2","type":"tool_result","content":"1:00 PM Design review\n3:30 PM Dentist"}]}}
+{"type":"assistant","message":{"id":"m3","role":"assistant","content":[{"type":"tool_use","id":"tb3","name":"WebFetch","input":{"url":"https://wttr.in/?format=3","prompt":"Today's forecast"}}]}}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"tb3","type":"tool_result","content":"Light rain from 4 PM, 11°C"}]}}
+{"type":"assistant","message":{"id":"m4","role":"assistant","content":[{"type":"text","text":"**Quiet day.** Two meetings after lunch, and rain from 4, so take the bike early.\n\n- 1:00 PM Design review\n- 3:30 PM Dentist\n\nNothing in the inbox needs you today."}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"Quiet day.","session_id":"c-dev-brief","total_cost_usd":0.08}
+`
 
 // devThread gives pip a thread with two tasks, one done and one under
 // way, and the morning brief's card.

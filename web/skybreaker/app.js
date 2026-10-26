@@ -1119,21 +1119,60 @@ async function renderRun(seq, id) {
   if (seq !== state.seq) return;
   const p = projects.find(x => x.name === r.project);
   crumb(p, r.job);
-  const log = el('pre.term-fallback.run-log', null, 'Loading…');
+  // A Claude run reads as the chat it was; other harnesses' output as text.
+  const body = el('div.run-body', null, el('p.muted', null, 'Loading…'));
   $('#app').replaceChildren(el('div.wrap', null,
     el('section.phead', null,
       el('div', null, el('h1', null, r.job), el('div.repo', null, `${r.id} · ${r.harness} · ${r.git_sha ? r.git_sha.slice(0, 12) : 'no commit yet'}`)),
       runState(r),
       el('div.acts', null, r.cost_usd ? el('span.state', null, '$' + r.cost_usd.toFixed(2)) : null)),
     r.error ? el('div.approval', null, el('b', null, r.error)) : null,
-    el('details', null, el('summary', null, 'Prompt'), el('pre.term-fallback', null, r.prompt)),
     r.session_id ? el('p.muted', null, 'Reopen in a terminal with ', el('span.mono', null, `claude --resume ${r.session_id}`)) : null,
-    log));
+    body));
+  // A running run redraws only when it has more to show, so what you
+  // opened stays open.
+  let shown = -1;
   const load = async () => {
-    try { log.textContent = (await api('GET', `/api/runs/${id}/log`)) || '(no output yet)' } catch (e) { log.textContent = e.message }
+    try {
+      const events = await api('GET', `/api/runs/${id}/events`);
+      if (events.length && events.length === shown) return;
+      shown = events.length;
+      if (events.length) return body.replaceChildren(runTranscript(r.prompt, events));
+      const log = (await api('GET', `/api/runs/${id}/log`)) || '(no output yet)';
+      body.replaceChildren(el('details', null, el('summary', null, 'Prompt'), el('pre.term-fallback', null, r.prompt)), el('pre.term-fallback.run-log', null, log));
+    } catch (e) { body.replaceChildren(el('p.muted', null, e.status === 404 ? 'No output yet.' : e.message)) }
   };
   await load();
   if (r.status === 'running') state.timers.push(setInterval(load, 3000));
+}
+
+// runTranscript draws a run's events as a read-only chat, its prompt first.
+function runTranscript(prompt, events) {
+  const c = newChat();
+  for (const e of [prompt ? { kind: 'user', id: 'prompt', text: prompt } : null, ...events]) if (e) foldChat(c, e);
+  const log = el('div.chat-log');
+  for (const it of c.items) {
+    const prev = log.lastElementChild;
+    switch (it.type) {
+      case 'user': {
+        const long = it.text.split('\n').length > 14 || it.text.length > 1400;
+        const bubble = el('div.bubble' + (long ? '.clamped' : ''), null, it.text);
+        log.append(el('div.msg.user', null, bubble,
+          long ? el('button.show-more', { type: 'button', onclick: e => { bubble.classList.remove('clamped'); e.currentTarget.remove() } }, 'Show all') : null));
+        break;
+      }
+      case 'text': log.append(el('div.msg.agent', null, markdown(it.text))); break;
+      case 'thinking': log.append(thinkingRow(it)); break;
+      case 'tool': {
+        const n = toolRow(it);
+        if (prev?.classList.contains('tools')) prev.append(n);
+        else log.append(el('div.tools', null, n));
+        break;
+      }
+      case 'error': case 'notice': log.append(el('div.notice', null, it.text)); break;
+    }
+  }
+  return log;
 }
 
 // --- terminal ---------------------------------------------------------------

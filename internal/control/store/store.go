@@ -29,6 +29,7 @@ const (
 	RunOK      = "ok"
 	RunFailed  = "failed"
 	RunTimeout = "timeout"
+	RunStopped = "stopped" // by you
 )
 
 type Session struct {

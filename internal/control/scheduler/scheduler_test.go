@@ -211,6 +211,51 @@ func TestAssistantRunUsesTheWorkspace(t *testing.T) {
 	}
 }
 
+// A routine starts in the mode its project's chats start in, as a task
+// does; with none set it asks, and a run, with nobody to ask, is denied.
+func TestRunStartsInTheProjectsChatMode(t *testing.T) {
+	s, b, _ := setup(t, `[{"name": "brief", "project": "pip", "schedule": "30 7 * * 1-5", "prompt": "Write my brief."},
+	  {"name": "tidy", "project": "orbit", "schedule": "0 2 * * *", "prompt": "Tidy.", "allowed_tools": ["Read"]}]`)
+	argv := func(job string) []string {
+		t.Helper()
+		b.mu.Lock()
+		b.calls = nil
+		b.mu.Unlock()
+		if _, err := s.Trigger(context.Background(), job); err != nil {
+			t.Fatal(err)
+		}
+		s.Wait()
+		win := b.find("new-window")
+		if len(win) != 1 {
+			t.Fatalf("new-window calls %d", len(win))
+		}
+		return win[0]
+	}
+	mode := func(w []string) string {
+		if i := slices.Index(w, "--permission-mode"); i > 0 {
+			return w[i+1]
+		}
+		return ""
+	}
+	if w := argv("brief"); mode(w) != "default" {
+		t.Errorf("no mode set, but run started in %q: %v", mode(w), w)
+	}
+	if _, err := config.EditChatModes(s.cfg.ChatModes(), func(m *config.ChatModes) error {
+		m.Default = chat.ModeAuto
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	w := argv("brief")
+	if mode(w) != "bypassPermissions" || !slices.Contains(w, "IS_SANDBOX=1") {
+		t.Errorf("auto: argv %v", w)
+	}
+	// A job that lists its tools keeps to them.
+	if w := argv("tidy"); mode(w) != "" {
+		t.Errorf("job with allowed_tools started in %q: %v", mode(w), w)
+	}
+}
+
 func TestCodexBoardRunGetsTheBoard(t *testing.T) {
 	s, b, _ := setup(t, `[{"name": "codex-board", "project": "orbit", "harness": "codex", "schedule": "0 2 * * *", "kind": "board"}]`)
 	if _, err := s.Trigger(context.Background(), "codex-board"); err != nil {
@@ -268,6 +313,30 @@ func TestRunTimeout(t *testing.T) {
 	// SIGINT first (C-c), then the window is killed.
 	if len(b.find("C-c")) != 1 || len(b.find("kill-window")) != 1 {
 		t.Fatalf("interrupt/kill: %v / %v", b.find("C-c"), b.find("kill-window"))
+	}
+}
+
+// Stopping a run interrupts it as an overrun is, and it ends stopped.
+func TestStopRun(t *testing.T) {
+	s, b, st := setup(t, `[{"name": "slow", "project": "pip", "schedule": "@hourly", "prompt": "x"}]`)
+	b.exitCode = ""
+	run, _ := s.Trigger(context.Background(), "slow")
+	for len(b.find("new-window")) == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	if err := s.Stop(run.ID); err != nil {
+		t.Fatal(err)
+	}
+	s.Wait()
+	got, _ := st.Run(run.ID)
+	if got.Status != store.RunStopped {
+		t.Fatalf("status %q", got.Status)
+	}
+	if len(b.find("C-c")) != 1 || len(b.find("kill-window")) != 1 {
+		t.Fatalf("interrupt/kill: %v / %v", b.find("C-c"), b.find("kill-window"))
+	}
+	if err := s.Stop(run.ID); !errors.Is(err, ErrNotRunning) {
+		t.Errorf("stopping a finished run: %v", err)
 	}
 }
 

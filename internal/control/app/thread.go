@@ -366,6 +366,8 @@ func (a *App) RunCard(r store.Run) {
 	case store.RunRunning:
 		c.Status, c.Summary = chat.CardWorking, ""
 	case store.RunOK:
+	case store.RunStopped:
+		c.Status, c.Summary = chat.CardFailed, "Stopped"
 	default:
 		c.Status = chat.CardFailed
 		if r.Error != "" {

@@ -86,6 +86,9 @@
 .a-routines { display: grid; gap: 12px; margin-top: 18px; }
 .a-routine-head { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; justify-content: space-between; }
 .a-routine-head b { display: block; font-size: 16px; }
+.a-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+.a-clamp.more { cursor: pointer; -webkit-mask-image: linear-gradient(#000 60%, transparent); mask-image: linear-gradient(#000 60%, transparent); }
+.a-clamp.open { display: block; }
 .a-prompt { margin: 10px 0 0; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .a-runs { display: grid; margin-top: 10px; border-top: 1px solid var(--border); }
 .a-run { display: flex; align-items: center; gap: 10px; padding: 9px 2px; color: var(--text-2); font-size: 14px; border-bottom: 1px solid var(--border); }
@@ -258,6 +261,14 @@
 .wc-text { min-width: 0; display: grid; gap: 1px; }
 .wc-text b { font-weight: 600; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wc-sub { color: var(--muted); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wc-row { position: relative; display: grid; }
+.wc-row .work-card { padding-right: 56px; }
+.wc-stop { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 6px; height: 32px; min-width: 32px; padding: 0 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-3); color: var(--text-2); font: 600 13px var(--font, inherit); cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
+.wc-stop svg { width: 14px; height: 14px; fill: currentColor; stroke: none; }
+.wc-stop:hover { color: var(--text); border-color: var(--border-strong); }
+.wc-stop.sure { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); }
+.wc-stop:disabled { opacity: .7; cursor: default; }
+.wc-row:has(.wc-stop.sure) .work-card { padding-right: 96px; }
 .wc-kind { margin-left: auto; padding-left: 8px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
 
 /* The browser beside an assistant's chat: a panel on a wide screen, a
