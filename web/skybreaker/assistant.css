@@ -103,12 +103,17 @@
 .a-stage-name { margin-top: 6px; font: 700 26px var(--display); }
 .a-cap { margin: 6px 0 14px; min-height: 20px; color: var(--muted); font-size: 13.5px; text-align: center; }
 .a-states { max-width: 100%; overflow-x: auto; }
-.a-opts { display: grid; gap: 22px; align-content: start; }
+.a-opts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; align-content: start; }
 .a-opt .seg { width: fit-content; max-width: 100%; }
 .a-shapes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .a-shapes .a-pick, .na-shapes .a-pick { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 6px 10px; border-radius: 14px; border: 1.5px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 12.5px; font-weight: 600; }
 .a-shapes .av-mark { width: 64px; height: 64px; }
 .a-shapes .a-pick.on, .na-shapes .a-pick.on { border-color: var(--text); background: var(--surface-3); color: var(--text); }
+.a-wear { display: flex; flex-wrap: wrap; gap: 8px; }
+.a-wear + .a-wear { margin-top: 16px; }
+.a-wear .a-pick { flex: 0 0 auto; width: 76px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px 9px; border-radius: 14px; border: 1.5px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 12px; font-weight: 600; white-space: nowrap; scroll-snap-align: start; }
+.a-wear .av-mark { width: 54px; height: 54px; }
+.a-wear .a-pick.on { border-color: var(--text); background: var(--surface-3); color: var(--text); }
 .a-colors { display: flex; flex-wrap: wrap; gap: 10px; }
 .a-colors .a-pick { padding: 3px; border: 2px solid transparent; border-radius: 50%; background: none; }
 .a-colors .a-pick.on { border-color: var(--text); }
@@ -168,6 +173,9 @@
   .a-tabs::-webkit-scrollbar { display: none; }
   .a-tabs .p-tab { flex: 1 0 auto; padding: 0 10px; }
   .a-tabs .p-tab:last-child { margin-right: 4px; }
+  /* What to wear is a strip to swipe, out to the screen's edge. */
+  .a-wear { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; margin: -2px -14px 0 -2px; padding: 2px 14px 2px 2px; scroll-padding-left: 2px; }
+  .a-wear::-webkit-scrollbar { display: none; }
   .a-hero { gap: 16px; }
   .a-hero-mark { width: 76px; height: 76px; }
   .a-hero .a-greeting { font-size: 28px; }
