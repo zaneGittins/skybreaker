@@ -74,11 +74,14 @@ The `skybreaker` client attaches to sessions in each agent's own terminal UI, ov
 |---|---|
 | `skybreaker` | Pick a session and attach (`Ctrl-b d` to detach) |
 | `skybreaker new <project> [agent]` | Start a session |
+| `skybreaker new-project <folder> [name]` | Make a project from a local folder (admins) |
 | `skybreaker ls` | List sessions |
 | `skybreaker update` | Update the client |
 | `skybreaker connect <address>` | Use a Skybreaker not named `skybreaker` |
 
 A chat continued here carries on in the phone and web app with your next message there.
+
+`new-project` copies everything in the folder into the new project's `/workspace`, dot files and `.git` included, then attaches. A folder whose own `origin` is on GitHub gets that repository; one without has none, so no pull requests or worktrees. It lists anything that looks like a credential (`.env`, `*.pem`, `*.key`) and asks before copying; agents in the sandbox can read whatever is copied. `--harness claude,codex` picks the agents and `--yes` skips the question.
 
 ## VS Code
 

@@ -58,8 +58,9 @@ func (c *Client) wsEndpoint(parts ...string) string {
 }
 
 type Meta struct {
-	Version string `json:"version"`
-	User    string `json:"user"`
+	Version   string   `json:"version"`
+	User      string   `json:"user"`
+	Harnesses []string `json:"harnesses"`
 }
 
 type Project struct {
@@ -114,24 +115,75 @@ func (c *Client) ChatTerminal(ctx context.Context, id string) (Session, error) {
 	return s, c.do(ctx, http.MethodPost, c.endpoint("api", "sessions", id, "terminal"), struct{}{}, &s)
 }
 
-func (c *Client) do(ctx context.Context, method, u string, in, out any) error {
-	var body io.Reader
-	if in != nil {
-		b, err := json.Marshal(in)
-		if err != nil {
-			return err
-		}
-		body = bytes.NewReader(b)
+// NewProject is a project to create: a repo's, or none.
+type NewProject struct {
+	Name         string   `json:"name"`
+	Repo         string   `json:"repo,omitempty"`
+	Harnesses    []string `json:"harnesses"`
+	Capabilities []string `json:"capabilities"`
+}
+
+// AddedProject is a created project. Skybreaker restarts to run it, "now"
+// or "when_idle".
+type AddedProject struct {
+	Name    string `json:"name"`
+	Restart string `json:"restart"`
+	GitHub  *struct {
+		Installed  bool   `json:"installed"`
+		InstallURL string `json:"install_url"`
+		Error      string `json:"error"`
+	} `json:"github"`
+}
+
+func (c *Client) CreateProject(ctx context.Context, p NewProject) (AddedProject, error) {
+	var out AddedProject
+	return out, c.do(ctx, http.MethodPost, c.endpoint("api", "projects"), p, &out)
+}
+
+// Capabilities are the bundles of access a new project can be given.
+func (c *Client) Capabilities(ctx context.Context) ([]string, error) {
+	var caps []struct {
+		Name string `json:"name"`
 	}
+	if err := c.do(ctx, http.MethodGet, c.endpoint("api", "capabilities"), nil, &caps); err != nil {
+		return nil, err
+	}
+	out := make([]string, len(caps))
+	for i, cp := range caps {
+		out[i] = cp.Name
+	}
+	return out, nil
+}
+
+// FillWorkspace sends a gzipped tar to unpack into the project's empty
+// workspace. It takes as long as the folder does, so no timeout.
+func (c *Client) FillWorkspace(ctx context.Context, project string, archive io.Reader) error {
+	h := *c.HTTP
+	h.Timeout = 0
+	return c.send(ctx, &h, http.MethodPut, c.endpoint("api", "projects", project, "workspace"), "application/gzip", archive, nil)
+}
+
+func (c *Client) do(ctx context.Context, method, u string, in, out any) error {
+	if in == nil {
+		return c.send(ctx, c.HTTP, method, u, "", nil, out)
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	return c.send(ctx, c.HTTP, method, u, "application/json", bytes.NewReader(b), out)
+}
+
+func (c *Client) send(ctx context.Context, h *http.Client, method, u, contentType string, body io.Reader, out any) error {
 	req, err := http.NewRequestWithContext(ctx, method, u, body)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Origin", c.origin())
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
-	resp, err := c.HTTP.Do(req)
+	resp, err := h.Do(req)
 	if err != nil {
 		return err
 	}

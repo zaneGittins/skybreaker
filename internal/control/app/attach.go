@@ -46,7 +46,7 @@ func (a *App) attach(ctx context.Context, s store.Session, files []chat.SandboxF
 // would see them.
 func (a *App) writeFiles(ctx context.Context, project string, files []chat.SandboxFile) error {
 	for _, f := range files {
-		_, err := a.sandbox.ExecInput(ctx, project, f.Data, 4<<10, "sh", "-c", writeScript, "sh", f.Path, strconv.Itoa(len(f.Data)))
+		_, err := a.sandbox.ExecInput(ctx, project, bytes.NewReader(f.Data), 4<<10, "sh", "-c", writeScript, "sh", f.Path, strconv.Itoa(len(f.Data)))
 		if err != nil {
 			log.Printf("skybreaker: attach %s in %s: %q", f.Path, project, err.Error())
 			return errors.New("the sandbox didn't take them")

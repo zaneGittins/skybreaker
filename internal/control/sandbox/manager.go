@@ -306,13 +306,13 @@ func (m *Manager) Exec(ctx context.Context, project string, args ...string) ([]b
 	return m.run(ctx, append([]string{"exec", ContainerName(project)}, args...)...)
 }
 
-// ExecInput runs a command in a project's sandbox, input on its stdin,
-// reading at most maxOutput bytes of what it prints.
-func (m *Manager) ExecInput(ctx context.Context, project string, input []byte, maxOutput int64, args ...string) ([]byte, error) {
+// ExecInput runs a command in a project's sandbox, input on its stdin as
+// it runs, reading at most maxOutput bytes of what it prints.
+func (m *Manager) ExecInput(ctx context.Context, project string, input io.Reader, maxOutput int64, args ...string) ([]byte, error) {
 	if !names.Project(project) {
 		return nil, fmt.Errorf("invalid project name %q", project)
 	}
-	return m.R.RunInput(ctx, bytes.NewReader(input), maxOutput, m.docker(), append([]string{"exec", "-i", ContainerName(project)}, args...)...)
+	return m.R.RunInput(ctx, input, maxOutput, m.docker(), append([]string{"exec", "-i", ContainerName(project)}, args...)...)
 }
 
 // ExecArgv is the full command line for an interactive exec under a PTY,

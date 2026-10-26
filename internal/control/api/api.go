@@ -14,6 +14,7 @@ import (
 	"io/fs"
 	"log"
 	"maps"
+	"mime"
 	"net"
 	"net/http"
 	"slices"
@@ -90,6 +91,8 @@ type Backend interface {
 	SetAuthorizedKeys(keys []byte) error
 	// SSHConn connects to the project's sandbox sshd, starting the sandbox.
 	SSHConn(ctx context.Context, project string) (net.Conn, error)
+	// FillWorkspace unpacks a gzipped tar into the project's empty workspace.
+	FillWorkspace(ctx context.Context, project string, archive io.Reader) error
 }
 
 // Approvals are harness approvals: may an agent in a terminal run this tool
@@ -188,6 +191,7 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("GET /api/projects/{p}/ssh", s.sshRelay)
 	m.HandleFunc("GET /api/projects/{p}", s.project)
 	m.HandleFunc("POST /api/projects/{p}/sandbox", s.sandbox)
+	m.HandleFunc("PUT /api/projects/{p}/workspace", s.fillWorkspace)
 	m.HandleFunc("POST /api/projects/{p}/sessions", s.newSession)
 	m.HandleFunc("GET /api/projects/{p}/diff", s.diff)
 	m.HandleFunc("GET /api/projects/{p}/review", s.review)
@@ -248,7 +252,7 @@ func fail(w http.ResponseWriter, err error) {
 		webutil.Error(w, http.StatusConflict, "this request was already decided or has expired")
 	case errors.Is(err, app.ErrNoRepo):
 		webutil.Error(w, http.StatusConflict, err.Error())
-	case errors.Is(err, app.ErrBusy):
+	case errors.Is(err, app.ErrBusy), errors.Is(err, app.ErrWorkspaceFull):
 		webutil.Error(w, http.StatusConflict, err.Error())
 	default:
 		webutil.Error(w, http.StatusInternalServerError, err.Error())
@@ -428,6 +432,24 @@ func (s *server) sandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	v, _ := s.view(r.Context(), name)
 	webutil.WriteJSON(w, http.StatusOK, v)
+}
+
+// fillWorkspace copies a folder, sent as a gzipped tar by `skybreaker
+// new-project`, into the project's empty workspace.
+func (s *server) fillWorkspace(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("p")
+	if !s.known(w, name) {
+		return
+	}
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/gzip" {
+		webutil.Error(w, http.StatusUnsupportedMediaType, "send the folder as application/gzip")
+		return
+	}
+	if err := s.Backend.FillWorkspace(r.Context(), name, r.Body); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) newSession(w http.ResponseWriter, r *http.Request) {

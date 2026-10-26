@@ -62,7 +62,7 @@ func TestExecInput(t *testing.T) {
 		t.Errorf("past its own limit = %v", err)
 	}
 	m := &Manager{R: ExecRunner{}, Docker: "echo"}
-	out, err = m.ExecInput(context.Background(), "orbit", []byte("x"), 0, "sh", "-c", "cat")
+	out, err = m.ExecInput(context.Background(), "orbit", strings.NewReader("x"), 0, "sh", "-c", "cat")
 	if err != nil || strings.TrimSpace(string(out)) != "exec -i "+ContainerName("orbit")+" sh -c cat" {
 		t.Errorf("ExecInput ran %q, %v", out, err)
 	}

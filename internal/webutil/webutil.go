@@ -44,9 +44,9 @@ func NewServer(ctx context.Context, h http.Handler) *http.Server {
 }
 
 // HardenWith adds security headers, csp among them, and refuses writes that
-// aren't JSON or that come from another site. A JSON content type can't be
-// sent by a plain HTML form, and cross-origin protection stops fetches from
-// other origins.
+// aren't JSON (or a gzipped archive) or that come from another site.
+// Neither content type can be sent by a plain HTML form, and cross-origin
+// protection stops fetches from other origins.
 func HardenWith(csp string, next http.Handler) http.Handler {
 	csrf := http.NewCrossOriginProtection()
 	inner := csrf.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +62,7 @@ func HardenWith(csp string, next http.Handler) http.Handler {
 				}
 			}
 		default:
-			if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
+			if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" && mt != "application/gzip" {
 				WriteJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "writes must be application/json"})
 				return
 			}
