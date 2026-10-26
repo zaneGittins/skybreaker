@@ -158,6 +158,9 @@ func (d *settings) AddProject(ctx context.Context, by, name string, a config.Add
 	if a.Kind == config.KindAssistant {
 		return api.AddedProject{Name: name, Restart: d.saved(by, "created assistant "+name)}, nil
 	}
+	if a.Repo == "" {
+		return api.AddedProject{Name: name, Restart: d.saved(by, "created project "+name)}, nil
+	}
 	out := api.AddedProject{Name: name, Restart: d.saved(by, "created project "+name+" for "+a.Repo)}
 	gctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	installed, url, err := d.broker.GitHubAccess(gctx, a.Repo)

@@ -58,6 +58,18 @@ func TestAddAssistant(t *testing.T) {
 	}
 }
 
+// A project copied from a folder with no GitHub remote has no repo.
+func TestAddProjectWithoutRepo(t *testing.T) {
+	path := mainConfig(t)
+	if err := AddProject(path, "nova", Added{Harnesses: []string{"claude"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	c := mustLoad(t, path)
+	if p := c.Projects["nova"]; p == nil || p.Repo != "" || c.Assistant("nova") || !c.Added("nova") {
+		t.Fatalf("nova %+v", p)
+	}
+}
+
 func TestAddProjectRefusals(t *testing.T) {
 	path := mainConfig(t)
 	ok := Added{Repo: "zaneGittins/comet", Harnesses: []string{"claude"}, Capabilities: []string{"github"}}
@@ -73,7 +85,6 @@ func TestAddProjectRefusals(t *testing.T) {
 		"a name in the config file": {"orbit", ok, nil, "already"},
 		"a name added already":      {"comet", ok, nil, "already"},
 		"a bad name":                {"Comet!", ok, nil, "name"},
-		"no repo":                   {"nova", Added{Harnesses: []string{"claude"}}, nil, "repo"},
 		"a bad repo":                {"nova", Added{Repo: "not a repo", Harnesses: []string{"claude"}}, nil, "repo"},
 		"no agents":                 {"nova", Added{Repo: "a/b"}, nil, "agent"},
 		"an unknown agent":          {"nova", Added{Repo: "a/b", Harnesses: []string{"hal"}}, nil, "hal"},

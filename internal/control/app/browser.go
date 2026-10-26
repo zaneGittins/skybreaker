@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/x509"
@@ -308,7 +309,7 @@ func (a *App) caPin(ctx context.Context) (string, error) {
 // through the sandbox, and returns its path there.
 func (a *App) SaveToWorkspace(ctx context.Context, project, rel string, data []byte) (string, error) {
 	dst := "/workspace/" + strings.TrimPrefix(filepath.Clean("/"+rel), "/")
-	_, err := a.sandbox.ExecInput(ctx, project, data, 0, "sh", "-c", `mkdir -p "$(dirname "$1")" && cat > "$1"`, "sh", dst)
+	_, err := a.sandbox.ExecInput(ctx, project, bytes.NewReader(data), 0, "sh", "-c", `mkdir -p "$(dirname "$1")" && cat > "$1"`, "sh", dst)
 	if err != nil {
 		return "", err
 	}

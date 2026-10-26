@@ -53,6 +53,12 @@ func TestHardenHeadersAndCSRF(t *testing.T) {
 	if c := post("application/json; charset=utf-8", nil); c != 200 {
 		t.Errorf("json+charset post %d", c)
 	}
+	if c := post("application/gzip", nil); c != 200 {
+		t.Errorf("archive post %d", c)
+	}
+	if c := post("application/gzip", map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.test"}); c != http.StatusForbidden {
+		t.Errorf("cross-site archive post %d", c)
+	}
 	if c := post("text/plain", nil); c != http.StatusUnsupportedMediaType {
 		t.Errorf("text post %d", c)
 	}

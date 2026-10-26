@@ -20,6 +20,9 @@ const Usage = `skybreaker: your coding agents, from your terminal
   skybreaker ls                       list running sessions
   skybreaker attach <id>              attach to a session
   skybreaker new <project> [harness]  start a session and attach to it
+  skybreaker new-project <folder> [name] [--harness h1,h2] [--yes]
+                                      make a project from a folder, copying
+                                      everything in it, dot files too
   skybreaker code <project>           open the project's sandbox in VS Code
   skybreaker vscode setup             let VS Code (Remote - SSH) on this machine into sandboxes
   skybreaker connect [address]        find or set your Skybreaker, and check you can reach it
@@ -35,7 +38,7 @@ On the Skybreaker host:
 `
 
 // Commands are the client's commands, for the main package's dispatch.
-var Commands = []string{"ls", "attach", "new", "code", "vscode", "ssh-proxy", "connect", "update", "help", "-h", "--help"}
+var Commands = []string{"ls", "attach", "new", "new-project", "code", "vscode", "ssh-proxy", "connect", "update", "help", "-h", "--help"}
 
 // Main runs a client command (no command is the picker) and returns the
 // exit status.
@@ -154,6 +157,16 @@ func command(ctx context.Context, cmd string, args []string, version string, out
 			e.Harness = args[1]
 		} else if hs := in.Projects[i].Harnesses; len(hs) > 0 {
 			e.Harness = hs[0]
+		}
+		return attachOne(ctx, c, e)
+	case "new-project":
+		interactive := isTerminal(int(os.Stdin.Fd())) && isTerminal(int(os.Stdout.Fd()))
+		e, err := newProject(ctx, c, ExecRunner, args, os.Stdin, out, interactive)
+		if err != nil || !interactive {
+			if err == nil {
+				fmt.Fprintf(out, "`skybreaker new %s` starts a session in it.\n", e.Project)
+			}
+			return err
 		}
 		return attachOne(ctx, c, e)
 	case "ssh-proxy": // ssh's ProxyCommand, from `vscode setup`

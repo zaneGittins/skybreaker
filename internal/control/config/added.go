@@ -79,7 +79,7 @@ func (c *Config) merge(f addedFile, path string) error {
 		}
 		switch a.Kind {
 		case "":
-			if !names.Repo(a.Repo) {
+			if a.Repo != "" && !names.Repo(a.Repo) {
 				return fmt.Errorf("%s: project %q: invalid repo %q (owner/name)", path, name, a.Repo)
 			}
 		case KindAssistant:

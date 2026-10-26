@@ -38,8 +38,10 @@ type fakeBackend struct {
 	killed     []string
 	events     chan app.Event
 	chat       *fakeChat
-	authorized string // what SetAuthorizedKeys last got
-	onSend     func() // called as a message is sent
+	authorized string   // what SetAuthorizedKeys last got
+	onSend     func()   // called as a message is sent
+	filled     []string // project: archive, for each FillWorkspace
+	fillErr    error
 }
 
 func (b *fakeBackend) SandboxState(_ context.Context, p string) (sandbox.State, error) {
