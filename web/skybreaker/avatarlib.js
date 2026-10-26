@@ -27,10 +27,10 @@ const AV_TEMPER = {
 
 const AV_STATES = ['idle', 'thinking', 'busy', 'needs', 'done'];
 const AV_RINGS = ['fine', 'double', 'dotted', 'arc', 'none'];
-const AV_EYES = ['none', 'soft'];
+const AV_EYES = ['none', 'soft', 'lashes'];
 const AV_FINISHES = ['paper', 'light'];
-const AV_HATS = ['none', 'beanie', 'bowler', 'wizard', 'crown', 'beret', 'party', 'tophat'];
-const AV_EXTRAS = ['none', 'glasses', 'monocle', 'bowtie', 'headphones'];
+const AV_HATS = ['none', 'beanie', 'bowler', 'wizard', 'crown', 'beret', 'party', 'tophat', 'bow', 'cap'];
+const AV_EXTRAS = ['none', 'glasses', 'monocle', 'bowtie', 'headphones', 'mustache'];
 const AV_AMBER = '#E8B04A';
 
 // avRingPoint is the orbit at angle th: an ellipse that wobbles a little,
@@ -121,13 +121,23 @@ const AV_EYE_AT = { triangle: [50, 54, 0.8], crescent: [38, 57, 0.7] };
 // avEye is the soft eye: a tinted almond with an iris, both lids drawn in
 // a dark shade of the shape. open is how far the lids are apart (0 shut,
 // 1 at rest); gaze is where the iris looks, as a nudge from the centre.
-function avEye(color, { x, y, k, open, gaze, lower }) {
+// lashes flick out from the upper lid's corners.
+function avEye(color, { x, y, k, open, gaze, lower, lashes }) {
   const W = 10.5 * k, H = 6 * k, L = [x - W, y], R = [x + W, y];
   const up = [x, y + 0.5 * H - (2.5 * H) * open], down = [x, y + 0.5 * H + 0.9 * H * Math.min(open, 1.2)];
   const n = avNum;
   const white = `M${n(L[0])} ${n(L[1])}Q${n(up[0])} ${n(up[1])} ${n(R[0])} ${n(R[1])}Q${n(down[0])} ${n(down[1])} ${n(L[0])} ${n(L[1])}Z`;
   const lo = avCurve(L, down, R);
-  const lids = avRibbon(avWobble(avCurve(L, up, R)), 2.6 * k) + avRibbon(avWobble(lower ? lo : lo.slice(5, 16)), 1.1 * k);
+  const top = avCurve(L, up, R);
+  let lids = avRibbon(avWobble(top), 2.6 * k) + avRibbon(avWobble(lower ? lo : lo.slice(5, 16)), 1.1 * k);
+  if (lashes) for (const i of [2, 5, 15, 18]) {
+    // Out from the lid, and leaning away from the middle.
+    const [[x0, y0], [x1, y1]] = [top[i - 1], top[i + 1]], [px, py] = top[i];
+    let dx = y1 - y0 + (i < 10 ? -1 : 1) * 0.8 * (x1 - x0), dy = x0 - x1;
+    const l = Math.hypot(dx, dy) || 1;
+    dx = dx / l * 4.2 * k; dy = dy / l * 4.2 * k;
+    lids += avRibbon(Array.from({ length: 7 }, (_, j) => [px + dx * j / 6, py + dy * j / 6]), 1.5 * k);
+  }
   return { x, y, open, white, lids, iris: { x: x + gaze[0] * k, y: y + gaze[1] * k, r: 3.8 * k }, ink: avShade(color, -0.62), tint: avShade(color, 0.55) };
 }
 
@@ -195,6 +205,18 @@ const AV_HAT = {
     avPath('M-11.8 -9.5L-11.6 -4Q0 -6 11.6 -4L11.8 -9.5Q0 -11.5 -11.8 -9.5Z', avShade(c, 0.15)),
     avPath('M-21 -1Q0 -6.5 21 -1Q22.5 1.5 18 2Q0 -2 -18 2Q-22.5 1.5 -21 -1Z', dk),
   ],
+  // A bow is tied to one side.
+  bow: c => [
+    avPath('M0 0Q-7 -9 -13 -6Q-15 0 -13 6Q-7 9 0 0ZM0 0Q7 -9 13 -6Q15 0 13 6Q7 9 0 0Z', avShade(c, -0.45)),
+    avLine('M-3 0Q-7 -3 -10 -2M3 0Q7 -3 10 -2', avShade(c, -0.7), 0.9),
+    ['circle', { r: 3, fill: avShade(c, -0.62) }],
+  ].map(([tag, a]) => [tag, { ...a, transform: 'translate(10 -4) rotate(-18)' }]),
+  cap: c => [
+    avPath('M-15 -1Q-16 -19 0 -20Q16 -19 15 -1Z', avShade(c, -0.5)),
+    avLine('M0 -20V-2', avShade(c, -0.68), 1),
+    ['circle', { cy: -20, r: 2, fill: avShade(c, -0.68) }],
+    avPath('M5 -3Q18 -6 28 -1Q26 2 14 1.5Q8 1 5 -3Z', avShade(c, -0.66)),
+  ],
 };
 
 const avLens = (cx, c, dk) => ['circle', { cx, r: 6.3, fill: avShade(c, 0.5), 'fill-opacity': 0.45, stroke: dk, 'stroke-width': 1.7 }];
@@ -214,6 +236,7 @@ const AV_EXTRA = {
     avPath('M0 0L-10 -6Q-12.5 0 -10 6ZM0 0L10 -6Q12.5 0 10 6Z', avShade(c, -0.5)),
     ['rect', { x: -2.6, y: -3, width: 5.2, height: 6, rx: 1.8, fill: dk, stroke: avShade(c, 0.1), 'stroke-width': 0.8 }],
   ],
+  mustache: (c, dk) => [avPath('M0 -1Q-5 -4 -10 -1Q-14 2 -16 -2Q-15 4 -9 4Q-4 4 0 1Q4 4 9 4Q15 4 16 -2Q14 2 10 -1Q5 -4 0 -1Z', dk)],
   // Headphones hug the sides of the shape, w out from its middle.
   headphones: (c, dk, w) => {
     const h = w * 1.12, hp = avShade(c, -0.42);
@@ -226,6 +249,9 @@ const AV_EXTRA = {
     ];
   },
 };
+// Where a mustache sits under the eye, and how big: below the orbit where
+// the eye is low.
+const AV_LIP_AT = { triangle: [14.8, 0.7], crescent: [14, 1] };
 // How far out headphones sit, and where; a triangle has no sides for them.
 const AV_EARS_AT = { dot: [50, 49, 25], square: [50, 49, 25.5], diamond: [50, 49, 23], hexagon: [50, 49, 25], crescent: [45, 49, 23] };
 
@@ -242,6 +268,7 @@ function avWear(look, shape, color, eyeAt) {
   const [ex, ey] = eyeAt, n = avNum;
   switch (avHas(AV_EXTRA, look.extra) ? look.extra : '') {
     case 'glasses': place(AV_EXTRA.glasses(color, dk), `translate(${n(ex)} ${n(ey)}) scale(${AV_FACE_K[shape] || 1})`); break;
+    case 'mustache': { const [dy, k] = AV_LIP_AT[shape] || [9, 1]; place(AV_EXTRA.mustache(color, dk), `translate(${n(ex)} ${n(ey + dy * eyeAt[2])}) scale(${n(0.8 * k * eyeAt[2])})`); break }
     case 'monocle': place(AV_EXTRA.monocle(color, dk), `translate(${n(ex)} ${n(ey)}) scale(${eyeAt[2]})`); break;
     case 'bowtie': { const [x, y, k] = AV_CHIN_AT[shape]; place(AV_EXTRA.bowtie(color, dk), `translate(${x} ${y}) scale(${k})`); break }
     case 'headphones': if (AV_EARS_AT[shape]) { const [x, y, w] = AV_EARS_AT[shape]; place(AV_EXTRA.headphones(color, dk, w), `translate(${x} ${y})`) } break;
@@ -298,7 +325,7 @@ function avFrame(look, state, t, { rings = true, jobs = 3, blink = true } = {}) 
   const eyeAt = AV_EYE_AT[shape] || [50, 45, 1];
   let eye = null;
   // Glasses take the eye's place.
-  if (rings && look.eye === 'soft' && look.extra !== 'glasses') {
+  if (rings && (look.eye === 'soft' || look.eye === 'lashes') && look.extra !== 'glasses') {
     // The eye turns with the shape, staying upright, and floats with it.
     const [ex, ey, ek] = eyeAt, a = rot * Math.PI / 180;
     const x = 50 + (ex - 50) * Math.cos(a) - (ey - 50) * Math.sin(a);
@@ -316,7 +343,7 @@ function avFrame(look, state, t, { rings = true, jobs = 3, blink = true } = {}) 
     if (s === 'needs') { open = 1.15; gaze = toward(0.8); lower = true }
     if (s === 'done') { open = 0.55; gaze = [-0.8, 2] }
     if (blink && s !== 'needs') open *= avBlink(t);
-    eye = avEye(color, { x, y, k, open, gaze, lower });
+    eye = avEye(color, { x, y, k, open, gaze, lower, lashes: look.eye === 'lashes' });
   }
   const glow = look.finish === 'light' ? avGlow(s, t, color) : null;
   // What it wears turns with the shape, as drawn; a mini mark wears nothing.

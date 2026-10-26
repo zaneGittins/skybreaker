@@ -8,10 +8,10 @@ test('the six shapes and eight colours the server allows', () => {
   assert.deepEqual(Object.keys(AV_COLORS), ['clay', 'sage', 'ink', 'ochre', 'rose', 'slate', 'moss', 'plum']);
   assert.deepEqual(Object.keys(AV_TEMPER), ['calm', 'lively', 'precise']);
   assert.deepEqual(AV_RINGS, ['fine', 'double', 'dotted', 'arc', 'none']);
-  assert.deepEqual(AV_EYES, ['none', 'soft']);
+  assert.deepEqual(AV_EYES, ['none', 'soft', 'lashes']);
   assert.deepEqual(AV_FINISHES, ['paper', 'light']);
-  assert.deepEqual(AV_HATS, ['none', 'beanie', 'bowler', 'wizard', 'crown', 'beret', 'party', 'tophat']);
-  assert.deepEqual(AV_EXTRAS, ['none', 'glasses', 'monocle', 'bowtie', 'headphones']);
+  assert.deepEqual(AV_HATS, ['none', 'beanie', 'bowler', 'wizard', 'crown', 'beret', 'party', 'tophat', 'bow', 'cap']);
+  assert.deepEqual(AV_EXTRAS, ['none', 'glasses', 'monocle', 'bowtie', 'headphones', 'mustache']);
 });
 
 test('every frame is drawable', () => {
@@ -218,4 +218,20 @@ test('glasses take the eye\'s place; a monocle sits over it', () => {
 test('headphones sit out a triangle, which has no sides for them', () => {
   assert.deepEqual(wear({ shape: 'triangle', extra: 'headphones' }), []);
   assert.ok(wear({ shape: 'hexagon', extra: 'headphones' }).length > 0);
+});
+
+test('lashes are the soft eye with lashes on its upper lid', () => {
+  const lashed = avFrame({ ...soft, eye: 'lashes' }, 'idle', 1, { blink: false }).eye;
+  const plain = eyeAt('idle');
+  assert.equal(lashed.white, plain.white);
+  assert.equal(subpaths(lashed.lids), subpaths(plain.lids) + 4);
+  assert.equal(avFrame({ ...soft, eye: 'lashes', extra: 'glasses' }, 'idle', 1).eye, null);
+});
+
+test('a mustache sits under where glasses go', () => {
+  const at = (shape, extra) => wear({ shape, extra })[0][1].transform.match(/translate\(([\d.]+) ([\d.]+)\)/).slice(1).map(Number);
+  for (const shape of Object.keys(AV_SHAPES)) {
+    const [mx, my] = at(shape, 'mustache'), [gx, gy] = at(shape, 'glasses');
+    assert.ok(mx === gx && my > gy + 4, shape);
+  }
 });
