@@ -29,6 +29,8 @@ const AV_STATES = ['idle', 'thinking', 'busy', 'needs', 'done'];
 const AV_RINGS = ['fine', 'double', 'dotted', 'arc', 'none'];
 const AV_EYES = ['none', 'soft'];
 const AV_FINISHES = ['paper', 'light'];
+const AV_HATS = ['none', 'beanie', 'bowler', 'wizard', 'crown', 'beret', 'party', 'tophat'];
+const AV_EXTRAS = ['none', 'glasses', 'monocle', 'bowtie', 'headphones'];
 const AV_AMBER = '#E8B04A';
 
 // avRingPoint is the orbit at angle th: an ellipse that wobbles a little,
@@ -138,6 +140,115 @@ function avBlink(t) {
 
 const avHas = (o, k) => Object.hasOwn(o, k);
 
+// Things to wear, drawn in a dark shade of the shape like the eye, with
+// gold for the crown, monocle and wizard's trim. Each part is drawn about
+// its anchor: a hat's base centre, the eye, or the chin, up being -y.
+const AV_GOLD = '#D9AE55';
+const AV_HAT_AT = { dot: [50, 30, 1, 0], square: [50, 29, 1, 0], triangle: [50, 28.5, 0.62, 0], diamond: [50, 27, 0.66, 0], hexagon: [50, 28.5, 0.9, 0], crescent: [43, 28.5, 0.82, -16] };
+const AV_FACE_K = { triangle: 0.66, diamond: 0.85, hexagon: 0.95, crescent: 0.62 };
+const AV_CHIN_AT = { dot: [50, 73, 1], square: [50, 71, 1], triangle: [50, 68, 0.9], diamond: [50, 74, 0.8], hexagon: [50, 74.5, 1], crescent: [40, 74, 0.8] };
+
+const avPath = (d, fill, more) => ['path', { d, fill, ...more }];
+const avLine = (d, stroke, width, more) => ['path', { d, fill: 'none', stroke, 'stroke-width': width, 'stroke-linecap': 'round', ...more }];
+const avStar = (x, y, r) => `M${x} ${y - r}Q${x + r * 0.2} ${y - r * 0.2} ${x + r} ${y}Q${x + r * 0.2} ${y + r * 0.2} ${x} ${y + r}Q${x - r * 0.2} ${y + r * 0.2} ${x - r} ${y}Q${x - r * 0.2} ${y - r * 0.2} ${x} ${y - r}Z`;
+
+const AV_HAT = {
+  beanie: (c, dk) => [
+    avPath('M-16.5 -2Q-18 -21 0 -22Q18 -21 16.5 -2Z', avShade(c, -0.38)),
+    avLine('M-7 -20Q-8 -10 -8.5 -3M0 -22V-3M7 -20Q8 -10 8.5 -3', avShade(c, -0.55), 1.1),
+    avPath('M-18.5 1.5L-18 -5Q0 -8.5 18 -5L18.5 1.5Q0 -1.5 -18.5 1.5Z', avShade(c, -0.55)),
+    ['circle', { cy: -24.5, r: 4.6, fill: avShade(c, 0.45) }],
+  ],
+  bowler: (c, dk) => [
+    avPath('M-13 -2.5Q-14.5 -21 0 -21.5Q14.5 -21 13 -2.5Z', dk),
+    avPath('M-13.2 -7.5L-13 -3Q0 -5 13 -3L13.2 -7.5Q0 -9.5 -13.2 -7.5Z', avShade(c, -0.3)),
+    avLine('M-7.5 -17Q-4 -19.5 1 -19.6', '#fff', 1.3, { 'stroke-opacity': 0.28 }),
+    avPath('M-20 0.5Q-21.5 -4.5 -16 -3.2Q0 -5.5 16 -3.2Q21.5 -4.5 20 0.5Q18 -1 15 -0.4Q0 -2.5 -15 -0.4Q-18 -1 -20 0.5Z', dk),
+  ],
+  wizard: c => [
+    avPath('M-12.5 -2Q-9 -19 0 -30Q6 -37 15 -35.5Q9 -32 7 -25Q8 -13 12.5 -2Z', avShade(c, -0.55)),
+    avPath('M-12.4 -5.5L-12.5 -2Q0 -4 12.5 -2L11.7 -6Q0 -8 -12.4 -5.5Z', AV_GOLD),
+    avPath(avStar(-3, -15, 2.6) + avStar(4, -23, 1.8) + avStar(5, -11, 1.4), AV_GOLD),
+    ['circle', { cx: 15.3, cy: -35.6, r: 1.6, fill: AV_GOLD }],
+    avPath('M-22 0.5Q0 -5.5 22 0.5Q22.5 2.5 18 2.5Q0 -0.5 -18 2.5Q-22.5 2.5 -22 0.5Z', avShade(c, -0.55)),
+  ],
+  crown: c => [
+    avPath('M-15 0L-16.5 -17L-8 -8.5L0 -20L8 -8.5L16.5 -17L15 0Q0 -2.5 -15 0Z', AV_GOLD, { stroke: avShade(AV_GOLD, -0.35), 'stroke-width': 0.9, 'stroke-linejoin': 'round' }),
+    ['circle', { cx: -16.5, cy: -18.3, r: 1.8, fill: AV_GOLD }],
+    ['circle', { cy: -21.5, r: 2, fill: AV_GOLD }],
+    ['circle', { cx: 16.5, cy: -18.3, r: 1.8, fill: AV_GOLD }],
+    ['circle', { cy: -5, r: 1.9, fill: avShade(c, -0.2) }],
+  ],
+  // A beret sits at a slant.
+  beret: c => [
+    avPath('M-1.2 -13Q-0.5 -18.5 1.5 -18.5Q2.2 -16 1.6 -13Z', avShade(c, -0.5)),
+    avPath('M-19 -1.5Q-23 -12 -4 -14Q17 -15.5 22 -6Q23.5 -0.5 15 0.5Q0 1.8 -19 -1.5Z', avShade(c, -0.5)),
+    avLine('M-17 -2Q0 0.5 15 -0.8', avShade(c, 0.1), 1.2),
+  ].map(([tag, a]) => [tag, { ...a, transform: 'rotate(9)' }]),
+  party: (c, dk) => [
+    avPath('M-12 0L0 -27L12 0Q0 2.5 -12 0Z', avShade(c, 0.5)),
+    avLine('M-8.2 -8.5L6.2 -13.7M-4.6 -16.6L3 -19.4M-11 -2.3L10.6 -9.5', avShade(c, -0.45), 2.2),
+    ['circle', { cy: -28, r: 3.3, fill: dk }],
+  ],
+  tophat: (c, dk) => [
+    avPath('M-11.5 -3L-12.5 -26Q0 -28 12.5 -26L11.5 -3Z', dk),
+    avPath('M-11.8 -9.5L-11.6 -4Q0 -6 11.6 -4L11.8 -9.5Q0 -11.5 -11.8 -9.5Z', avShade(c, 0.15)),
+    avPath('M-21 -1Q0 -6.5 21 -1Q22.5 1.5 18 2Q0 -2 -18 2Q-22.5 1.5 -21 -1Z', dk),
+  ],
+};
+
+const avLens = (cx, c, dk) => ['circle', { cx, r: 6.3, fill: avShade(c, 0.5), 'fill-opacity': 0.45, stroke: dk, 'stroke-width': 1.7 }];
+
+const AV_EXTRA = {
+  glasses: (c, dk) => [
+    avLens(-8.5, c, dk), avLens(8.5, c, dk),
+    avLine('M-2.4 -0.6Q0 -2.4 2.4 -0.6M-14.7 -1L-21 -3M14.7 -1L21 -3', dk, 1.6),
+    avLine('M-11 -2.5Q-10 -4 -8.3 -4.2M6 -2.5Q7 -4 8.7 -4.2', '#fff', 1.1, { 'stroke-opacity': 0.7 }),
+  ],
+  monocle: c => [
+    ['circle', { r: 10, fill: avShade(c, 0.6), 'fill-opacity': 0.25, stroke: AV_GOLD, 'stroke-width': 1.8 }],
+    avLine('M7.5 6.6Q12 18 6 26', AV_GOLD, 1, { 'stroke-dasharray': '1.6 1.4' }),
+    avLine('M-5.5 -6Q-2.5 -8.2 1 -8', '#fff', 1.2, { 'stroke-opacity': 0.75 }),
+  ],
+  bowtie: (c, dk) => [
+    avPath('M0 0L-10 -6Q-12.5 0 -10 6ZM0 0L10 -6Q12.5 0 10 6Z', avShade(c, -0.5)),
+    ['rect', { x: -2.6, y: -3, width: 5.2, height: 6, rx: 1.8, fill: dk, stroke: avShade(c, 0.1), 'stroke-width': 0.8 }],
+  ],
+  // Headphones hug the sides of the shape, w out from its middle.
+  headphones: (c, dk, w) => {
+    const h = w * 1.12, hp = avShade(c, -0.42);
+    return [
+      avLine(`M${-w + 1} -3Q${-w - 1} ${-h - 4} 0 ${-h - 4}Q${w + 1} ${-h - 4} ${w - 1} -3`, hp, 3),
+      ['rect', { x: -w - 4.5, y: -7, width: 8.5, height: 14, rx: 4, fill: hp }],
+      ['rect', { x: w - 4, y: -7, width: 8.5, height: 14, rx: 4, fill: hp }],
+      ['rect', { x: -w + 2.6, y: -4.5, width: 2.6, height: 9, rx: 1.3, fill: dk }],
+      ['rect', { x: w - 5.2, y: -4.5, width: 2.6, height: 9, rx: 1.3, fill: dk }],
+    ];
+  },
+};
+// How far out headphones sit, and where; a triangle has no sides for them.
+const AV_EARS_AT = { dot: [50, 49, 25], square: [50, 49, 25.5], diamond: [50, 49, 23], hexagon: [50, 49, 25], crescent: [45, 49, 23] };
+
+// avWear is everything a mark wears, as [tag, attributes] in mark space,
+// before the shape's turn. eyeAt is where the eye sits.
+function avWear(look, shape, color, eyeAt) {
+  const out = [];
+  const place = (parts, at) => parts.forEach(([tag, a]) => out.push([tag, { ...a, transform: at + (a.transform ? ' ' + a.transform : '') }]));
+  const dk = avShade(color, -0.66);
+  if (avHas(AV_HAT, look.hat)) {
+    const [x, y, k, r] = AV_HAT_AT[shape];
+    place(AV_HAT[look.hat](color, dk), `translate(${x} ${y}) rotate(${r}) scale(${k})`);
+  }
+  const [ex, ey] = eyeAt, n = avNum;
+  switch (avHas(AV_EXTRA, look.extra) ? look.extra : '') {
+    case 'glasses': place(AV_EXTRA.glasses(color, dk), `translate(${n(ex)} ${n(ey)}) scale(${AV_FACE_K[shape] || 1})`); break;
+    case 'monocle': place(AV_EXTRA.monocle(color, dk), `translate(${n(ex)} ${n(ey)}) scale(${eyeAt[2]})`); break;
+    case 'bowtie': { const [x, y, k] = AV_CHIN_AT[shape]; place(AV_EXTRA.bowtie(color, dk), `translate(${x} ${y}) scale(${k})`); break }
+    case 'headphones': if (AV_EARS_AT[shape]) { const [x, y, w] = AV_EARS_AT[shape]; place(AV_EXTRA.headphones(color, dk, w), `translate(${x} ${y})`) } break;
+  }
+  return out;
+}
+
 const AV_MOONS = 4;
 
 // avPlanet is a body riding the orbit at angle th.
@@ -184,10 +295,12 @@ function avFrame(look, state, t, { rings = true, jobs = 3, blink = true } = {}) 
   const color = avHas(AV_COLORS, look.color) ? AV_COLORS[look.color] : AV_COLORS.clay;
   const ring = rings ? avRing(AV_RINGS.includes(look.ring) ? look.ring : 'fine', temper, tp, amp, tilt) : { back: '', front: '' };
   const planet = { ...avPlanet(temper, th, wt, amp, tilt, planetR), color: planetColor };
+  const eyeAt = AV_EYE_AT[shape] || [50, 45, 1];
   let eye = null;
-  if (rings && look.eye === 'soft') {
+  // Glasses take the eye's place.
+  if (rings && look.eye === 'soft' && look.extra !== 'glasses') {
     // The eye turns with the shape, staying upright, and floats with it.
-    const [ex, ey, ek] = AV_EYE_AT[shape] || [50, 45, 1], a = rot * Math.PI / 180;
+    const [ex, ey, ek] = eyeAt, a = rot * Math.PI / 180;
     const x = 50 + (ex - 50) * Math.cos(a) - (ey - 50) * Math.sin(a);
     const y = 50 + (ex - 50) * Math.sin(a) + (ey - 50) * Math.cos(a) - lift;
     const k = 1.3 * ek;
@@ -206,7 +319,9 @@ function avFrame(look, state, t, { rings = true, jobs = 3, blink = true } = {}) 
     eye = avEye(color, { x, y, k, open, gaze, lower });
   }
   const glow = look.finish === 'light' ? avGlow(s, t, color) : null;
-  return { shape: AV_SHAPES[shape], color, rot, lift, back: ring.back, front: ring.front, planet, moons, eye, glow };
+  // What it wears turns with the shape, as drawn; a mini mark wears nothing.
+  const wear = rings ? avWear(look, shape, color, eyeAt) : [];
+  return { shape: AV_SHAPES[shape], color, rot, lift, back: ring.back, front: ring.front, planet, moons, eye, glow, wear };
 }
 
-if (typeof module !== 'undefined') module.exports = { AV_SHAPES, AV_COLORS, AV_TEMPER, AV_STATES, AV_RINGS, AV_EYES, AV_FINISHES, AV_MOONS, avRibbon, avFrame };
+if (typeof module !== 'undefined') module.exports = { AV_SHAPES, AV_COLORS, AV_TEMPER, AV_STATES, AV_RINGS, AV_EYES, AV_FINISHES, AV_HATS, AV_EXTRAS, AV_MOONS, avRibbon, avFrame };

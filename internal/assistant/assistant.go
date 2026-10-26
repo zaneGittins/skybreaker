@@ -41,9 +41,9 @@ const (
 	maxIndexed = 100
 )
 
-// Shapes, Colors, Tempers, Rings, Eyes and Finishes are what an
-// assistant's mark can be. The first ring, eye and finish are what a look
-// without one gets.
+// Shapes, Colors, Tempers, Rings, Eyes, Finishes, Hats and Extras are what
+// an assistant's mark can be. The first ring, eye, finish, hat and extra
+// are what a look without one gets.
 var (
 	Shapes   = []string{"dot", "square", "triangle", "diamond", "hexagon", "crescent"}
 	Colors   = []string{"clay", "sage", "ink", "ochre", "rose", "slate", "moss", "plum"}
@@ -51,6 +51,8 @@ var (
 	Rings    = []string{"fine", "double", "dotted", "arc", "none"}
 	Eyes     = []string{"none", "soft"}
 	Finishes = []string{"paper", "light"}
+	Hats     = []string{"none", "beanie", "bowler", "wizard", "crown", "beret", "party", "tophat"}
+	Extras   = []string{"none", "glasses", "monocle", "bowtie", "headphones"}
 )
 
 type Look struct {
@@ -61,9 +63,12 @@ type Look struct {
 	Ring   string `json:"ring"`
 	Eye    string `json:"eye"`
 	Finish string `json:"finish"`
+	Hat    string `json:"hat"`
+	Extra  string `json:"extra"`
 }
 
-// filled is l with the plain ring, eye and finish where it has none.
+// filled is l with the plain ring, eye, finish, hat and extra where it has
+// none.
 func (l Look) filled() Look {
 	if l.Ring == "" {
 		l.Ring = Rings[0]
@@ -73,6 +78,12 @@ func (l Look) filled() Look {
 	}
 	if l.Finish == "" {
 		l.Finish = Finishes[0]
+	}
+	if l.Hat == "" {
+		l.Hat = Hats[0]
+	}
+	if l.Extra == "" {
+		l.Extra = Extras[0]
 	}
 	return l
 }
@@ -368,6 +379,10 @@ func (s *Store) SetLook(name string, l Look) error {
 		return fmt.Errorf("unknown eye %q", l.Eye)
 	case !slices.Contains(Finishes, l.Finish):
 		return fmt.Errorf("unknown finish %q", l.Finish)
+	case !slices.Contains(Hats, l.Hat):
+		return fmt.Errorf("unknown hat %q", l.Hat)
+	case !slices.Contains(Extras, l.Extra):
+		return fmt.Errorf("unknown extra %q", l.Extra)
 	}
 	return s.edit(name, func(a *Assistant) error { a.Look = l; return nil })
 }

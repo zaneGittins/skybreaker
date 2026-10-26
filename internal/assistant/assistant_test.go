@@ -33,10 +33,10 @@ func reopen(t *testing.T, path string) *Store {
 
 func TestLook(t *testing.T) {
 	s, path := open(t)
-	if l := s.Get("pip").Look; l != (Look{Name: "Pip", Shape: "dot", Color: "clay", Temper: "calm", Ring: "fine", Eye: "none", Finish: "paper"}) {
+	if l := s.Get("pip").Look; l != (Look{Name: "Pip", Shape: "dot", Color: "clay", Temper: "calm", Ring: "fine", Eye: "none", Finish: "paper", Hat: "none", Extra: "none"}) {
 		t.Fatalf("default look %+v", l)
 	}
-	want := Look{Name: "Juno", Shape: "crescent", Color: "ink", Temper: "lively", Ring: "dotted", Eye: "soft", Finish: "light"}
+	want := Look{Name: "Juno", Shape: "crescent", Color: "ink", Temper: "lively", Ring: "dotted", Eye: "soft", Finish: "light", Hat: "wizard", Extra: "monocle"}
 	if err := s.SetLook("pip", want); err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +53,8 @@ func TestLook(t *testing.T) {
 		{Name: "Juno", Shape: "dot", Color: "ink", Temper: "calm", Ring: "saturn"},
 		{Name: "Juno", Shape: "dot", Color: "ink", Temper: "calm", Eye: "googly"},
 		{Name: "Juno", Shape: "dot", Color: "ink", Temper: "calm", Finish: "neon"},
+		{Name: "Juno", Shape: "dot", Color: "ink", Temper: "calm", Hat: "fez"},
+		{Name: "Juno", Shape: "dot", Color: "ink", Temper: "calm", Extra: "cape"},
 	} {
 		if err := s.SetLook("pip", bad); err == nil {
 			t.Errorf("accepted %+v", bad)
@@ -60,21 +62,21 @@ func TestLook(t *testing.T) {
 	}
 }
 
-// A look saved before rings, eyes and finishes, or sent without them, gets the
-// plain ones.
+// A look saved before rings, eyes, finishes and things to wear, or sent
+// without them, gets the plain ones.
 func TestLookWithoutRingOrEye(t *testing.T) {
 	s, path := open(t)
 	if err := s.SetLook("pip", Look{Name: "Juno", Shape: "dot", Color: "ink", Temper: "calm"}); err != nil {
 		t.Fatal(err)
 	}
-	if l := s.Get("pip").Look; l.Ring != "fine" || l.Eye != "none" || l.Finish != "paper" {
+	if l := s.Get("pip").Look; l.Ring != "fine" || l.Eye != "none" || l.Finish != "paper" || l.Hat != "none" || l.Extra != "none" {
 		t.Fatalf("look %+v", l)
 	}
 	old := `{"assistants":{"pip":{"look":{"name":"Juno","shape":"dot","color":"ink","temper":"calm"}}}}`
 	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if l := reopen(t, path).Get("pip").Look; l.Ring != "fine" || l.Eye != "none" || l.Finish != "paper" {
+	if l := reopen(t, path).Get("pip").Look; l.Ring != "fine" || l.Eye != "none" || l.Finish != "paper" || l.Hat != "none" || l.Extra != "none" {
 		t.Fatalf("old look %+v", l)
 	}
 }

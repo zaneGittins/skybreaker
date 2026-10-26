@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { AV_SHAPES, AV_COLORS, AV_TEMPER, AV_STATES, AV_RINGS, AV_EYES, AV_FINISHES, avRibbon, avFrame } = require('./avatarlib.js');
+const { AV_SHAPES, AV_COLORS, AV_TEMPER, AV_STATES, AV_RINGS, AV_EYES, AV_FINISHES, AV_HATS, AV_EXTRAS, avRibbon, avFrame } = require('./avatarlib.js');
 
 test('the six shapes and eight colours the server allows', () => {
   assert.deepEqual(Object.keys(AV_SHAPES), ['dot', 'square', 'triangle', 'diamond', 'hexagon', 'crescent']);
@@ -10,6 +10,8 @@ test('the six shapes and eight colours the server allows', () => {
   assert.deepEqual(AV_RINGS, ['fine', 'double', 'dotted', 'arc', 'none']);
   assert.deepEqual(AV_EYES, ['none', 'soft']);
   assert.deepEqual(AV_FINISHES, ['paper', 'light']);
+  assert.deepEqual(AV_HATS, ['none', 'beanie', 'bowler', 'wizard', 'crown', 'beret', 'party', 'tophat']);
+  assert.deepEqual(AV_EXTRAS, ['none', 'glasses', 'monocle', 'bowtie', 'headphones']);
 });
 
 test('every frame is drawable', () => {
@@ -181,4 +183,39 @@ test('how bright it glows tells the state', () => {
   assert.equal(glowAt('needs', 1).halo, '#E8B04A');
   assert.equal(glowAt('idle', 1).halo, AV_COLORS.ink);
   assert.ok(glowAt('needs', 1).level >= Math.max(...levels('thinking')));
+});
+
+const dressed = { shape: 'dot', color: 'plum', temper: 'calm' };
+const wear = (look, opts) => avFrame({ ...dressed, ...look }, 'idle', 1, opts).wear;
+
+test('every hat and extra is drawable on every shape', () => {
+  for (const shape of Object.keys(AV_SHAPES)) for (const hat of AV_HATS) for (const extra of AV_EXTRAS) {
+    const w = wear({ shape, hat, extra });
+    for (const [tag, attrs] of w) {
+      assert.match(tag, /^(path|circle|rect)$/);
+      assert.ok(!/NaN|Infinity|undefined/.test(JSON.stringify(attrs)), `${shape} ${hat} ${extra}`);
+    }
+    if (hat === 'none' && extra === 'none') assert.equal(w.length, 0);
+    if (hat !== 'none') assert.ok(w.length > 0, `${shape} ${hat}`);
+  }
+});
+
+test('nothing to wear unless asked, and none on a mini mark', () => {
+  assert.deepEqual(wear({}), []);
+  assert.deepEqual(wear({ hat: 'fez', extra: 'cape' }), []);
+  assert.deepEqual(wear({ hat: 'constructor', extra: '__proto__' }), []);
+  assert.deepEqual(wear({ hat: 'wizard', extra: 'glasses' }, { rings: false }), []);
+});
+
+test('glasses take the eye\'s place; a monocle sits over it', () => {
+  const soft = { eye: 'soft', hat: 'none' };
+  assert.equal(avFrame({ ...dressed, ...soft, extra: 'glasses' }, 'idle', 1).eye, null);
+  const f = avFrame({ ...dressed, ...soft, shape: 'triangle', extra: 'monocle' }, 'idle', 1, { blink: false });
+  const lens = f.wear.find(([tag]) => tag === 'circle');
+  assert.match(lens[1].transform, new RegExp(`translate\\(${f.eye.x} ${f.eye.y}\\)`));
+});
+
+test('headphones sit out a triangle, which has no sides for them', () => {
+  assert.deepEqual(wear({ shape: 'triangle', extra: 'headphones' }), []);
+  assert.ok(wear({ shape: 'hexagon', extra: 'headphones' }).length > 0);
 });

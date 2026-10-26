@@ -43,8 +43,10 @@ function avatar(look, { state = 'idle', jobs = 3, mini = false, cls = '' } = {})
   const white = avNode('path', { class: 'av-eye' });
   const iris = avNode('circle', { class: 'av-eye', r: '0', 'clip-path': `url(#${id}e)` });
   const lids = avNode('path', { class: 'av-eye' });
-  s.append(defs, halo, flare, back, ...behind, body, white, iris, lids, front, ...ahead);
-  s._av = { look, state, jobs, mini, back, front, behind, ahead, body, eye: { lid, white, iris, lids }, light: { stops, halo, flare }, id, born: performance.now() };
+  // What it wears: over the shape, under the front of the ring.
+  const wear = avNode('g', { class: 'av-wear' });
+  s.append(defs, halo, flare, back, ...behind, body, white, iris, lids, wear, front, ...ahead);
+  s._av = { look, state, jobs, mini, back, front, behind, ahead, body, eye: { lid, white, iris, lids }, wear, worn: null, light: { stops, halo, flare }, id, born: performance.now() };
   // Drawn where the clock is now, so a redrawn mark doesn't jump.
   avDraw(s, performance.now() / 1000);
   if (!avStill()) {
@@ -105,6 +107,12 @@ function avDraw(s, t) {
   }
   a.back.setAttribute('d', f.back);
   a.front.setAttribute('d', f.front);
+  // Redrawn only when the look changes; it turns with the shape every frame.
+  if (a.worn !== a.look) {
+    a.worn = a.look;
+    a.wear.replaceChildren(...f.wear.map(([tag, attrs]) => avNode(tag, attrs)));
+  }
+  a.wear.setAttribute('transform', turn);
   const e = f.eye, ae = a.eye;
   ae.lid.setAttribute('d', e ? e.white : '');
   ae.white.setAttribute('d', e ? e.white : '');

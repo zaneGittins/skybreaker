@@ -5,8 +5,10 @@
 // updates, page frames) only goes in through textContent or a canvas.
 
 // asstLookOf is a project's assistant look, or a plain one until it has its own.
-const asstLookOf = p => p?.look || { name: p?.name || '', shape: 'dot', color: 'clay', temper: 'calm', ring: 'fine', eye: 'none', finish: 'paper' };
-const asstCap = s => s.charAt(0).toUpperCase() + s.slice(1);
+const asstLookOf = p => p?.look || { name: p?.name || '', shape: 'dot', color: 'clay', temper: 'calm', ring: 'fine', eye: 'none', finish: 'paper', hat: 'none', extra: 'none' };
+// Names that are more than one word.
+const ASST_NAMES = { tophat: 'Top hat', bowtie: 'Bow tie', party: 'Party hat' };
+const asstCap = s => ASST_NAMES[s] || s.charAt(0).toUpperCase() + s.slice(1);
 
 // asstPicker is a row of choices as one radio group: arrow keys move and
 // choose, as in any radio group. draw(value) re-marks the choice.
@@ -40,6 +42,9 @@ function asstPicker(label, cls, values, value, onPick, face) {
 // asstShapes and asstColors pick a mark's shape and colour.
 const asstShapes = (look, onPick, big) => asstPicker('Shape', big ? 'a-shapes' : 'na-shapes', Object.keys(AV_SHAPES), look.shape, onPick,
   sh => big ? [avatar({ ...look, shape: sh }), el('span', null, asstCap(sh))] : avatar({ ...look, shape: sh }, { mini: true }));
+// asstWear picks a hat or an extra, each shown on the mark itself.
+const asstWear = (look, part, onPick) => asstPicker(part === 'hat' ? 'Hat' : 'Extra', 'a-wear', part === 'hat' ? AV_HATS : AV_EXTRAS, look[part] || 'none', onPick,
+  x => [avatar({ ...look, [part]: x }), el('span', null, asstCap(x))]);
 const asstColors = (look, onPick) => asstPicker('Colour', 'a-colors', Object.keys(AV_COLORS), look.color, onPick, k => {
   const dot = el('span.a-swatch');
   dot.style.background = AV_COLORS[k];
@@ -461,11 +466,13 @@ function asstLook(name, a) {
   let look = { ...a.look }, st = 'idle';
   const mark = avatar(look, { cls: 'a-stage-mark' });
   const cap = el('p.a-cap', null, ASST_CAPS[st]);
-  let shapes, colors;
+  let picks;
   const drawPicks = () => {
-    const fresh = [asstShapes(look, sh => save({ shape: sh }), true), asstColors(look, k => save({ color: k }))];
-    if (shapes) { shapes.replaceWith(fresh[0]); colors.replaceWith(fresh[1]) }
-    [shapes, colors] = fresh;
+    const fresh = [asstShapes(look, sh => save({ shape: sh }), true), asstColors(look, k => save({ color: k })),
+      asstWear(look, 'hat', v => save({ hat: v })), asstWear(look, 'extra', v => save({ extra: v }))];
+    // A strip keeps where it was scrolled to, so a pick doesn't jump it back.
+    picks?.forEach((old, i) => { const x = old.scrollLeft; old.replaceWith(fresh[i]); fresh[i].scrollLeft = x });
+    picks = fresh;
   };
   // save changes the look at once, and undoes it if the server says no;
   // it throws then too, so a seg() undoes its own choice.
@@ -503,10 +510,11 @@ function asstLook(name, a) {
   return el('div.a-look', null,
     el('div.a-stage', null, mark, el('b.a-stage-name', null, look.name), cap, states),
     el('div.a-opts', null,
-      el('div.a-opt', null, el('h3.a-label', null, 'Shape'), shapes),
-      el('div.a-opt', null, el('h3.a-label', null, 'Colour'), colors),
+      el('div.a-opt', null, el('h3.a-label', null, 'Shape'), picks[0]),
+      el('div.a-opt', null, el('h3.a-label', null, 'Colour'), picks[1]),
       el('div.a-opt', null, el('h3.a-label', null, 'Ring'), ring),
       el('div.a-opt', null, el('h3.a-label', null, 'Eye'), eye),
+      el('div.a-opt', null, el('h3.a-label', null, 'Wear'), picks[2], picks[3]),
       el('div.a-opt', null, el('h3.a-label', null, 'Finish'), finish),
       el('div.a-opt', null, el('h3.a-label', null, 'Motion'), temper),
       el('div.a-opt', null, el('h3.a-label', null, 'Name'), nameIn),
@@ -937,7 +945,7 @@ const asstSlug = s => {
 async function newAssistantSheet() {
   let caps;
   try { caps = await api('GET', '/api/capabilities') } catch (e) { toast(e.message, 'error'); return }
-  const look = { name: '', shape: 'dot', color: 'clay', temper: 'calm', ring: 'fine', eye: 'none', finish: 'paper' };
+  const look = { name: '', shape: 'dot', color: 'clay', temper: 'calm', ring: 'fine', eye: 'none', finish: 'paper', hat: 'none', extra: 'none' };
   const mark = avatar({ ...look }, { cls: 'na-mark' });
   const name = el('input.np-input.na-name', { type: 'text', placeholder: 'Pip', maxlength: '40', required: true, autocomplete: 'off', 'aria-label': 'Name' });
   const address = el('span.np-hint');
