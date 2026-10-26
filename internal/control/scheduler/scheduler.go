@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -32,7 +33,11 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/notify"
 )
 
-var ErrBusy = errors.New("a run of this job is already in progress")
+var (
+	ErrBusy       = errors.New("a run of this job is already in progress")
+	ErrNotRunning = errors.New("that run isn't running")
+	errStopped    = errors.New("stopped")
+)
 
 // Backend is the slice of the app a run needs.
 type Backend interface {
@@ -74,7 +79,8 @@ type Scheduler struct {
 
 	mu      sync.Mutex
 	running map[string]bool
-	last    time.Time // previous Tick
+	stops   map[string]context.CancelCauseFunc // by run ID
+	last    time.Time                          // previous Tick
 	wg      sync.WaitGroup
 }
 
@@ -82,7 +88,7 @@ const runsRoot = "/skybreaker/runs" // the host's <project>/runs inside the sand
 
 func New(d Deps) *Scheduler {
 	s := &Scheduler{cfg: d.Config, store: d.Store, backend: d.Backend, notify: d.Notify, onUpdate: d.OnUpdate, onUsage: d.OnUsage,
-		uiURL: strings.TrimSuffix(d.UIURL, "/"), poll: d.Poll, grace: d.Grace, running: map[string]bool{}, base: context.Background()}
+		uiURL: strings.TrimSuffix(d.UIURL, "/"), poll: d.Poll, grace: d.Grace, running: map[string]bool{}, stops: map[string]context.CancelCauseFunc{}, base: context.Background()}
 	if s.notify == nil {
 		s.notify = notify.Nop{}
 	}
@@ -192,26 +198,42 @@ func (s *Scheduler) Trigger(ctx context.Context, name string) (store.Run, error)
 	run.Window = run.ID
 	run.LogPath = filepath.Join(s.backend.ProjectDir(job.Project), "runs", run.ID, "log.jsonl")
 	if err := s.store.CreateRun(run); err != nil {
-		s.done(name)
+		s.done(name, run.ID)
 		return store.Run{}, err
 	}
 	s.onUpdate(run)
-	parent, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(s.base, cancel)
+	parent, cancel := context.WithCancelCause(ctx)
+	stop := context.AfterFunc(s.base, func() { cancel(nil) })
+	s.mu.Lock()
+	s.stops[run.ID] = cancel
+	s.mu.Unlock()
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		defer s.done(name)
+		defer s.done(name, run.ID)
 		defer stop()
-		defer cancel()
+		defer cancel(nil)
 		s.execute(context.WithoutCancel(ctx), parent, job, run)
 	}()
 	return run, nil
 }
 
-func (s *Scheduler) done(name string) {
+// Stop interrupts a run, as an overrun is.
+func (s *Scheduler) Stop(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cancel, ok := s.stops[id]
+	if !ok {
+		return ErrNotRunning
+	}
+	cancel(errStopped)
+	return nil
+}
+
+func (s *Scheduler) done(name, id string) {
 	s.mu.Lock()
 	delete(s.running, name)
+	delete(s.stops, id)
 	s.mu.Unlock()
 }
 
@@ -225,6 +247,9 @@ func (s *Scheduler) execute(ctx, parent context.Context, job *config.Job, run st
 		})
 		if r, ok := s.store.Run(run.ID); ok {
 			s.onUpdate(r)
+		}
+		if status == store.RunStopped {
+			return
 		}
 		title := "Scheduled run finished"
 		if status != store.RunOK {
@@ -283,6 +308,13 @@ func (s *Scheduler) execute(ctx, parent context.Context, job *config.Job, run st
 	}
 	opts := harness.RunOptions{Prompt: run.Prompt, BudgetUSD: job.BudgetUSD, AllowedTools: job.AllowedTools, Model: job.Model}
 	opts.MCP = s.backend.ProjectMCP(job.Project)
+	env := map[string]string{"SKYBREAKER_RUN": run.ID}
+	if d := chat.New(m.Chat); d != nil && len(job.AllowedTools) == 0 {
+		// It starts as the project's chats do; a job that lists its tools
+		// keeps to them.
+		opts.PermissionMode = chat.RunMode(m.Chat, s.cfg.StartMode(job.Project, m.Chat))
+		maps.Copy(env, d.Env())
+	}
 	args, err := m.HeadlessArgs(opts)
 	if err != nil {
 		fail("%v", err)
@@ -294,10 +326,7 @@ func (s *Scheduler) execute(ctx, parent context.Context, job *config.Job, run st
 		fail("%v", err)
 		return
 	}
-	env := map[string]string{"SKYBREAKER_RUN": run.ID}
-	for k, v := range m.Env {
-		env[k] = v
-	}
+	maps.Copy(env, m.Env)
 	if _, err := s.backend.Exec(ctx, job.Project, tmux.NewWindow(app.RunsSession, run.ID, work, env, cmd)...); err != nil {
 		fail("start run window: %v", err)
 		return
@@ -316,6 +345,9 @@ func (s *Scheduler) execute(ctx, parent context.Context, job *config.Job, run st
 		exit, ok = s.waitExit(gctx, host)
 		gcancel()
 		status = store.RunTimeout
+		if errors.Is(context.Cause(parent), errStopped) {
+			status = store.RunStopped
+		}
 	} else if exit != 0 {
 		status = store.RunFailed
 	}

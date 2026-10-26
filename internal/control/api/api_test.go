@@ -25,6 +25,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/hooks"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
+	"github.com/zaneGittins/skybreaker/internal/control/scheduler"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 	"github.com/zaneGittins/skybreaker/internal/control/terminal"
 	"github.com/zaneGittins/skybreaker/internal/tsauth"
@@ -122,7 +123,15 @@ func (f *fakeApprovals) Decide(id string, d hooks.Decision) error {
 	return nil
 }
 
-type fakeRuns struct{ triggered []string }
+type fakeRuns struct{ triggered, stopped []string }
+
+func (f *fakeRuns) Stop(id string) error {
+	if id != "r1" {
+		return scheduler.ErrNotRunning
+	}
+	f.stopped = append(f.stopped, id)
+	return nil
+}
 
 func (f *fakeRuns) Trigger(_ context.Context, job string) (store.Run, error) {
 	if job != "nightly" {
@@ -370,6 +379,12 @@ func TestRuns(t *testing.T) {
 	if code, _ := f.do(t, "POST", "/api/jobs/nope/run", `{}`, nil); code != 404 {
 		t.Errorf("unknown job: %d", code)
 	}
+	if code, _ := f.do(t, "POST", "/api/runs/r1/stop", `{}`, nil); code != 204 {
+		t.Errorf("stop: %d", code)
+	}
+	if code, _ := f.do(t, "POST", "/api/runs/r9/stop", `{}`, nil); code != 409 {
+		t.Errorf("stop a run that isn't running: %d", code)
+	}
 	if code, b := f.do(t, "GET", "/api/runs?project=orbit", "", nil); code != 200 || !strings.Contains(b, `"nightly"`) {
 		t.Errorf("runs: %d %s", code, b)
 	}
@@ -406,6 +421,25 @@ func TestMeta(t *testing.T) {
 	code, body := f.do(t, "GET", "/api/meta", "", nil)
 	if code != 200 || !strings.Contains(body, `"user":"zane@example.com"`) || strings.Contains(body, "broker_ui") {
 		t.Fatalf("meta: %d %s", code, body)
+	}
+}
+
+// A Claude run reads back as its conversation; one in plain text has none,
+// and the page shows its log instead.
+func TestRunEvents(t *testing.T) {
+	f := newFixture(t, you)
+	log := filepath.Join(t.TempDir(), "log.jsonl")
+	os.WriteFile(log, []byte(`{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"Brief for tok-orbit-0123456789 done."}]}}`+"\n"), 0o644)
+	f.store.CreateRun(store.Run{ID: "r3", Job: "brief", Project: "orbit", Harness: "claude", LogPath: log, Started: time.Now()})
+	code, b := f.do(t, "GET", "/api/runs/r3/events", "", nil)
+	if code != 200 || !strings.Contains(b, `"kind":"text"`) || !strings.Contains(b, "Brief for [hook token] done.") {
+		t.Errorf("claude run events: %d %s", code, b)
+	}
+	if code, b := f.do(t, "GET", "/api/runs/r1/events", "", nil); code != 200 || b != "[]\n" {
+		t.Errorf("plain run events: %d %q", code, b)
+	}
+	if code, _ := f.do(t, "GET", "/api/runs/nope/events", "", nil); code != 404 {
+		t.Errorf("unknown run: %d", code)
 	}
 }
 

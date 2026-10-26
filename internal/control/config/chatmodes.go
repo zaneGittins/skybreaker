@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"os"
 	"path/filepath"
@@ -26,6 +27,21 @@ func (m ChatModes) For(project string) string {
 		return p
 	}
 	return m.Default
+}
+
+// StartMode is the permission mode a new chat in project starts in: the
+// one set in the app for it, else the default, else ask. One the driver
+// lacks falls back to its safest.
+func (c *Config) StartMode(project, driver string) string {
+	set, err := ReadChatModes(c.ChatModes())
+	if err != nil {
+		log.Printf("skybreaker: chat modes: %v", err)
+	}
+	modes := chat.New(driver).Modes()
+	if mode := set.For(project); slices.Contains(modes, mode) {
+		return mode
+	}
+	return modes[0]
 }
 
 // ChatModes is the file of chat modes: <data_dir>/settings/chat-modes.json.

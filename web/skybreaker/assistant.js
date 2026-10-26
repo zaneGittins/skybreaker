@@ -239,7 +239,7 @@ async function renderThread(seq, name) {
   return renderChat(seq, d);
 }
 
-const runWord = r => r.status === 'ok' ? 'Finished' : r.status === 'running' ? 'Running' : r.status === 'failed' ? 'Failed' + (r.error ? ': ' + r.error : '') : r.status;
+const runWord = r => r.status === 'ok' ? 'Finished' : r.status === 'running' ? 'Running' : r.status === 'stopped' ? 'Stopped' : r.status === 'failed' ? 'Failed' + (r.error ? ': ' + r.error : '') : r.status;
 
 // asstTakeoverCard asks you to take the browser over: on its own page, or
 // with take, wherever take opens it.
@@ -277,10 +277,21 @@ function asstProvenance(x) {
   return 'Suggested · ' + when;
 }
 
+// asstClamp shows long text as its first lines; a tap on it shows the rest.
+function asstClamp(text, cls = '') {
+  const p = el('p.a-clamp' + cls, null, text);
+  // Only text that's cut short says it can open.
+  new ResizeObserver(() => { if (!p.classList.contains('open')) p.classList.toggle('more', p.scrollHeight > p.clientHeight + 1) }).observe(p);
+  p.addEventListener('click', () => {
+    if (p.classList.contains('more') && !getSelection()?.toString()) p.classList.replace('more', 'open');
+  });
+  return p;
+}
+
 function asstMemoryAsk(name, x) {
   return el('div.a-card.a-need', null,
     el('div.a-need-text', null, el('div.a-kick', null, 'Wants to remember'), el('b', null, x.title),
-      x.body ? el('p', null, x.body) : null, el('span.a-prov', null, asstProvenance(x))),
+      x.body ? asstClamp(x.body) : null, el('span.a-prov', null, asstProvenance(x))),
     el('div.a-acts', null,
       el('button.btn.primary.sm', { type: 'button', onclick: e => asstDo(asstProposal(name, x, 'remember'), 'Remembered', {}, e) }, svg(ICON.check), 'Remember'),
       el('button.btn.ghost.sm', { type: 'button', onclick: () => asstMemorySheet(name, x, true) }, 'Edit'),
@@ -292,7 +303,7 @@ function asstRoutineAsk(name, x) {
   return el('div.a-card.a-need', null,
     el('div.a-need-text', null, el('div.a-kick', null, 'Suggests a routine'), el('b', null, r.name),
       el('span.a-prov', null, el('span.mono', null, r.schedule), ' · ', asstSchedule(r.schedule)),
-      el('p', null, r.prompt)),
+      asstClamp(r.prompt)),
     // Routines are settings: only an admin approves one.
     el('div.a-acts', null,
       state.meta?.admin ? el('button.btn.primary.sm', { type: 'button', onclick: e => asstDo(asstProposal(name, x, 'approve'), 'Saved: it runs once Skybreaker restarts', {}, e) }, svg(ICON.check), 'Approve') : el('span.np-hint', null, 'An admin approves routines'),
@@ -309,7 +320,7 @@ function asstMemory(name, a) {
     const q = search.value.trim().toLowerCase();
     const shown = a.memories.filter(m => !q || (m.title + '\n' + (m.body || '')).toLowerCase().includes(q)).reverse();
     list.replaceChildren(...shown.map(m => el('div.a-mem', null,
-      el('div.a-mem-text', null, el('b', null, m.title), m.body ? el('p', null, m.body) : null, el('span.a-prov', null, asstProvenance(m))),
+      el('div.a-mem-text', null, el('b', null, m.title), m.body ? asstClamp(m.body) : null, el('span.a-prov', null, asstProvenance(m))),
       el('div.a-mem-acts', null,
         el('button.btn.ghost.sm', { type: 'button', onclick: () => asstMemorySheet(name, m, false) }, 'Edit'),
         el('button.btn.ghost.sm', { type: 'button', onclick: () => asstForget(name, m) }, 'Forget')))));
@@ -392,7 +403,7 @@ async function asstRoutines(seq, name, a) {
         el('button.btn.ghost.sm', { type: 'button', onclick: () => asstRunNow(j.name) }, svg(ICON.play), 'Run now'),
         r.editable && j.app ? el('button.btn.ghost.sm', { type: 'button', onclick: () => asstRoutineSheet(name, j) }, 'Edit') : null,
         r.editable && j.app ? el('button.btn.ghost.sm', { type: 'button', onclick: () => asstDeleteRoutine(name, j) }, 'Delete') : null)),
-    el('p.a-prompt', null, j.prompt),
+    asstClamp(j.prompt, '.a-prompt'),
     j.runs.length ? el('div.a-runs', null, j.runs.map(x => el('a.a-run', { href: '/r/' + encodeURIComponent(x.id), 'data-link': true },
       el('span.dot.' + (x.status === 'ok' ? 'ok' : x.status === 'running' ? 'run' : 'bad')),
       el('span.a-run-text', null, oneLine(x.summary) || runWord(x)), el('span.a-row-end', null, ago(x.started))))) : null));

@@ -257,6 +257,11 @@ func TestRunCardsGoToTheThread(t *testing.T) {
 		t.Errorf("cards = %+v", cards)
 	}
 	f.app.RunCard(store.Run{ID: "r2", Job: "x", Project: "orbit", Status: store.RunOK}) // not an assistant: ignored
+	f.app.RunCard(store.Run{ID: "r3", Job: "morning-brief", Project: "pip", Status: store.RunStopped, Summary: "half a brief"})
+	ev, _ = f.app.ChatEvents(th.ID, 0)
+	if c := ev[len(ev)-1].Card; c == nil || c.Status != chat.CardFailed || c.Summary != "Stopped" {
+		t.Errorf("stopped run card = %+v", c)
+	}
 }
 
 // A task cut short says so on its card, rather than done.

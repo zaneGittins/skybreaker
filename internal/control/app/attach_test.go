@@ -74,13 +74,16 @@ func TestTidyAndMissingScripts(t *testing.T) {
 // A chat's attachments the sandbox no longer has are put back from the
 // chat's copies; a path the sandbox makes up is ignored.
 func TestRestoreAttachments(t *testing.T) {
-	f := newFixture(t)
+	f, sp := chatFixture(t)
 	f.docker.set(func() { f.docker.running["skybreaker-orbit"] = true })
 	s := store.Session{ID: "c1", Project: "orbit", Harness: "claude", Mode: store.ModeChat, Status: store.StatusRunning}
 	f.app.store.CreateSession(s)
 	if err := f.app.ChatSend(context.Background(), "c1", "log", chat.File{Name: "x.log", Data: []byte("boom")}); err != nil {
 		t.Fatal(err)
 	}
+	// The chat restores attachments as it starts, so the check below waits
+	// until that one is done.
+	waitUntil(t, "the spawn", func() bool { return sp.last() != nil })
 	ev, _ := f.app.ChatEvents("c1", 0)
 	p := ev[0].Attach[0].Path
 	f.docker.set(func() {

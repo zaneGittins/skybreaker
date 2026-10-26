@@ -90,6 +90,15 @@ var ErrTerminalLogin = errors.New("this harness signs in from its terminal")
 // errNoAsk: the ask was answered already, or never existed.
 var errNoAsk = errors.New("nothing is waiting for that answer")
 
+// RunMode is driver's own name for mode in a scheduled run, or "" for its
+// default. A run has nobody to show a plan to, so plan runs as ask.
+func RunMode(driver, mode string) string {
+	if driver == "claude" && mode != ModePlan {
+		return claudeModes[mode]
+	}
+	return ""
+}
+
 // New returns the driver called name, or nil.
 func New(name string) Driver {
 	switch name {
