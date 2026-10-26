@@ -43,6 +43,10 @@ func TestLook(t *testing.T) {
 	if got := reopen(t, path).Get("pip").Look; got != want {
 		t.Fatalf("saved look %+v", got)
 	}
+	want = Look{Name: "Juno", Shape: "dot", Color: "rose", Temper: "calm", Ring: "fine", Eye: "lashes", Finish: "paper", Hat: "bow", Extra: "mustache"}
+	if err := s.SetLook("pip", want); err != nil {
+		t.Fatal(err)
+	}
 	for _, bad := range []Look{
 		{Name: "Juno", Shape: "pill", Color: "ink", Temper: "calm"},
 		{Name: "Juno", Shape: "dot", Color: "#ff0000", Temper: "calm"},

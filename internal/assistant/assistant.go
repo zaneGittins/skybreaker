@@ -49,10 +49,10 @@ var (
 	Colors   = []string{"clay", "sage", "ink", "ochre", "rose", "slate", "moss", "plum"}
 	Tempers  = []string{"calm", "lively", "precise"}
 	Rings    = []string{"fine", "double", "dotted", "arc", "none"}
-	Eyes     = []string{"none", "soft"}
+	Eyes     = []string{"none", "soft", "lashes"}
 	Finishes = []string{"paper", "light"}
-	Hats     = []string{"none", "beanie", "bowler", "wizard", "crown", "beret", "party", "tophat"}
-	Extras   = []string{"none", "glasses", "monocle", "bowtie", "headphones"}
+	Hats     = []string{"none", "beanie", "bowler", "wizard", "crown", "beret", "party", "tophat", "bow", "cap"}
+	Extras   = []string{"none", "glasses", "monocle", "bowtie", "headphones", "mustache"}
 )
 
 type Look struct {
