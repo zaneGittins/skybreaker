@@ -73,5 +73,6 @@ sudo TS_AUTHKEY=tskey-auth-... skybreaker-setup install --yes \
 ## Next
 
 - [Using Skybreaker](using.md): chats, branches, previews, boards, terminal and VS Code
+- [Assistants](assistants.md): an agent for everything that isn't a repo
 - [Configuration](configuration.md): give agents access to more APIs, local models, sandbox limits
 - [Upgrading](upgrading.md) and [installing by hand](manual-install.md)

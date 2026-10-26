@@ -48,23 +48,9 @@ claude mcp add --transport http --scope user skybreaker https://skybreaker.<your
 
 ## Assistants
 
-An assistant is an agent for everything that isn't a repo. Make one with **New assistant**, under Assistants, and give it the bundles it should reach.
+An assistant is an agent for everything that isn't a repo, with memory you approve, scheduled routines and a browser of its own. See [Assistants](assistants.md) to make one and put it to work.
 
-**Chat.** You and the assistant have one conversation, which picks up where you left off. Tap the assistant to open it. Work that takes a while runs as a **task** in the background: it shows as a card in the conversation, so you can keep talking, and you can open a card to follow the task. Routine results show there as cards too. **Start fresh**, in the ring's menu, clears what the agent holds in mind but keeps its memories.
-
-**Look.** Its name, its mark (a shape, a colour and how lively it moves), its agents and its personality. Every saved personality is kept, so you can go back.
-
-**Agents.** Claude, Codex or pi, or several. The **preferred** one answers in its conversation and runs routines that don't name one; switch it any time, and its memory, personality and the conversation so far come along. A code project made in the app has the same choice under **Agents** in its menu. Admins change these, and a change applies when Skybreaker restarts.
-
-**Memory.** It suggests things to remember as you talk. Nothing is kept until you choose **Remember**, and you can edit or forget anything.
-
-**Routines.** Scheduled work, such as a weekday morning brief. Admins add them, or approve one it suggests. A change applies when Skybreaker restarts, once no agent is working. Routines and chats share the assistant's files, so give routines their own folders.
-
-**Today.** Its brief: what needs you, what it did lately, and what it can reach.
-
-**Library.** What it makes for you: podcasts, reports, PDFs and pages. Each item keeps your place, on every device, and shows a dot until you open it. Audio plays in a player that carries on as you move around the app, with chapters, a transcript, speed, a sleep timer and lock-screen controls. Ask it to group a series into a collection ("keep two weeks of briefings, play them at 1.25x") and to notify you when something new arrives. Star an item to keep it whatever its collection keeps.
-
-**Its browser.** It browses with logins of its own, which it never sees. When a site wants a password, a code or a CAPTCHA, it asks you to **Take over**: you drive the page live and it waits. Give it accounts of its own, not yours, and make writes `ask` in its bundles.
+A code project made in the app picks its agents the same way, under **Agents** in its menu. Admins change these, and a change applies when Skybreaker restarts.
 
 ## Terminal
 
