@@ -17,6 +17,7 @@
 <p align="center">
   <a href="docs/getting-started.md">Getting started</a> ·
   <a href="docs/using.md">Using it</a> ·
+  <a href="docs/assistants.md">Assistants</a> ·
   <a href="docs/ARCHITECTURE.md">Architecture</a> ·
   <a href="docs/security.md">Security model</a> ·
   <a href="docs/development.md">Development</a>
@@ -29,7 +30,7 @@ Skybreaker runs Claude Code, Codex and pi in a gVisor sandbox per project on a L
 <p align="center">
   <img src="docs/img/screen-desktop.png" alt="A chat on a desktop: the agent's plan, its tool calls and edits, and the result" width="560">
   &nbsp;
-  <img src="docs/img/screen-home.png" alt="Home on a phone: an approval waiting, and chats ordered by what needs you" width="162">
+  <img src="docs/img/screen-home.png" alt="Home on a phone: live chats, one waiting for approval, and a dock of assistants and projects" width="162">
 </p>
 
 ## Features
@@ -66,7 +67,8 @@ Skybreaker is pre-1.0: a release may change the config file, and its notes say w
 ## Docs
 
 - [Getting started](docs/getting-started.md): install and first chat
-- [Using Skybreaker](docs/using.md): chats, previews, boards, assistants, terminal, VS Code
+- [Using Skybreaker](docs/using.md): chats, previews, boards, terminal, VS Code
+- [Assistants](docs/assistants.md): make one, its memory, routines and browser
 - [Configuration](docs/configuration.md): access to APIs, local models, sandbox limits
 - [Upgrading](docs/upgrading.md) and [installing by hand](docs/manual-install.md)
 - [Architecture](docs/ARCHITECTURE.md), [security model](docs/security.md) and [development](docs/development.md)
