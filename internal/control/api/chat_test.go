@@ -573,6 +573,28 @@ func TestEditSessionAPI(t *testing.T) {
 	}
 }
 
+func TestChatStyleAPI(t *testing.T) {
+	f := newFixture(t, you)
+	if code, body := f.do(t, "GET", "/api/projects/orbit/chat-style", "", nil); code != 200 || !strings.Contains(body, `"style":{}`) {
+		t.Fatalf("unset: %d %s", code, body)
+	}
+	code, body := f.do(t, "PUT", "/api/projects/orbit/chat-style", `{"format":"kebab","max_length":30,"colors":{"mars":"a vulnerability"}}`, nil)
+	if code != 200 || !strings.Contains(body, `"format":"kebab"`) {
+		t.Fatalf("save: %d %s", code, body)
+	}
+	if _, body := f.do(t, "GET", "/api/projects/orbit/chat-style", "", nil); !strings.Contains(body, `"mars":"a vulnerability"`) {
+		t.Fatalf("saved: %s", body)
+	}
+	for name, in := range map[string]string{"bad format": `{"format":"camel"}`, "unknown field": `{"format":"kebab","x":1}`} {
+		if code, _ := f.do(t, "PUT", "/api/projects/orbit/chat-style", in, nil); code != http.StatusBadRequest {
+			t.Errorf("%s: %d", name, code)
+		}
+	}
+	if code, _ := f.do(t, "PUT", "/api/projects/ghost/chat-style", `{}`, nil); code != http.StatusNotFound {
+		t.Errorf("unknown project: %d", code)
+	}
+}
+
 // Only so many messages with attachments are decoded at once; one waits
 // for a place until its request ends, while text goes straight through.
 func TestChatSendLimitsUploads(t *testing.T) {

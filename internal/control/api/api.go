@@ -87,6 +87,8 @@ type Backend interface {
 	ReviewSession(ctx context.Context, id string) (app.Review, error)
 	Listening(ctx context.Context, project string) ([]preview.Listening, error)
 	EditSession(id string, e app.SessionEdit) (store.Session, error)
+	ChatStyle(project string) (config.ChatStyle, error)
+	SetChatStyle(project string, s config.ChatStyle) (config.ChatStyle, error)
 	// SetAuthorizedKeys gives every sandbox's sshd these keys.
 	SetAuthorizedKeys(keys []byte) error
 	// SSHConn connects to the project's sandbox sshd, starting the sandbox.
@@ -184,6 +186,8 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("GET /api/projects", s.projects)
 	m.HandleFunc("POST /api/projects", s.createProject)
 	m.HandleFunc("PUT /api/projects/{p}/harnesses", s.setHarnesses)
+	m.HandleFunc("GET /api/projects/{p}/chat-style", s.chatStyle)
+	m.HandleFunc("PUT /api/projects/{p}/chat-style", s.setChatStyle)
 	m.HandleFunc("GET /api/capabilities", s.capabilities)
 	m.HandleFunc("GET /api/ssh-keys", s.sshKeys)
 	m.HandleFunc("POST /api/ssh-keys", s.addSSHKey)
@@ -576,6 +580,41 @@ func (s *server) session(w http.ResponseWriter, r *http.Request) {
 		project["kind"], project["look"] = config.KindAssistant, s.Assistants.Get(sess.Project).Look
 	}
 	webutil.WriteJSON(w, http.StatusOK, map[string]any{"session": sess, "project": project})
+}
+
+// chatStyle is how a project's agents name and colour their chats.
+func (s *server) chatStyle(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("p")
+	if !s.known(w, name) {
+		return
+	}
+	st, err := s.Backend.ChatStyle(name)
+	if err != nil {
+		webutil.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"style": st})
+}
+
+// setChatStyle saves it, like a chat's own name and colour: anyone may.
+func (s *server) setChatStyle(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("p")
+	if !s.known(w, name) {
+		return
+	}
+	var in config.ChatStyle
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		webutil.Error(w, http.StatusBadRequest, "bad style: "+err.Error())
+		return
+	}
+	st, err := s.Backend.SetChatStyle(name, in)
+	if err != nil {
+		webutil.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"style": st})
 }
 
 // editSession renames a session, colours it or sets its goal.

@@ -26,6 +26,8 @@
 
 Anything else goes to the agent as usual.
 
+**Names and colours.** Pick **Chat names** in a project's menu to have its agents name and colour new chats for you: a format (such as `kebab-case`), a length limit, a short naming guide, and what each colour is for, like red for a vulnerability or green for UI work. The agent names the chat with the `name_chat` tool on its first message, and Skybreaker holds the name to the format and limit. A name or colour you set yourself stays.
+
 **Attachments.** Paste or drop files on a desktop, or tap the paperclip. Up to 10 files per message, 10 MB each. The agent finds them under `/root/.skybreaker/attachments/<session>`.
 
 **Context.** The ring at the top right fills as the chat uses up the model's context: yellow past 60%, red past 85%. Tap it to compact or start fresh.

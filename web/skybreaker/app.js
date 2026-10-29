@@ -772,6 +772,55 @@ function jobSheet(p, j) {
   (j ? sched : name).focus();
 }
 
+// CHAT_FORMATS are the ways a chat's name can be written, shown by example.
+const CHAT_FORMATS = [['', 'As the agent writes it', 'Fix the login token leak'], ['lower', 'lowercase', 'fix the login token leak'],
+  ['kebab', 'kebab-case', 'fix-the-login-token-leak'], ['snake', 'snake_case', 'fix_the_login_token_leak']];
+
+// chatStyleSheet sets how a project's agents name and colour new chats.
+async function chatStyleSheet(p) {
+  const path = `/api/projects/${encodeURIComponent(p.name)}/chat-style`;
+  let st;
+  try { st = (await api('GET', path)).style } catch (e) { toast(e.message, 'error'); return }
+  const field = (label, input, hint) => el('label.np-field', null, el('span.np-label', null, label), input, hint || null);
+  const example = el('span.np-hint');
+  const say = () => { example.textContent = 'Like ' + CHAT_FORMATS.find(f => f[0] === format.value)[2] };
+  const format = el('select.np-input', { onchange: say }, CHAT_FORMATS.map(([v, label]) => el('option', { value: v }, label)));
+  format.value = st.format || '';
+  say();
+  const max = el('input.np-input.cs-max', { type: 'number', min: '10', max: '80', inputmode: 'numeric', placeholder: 'No limit', value: st.max_length || '' });
+  const guide = el('textarea.np-input.job-prompt', { rows: '3', maxlength: '500', placeholder: 'Start with the area, like api or ui.' });
+  guide.value = st.guide || '';
+  const colors = CHAT_COLORS.map(c => {
+    const input = el('input.np-input', { type: 'text', maxlength: '200', value: st.colors?.[c] || '', placeholder: 'Not used', 'aria-label': 'What ' + c + ' is for' });
+    return { c, input, row: el('label.cs-color.sc-' + c, null, el('span.swatch'), el('span.cs-name', null, c), input) };
+  });
+  const error = el('p.np-error', { role: 'alert', hidden: true });
+  const send = async (v, done) => {
+    try {
+      await api('PUT', path, v);
+      closeSheet();
+      toast(done);
+    } catch (err) { error.textContent = err.message; error.hidden = false }
+  };
+  const set = !!(st.format || st.max_length || st.guide || Object.keys(st.colors || {}).length);
+  const form = el('form.np-form', {
+    onsubmit: e => {
+      e.preventDefault();
+      const v = { format: format.value, max_length: Number(max.value) || 0, guide: guide.value.trim(), colors: {} };
+      for (const { c, input } of colors) if (input.value.trim()) v.colors[c] = input.value.trim();
+      send(v, 'Saved: new chats are named this way');
+    },
+  }, field('Format', format, example), field('Length limit', max, el('span.np-hint', null, 'Characters, from 10 to 80.')),
+    field('Naming guide', guide, el('span.np-hint', null, 'Anything else the agent should follow.')),
+    el('div.np-field', null, el('span.np-label', null, 'Colours'), el('span.np-hint', null, 'What each colour marks. The agent picks the one that fits.'),
+      el('div.cs-colors', null, colors.map(x => x.row))),
+    error,
+    el('div.cs-acts', null,
+      set ? el('button.btn.ghost', { type: 'button', onclick: () => send({}, 'Cleared: chats are named from their first message') }, 'Clear') : null,
+      el('button.btn.primary', { type: 'submit' }, 'Save')));
+  settingsSheet('Chat names', p.name, el('p.np-hint.cs-lead', null, 'Agents name and colour each new chat this way. A name or colour you set yourself stays.'), form);
+}
+
 async function deleteJob(p, j) {
   if (!confirm(`Delete the schedule “${j.name}”?`)) return;
   try {
@@ -811,6 +860,7 @@ function sandboxSheet(p, live) {
         act(ICON.code, 'Open in VS Code', () => vscodeSheet(p), { sub: 'Remote - SSH, from your computer' }),
         act(ICON.clock, 'Schedules', go(projectPath(p.name, 'runs'))),
         act(ICON.agent, 'Agents', () => agentsSheet(p), { sub: p.harnesses.filter(h => h !== 'shell').map(harnessLabel).join(', ') }),
+        act(ICON.pencil, 'Chat names', () => chatStyleSheet(p), { sub: 'How agents name and colour new chats' }),
         p.running
           ? act(ICON.stop, 'Stop sandbox', () => { closeSheet(); if (!live || confirm(`Stop ${p.name}'s sandbox? ${plural(live, 'chat')} pause and resume later.`)) sandboxAction(p.name, 'stop') },
             { cls: '.danger', sub: live ? `${plural(live, 'chat')} pause and resume later` : '' })

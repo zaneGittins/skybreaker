@@ -74,6 +74,10 @@ type Session struct {
 	// objective pinned at the top of one.
 	Color string `json:"color,omitempty"`
 	Goal  string `json:"goal,omitempty"`
+	// OwnTitle and OwnColor mark a name and colour you gave, which an
+	// agent naming its chat leaves alone.
+	OwnTitle bool `json:"own_title,omitempty"`
+	OwnColor bool `json:"own_color,omitempty"`
 	// Worktree is the git worktree a session works in, on a branch of its
 	// own, instead of the project's /workspace. Sessions that continue
 	// another's work (a chat's terminal, a cleared chat) share its worktree.
