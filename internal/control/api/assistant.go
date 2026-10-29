@@ -43,9 +43,9 @@ func (s *server) assistantRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/assistants/{a}/browser/watch", s.browserWatch)
 	m.HandleFunc("POST /api/assistants/{a}/browser/restart", s.restartBrowser)
 	m.HandleFunc("GET /api/assistants/{a}/routines", s.routines)
-	m.HandleFunc("POST /api/assistants/{a}/routines", s.addRoutine)
-	m.HandleFunc("PUT /api/assistants/{a}/routines/{name}", s.editRoutine)
-	m.HandleFunc("DELETE /api/assistants/{a}/routines/{name}", s.deleteRoutine)
+	m.HandleFunc("POST /api/assistants/{a}/routines", s.addRoutine(s.named))
+	m.HandleFunc("PUT /api/assistants/{a}/routines/{name}", s.editRoutine(s.named))
+	m.HandleFunc("DELETE /api/assistants/{a}/routines/{name}", s.deleteRoutine(s.named))
 }
 
 // assistantView is an assistant for its pages, every list present.
@@ -218,6 +218,7 @@ func (s *server) dismissProposal(w http.ResponseWriter, r *http.Request) {
 type routineIn struct {
 	Name     string `json:"name"`
 	Schedule string `json:"schedule"`
+	Kind     string `json:"kind,omitempty"` // prompt (default) or board, for a coding project
 	Prompt   string `json:"prompt"`
 	Harness  string `json:"harness,omitempty"`
 }
@@ -285,60 +286,73 @@ func (s *server) changeRoutines(w http.ResponseWriter, r *http.Request, what str
 }
 
 func (in routineIn) job(project string) *config.Job {
-	return &config.Job{Name: in.Name, Project: project, Schedule: in.Schedule, Prompt: in.Prompt, Harness: in.Harness, Kind: config.JobPrompt}
+	kind := in.Kind
+	if kind == "" {
+		kind = config.JobPrompt
+	}
+	return &config.Job{Name: in.Name, Project: project, Schedule: in.Schedule, Prompt: in.Prompt, Harness: in.Harness, Kind: kind}
 }
 
-// appRoutine is the index of an assistant's own app-made routine.
+// appRoutine is the index of a project's own app-made schedule.
 func appRoutine(f *config.AppFiles, project, name string) (int, error) {
 	for i, j := range f.Routines {
 		if j != nil && j.Name == name && j.Project == project {
 			return i, nil
 		}
 	}
-	return 0, fmt.Errorf("routine %s: %w", name, assistant.ErrNotFound)
+	return 0, fmt.Errorf("schedule %s: %w", name, assistant.ErrNotFound)
 }
 
-func (s *server) addRoutine(w http.ResponseWriter, r *http.Request) {
-	name, ok := s.named(w, r)
-	var in routineIn
-	if !ok || !decodeStrict(w, r, &in) {
-		return
-	}
-	s.changeRoutines(w, r, "added routine "+in.Name+" for assistant "+name, func(f *config.AppFiles) error {
-		f.Routines = append(f.Routines, in.job(name))
-		return nil
-	})
-}
+// projectOf finds the project a request names, or answers it.
+type projectOf func(http.ResponseWriter, *http.Request) (string, bool)
 
-func (s *server) editRoutine(w http.ResponseWriter, r *http.Request) {
-	name, ok := s.named(w, r)
-	var in routineIn
-	if !ok || !decodeStrict(w, r, &in) {
-		return
-	}
-	old := r.PathValue("name")
-	s.changeRoutines(w, r, "changed routine "+old+" for assistant "+name, func(f *config.AppFiles) error {
-		i, err := appRoutine(f, name, old)
-		if err == nil {
-			f.Routines[i] = in.job(name)
+func (s *server) addRoutine(of projectOf) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name, ok := of(w, r)
+		var in routineIn
+		if !ok || !decodeStrict(w, r, &in) {
+			return
 		}
-		return err
-	})
+		s.changeRoutines(w, r, "added schedule "+in.Name+" for "+name, func(f *config.AppFiles) error {
+			f.Routines = append(f.Routines, in.job(name))
+			return nil
+		})
+	}
 }
 
-func (s *server) deleteRoutine(w http.ResponseWriter, r *http.Request) {
-	name, ok := s.named(w, r)
-	if !ok {
-		return
-	}
-	old := r.PathValue("name")
-	s.changeRoutines(w, r, "removed routine "+old+" from assistant "+name, func(f *config.AppFiles) error {
-		i, err := appRoutine(f, name, old)
-		if err == nil {
-			f.Routines = slices.Delete(f.Routines, i, i+1)
+func (s *server) editRoutine(of projectOf) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name, ok := of(w, r)
+		var in routineIn
+		if !ok || !decodeStrict(w, r, &in) {
+			return
 		}
-		return err
-	})
+		old := r.PathValue("name")
+		s.changeRoutines(w, r, "changed schedule "+old+" for "+name, func(f *config.AppFiles) error {
+			i, err := appRoutine(f, name, old)
+			if err == nil {
+				f.Routines[i] = in.job(name)
+			}
+			return err
+		})
+	}
+}
+
+func (s *server) deleteRoutine(of projectOf) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name, ok := of(w, r)
+		if !ok {
+			return
+		}
+		old := r.PathValue("name")
+		s.changeRoutines(w, r, "removed schedule "+old+" from "+name, func(f *config.AppFiles) error {
+			i, err := appRoutine(f, name, old)
+			if err == nil {
+				f.Routines = slices.Delete(f.Routines, i, i+1)
+			}
+			return err
+		})
+	}
 }
 
 // approveProposal makes a routine the assistant proposed, as an admin.

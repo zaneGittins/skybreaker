@@ -180,6 +180,47 @@ func TestRoutinesAPI(t *testing.T) {
 	}
 }
 
+// A coding project's schedules are added, changed and removed in the app;
+// the config file's stay as they are.
+func TestProjectJobsAPI(t *testing.T) {
+	f, _, s := routinesFixture(t)
+	code, body := f.do(t, "POST", "/api/projects/orbit/jobs", `{"name": "board-pass", "schedule": "0 3 * * *", "kind": "board", "harness": "claude"}`, nil)
+	if code != 200 {
+		t.Fatalf("add: %d %s", code, body)
+	}
+	if rs := savedRoutines(t, s); len(rs) != 1 || rs[0].Project != "orbit" || rs[0].Kind != config.JobBoard {
+		t.Fatalf("saved %+v", rs)
+	}
+	_, body = f.do(t, "GET", "/api/projects/orbit", "", nil)
+	if !strings.Contains(body, `"name":"board-pass"`) || !strings.Contains(body, `"app":true`) || !strings.Contains(body, `"jobs_pending":true`) || !strings.Contains(body, `"jobs_editable":true`) {
+		t.Fatalf("project: %s", body)
+	}
+	if code, body := f.do(t, "PUT", "/api/projects/orbit/jobs/board-pass", `{"name": "deps", "schedule": "@weekly", "prompt": "Update dependencies."}`, nil); code != 200 {
+		t.Fatalf("edit: %d %s", code, body)
+	}
+	if rs := savedRoutines(t, s); len(rs) != 1 || rs[0].Name != "deps" || rs[0].Kind != config.JobPrompt {
+		t.Fatalf("after edit %+v", rs)
+	}
+	for _, bad := range []string{
+		`{"name": "x", "schedule": "@daily", "kind": "prompt"}`,
+		`{"name": "x", "schedule": "@daily", "kind": "sometimes"}`,
+		`{"name": "nightly", "schedule": "@daily", "kind": "board"}`,
+	} {
+		if code, _ := f.do(t, "POST", "/api/projects/orbit/jobs", bad, nil); code != 400 {
+			t.Errorf("%s: %d", bad, code)
+		}
+	}
+	if code, _ := f.do(t, "POST", "/api/projects/ghost/jobs", `{"name": "x", "schedule": "@daily", "kind": "board"}`, nil); code != 404 {
+		t.Errorf("unknown project: %d", code)
+	}
+	if code, _ := f.do(t, "DELETE", "/api/projects/orbit/jobs/nightly", "", nil); code != 404 {
+		t.Errorf("deleted a file job: %d", code)
+	}
+	if code, _ := f.do(t, "DELETE", "/api/projects/orbit/jobs/deps", "", nil); code != 200 || len(savedRoutines(t, s)) != 0 {
+		t.Errorf("delete: %d", code)
+	}
+}
+
 func TestApproveRoutineProposal(t *testing.T) {
 	f, as, s := routinesFixture(t)
 	p, _ := as.Propose("pip", assistant.Proposal{Kind: assistant.ProposeRoutine, Title: "weekly-podcast", Body: "Make the podcast.",
@@ -355,6 +396,7 @@ func TestRoutinesAreAdmins(t *testing.T) {
 	p, _ := as.Propose("pip", assistant.Proposal{Kind: assistant.ProposeRoutine, Title: "w", Routine: &assistant.Routine{Name: "w", Schedule: "@daily", Prompt: "x"}})
 	for _, c := range []struct{ method, path, body string }{
 		{"POST", "/api/assistants/pip/routines", `{"name": "x", "schedule": "@daily", "prompt": "x"}`},
+		{"POST", "/api/projects/orbit/jobs", `{"name": "x", "schedule": "@daily", "kind": "board"}`},
 		{"POST", "/api/assistants/pip/proposals/" + p.ID + "/approve", ``},
 	} {
 		if code, _ := f.do(t, c.method, c.path, c.body, nil); code != 403 {

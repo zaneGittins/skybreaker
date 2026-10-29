@@ -46,6 +46,10 @@ Each project has a board of bugs, features and chores. Agents pick up, claim and
 claude mcp add --transport http --scope user skybreaker https://skybreaker.<your-tailnet>.ts.net/mcp
 ```
 
+## Schedules
+
+A project's **Runs** tab lists its schedules and their runs. An admin clicks **Add a schedule** to run an agent on a cron schedule, either working the next Todo item on the board or running a prompt. Schedules made in the app can be edited or deleted there; jobs in the config file stay as they are. A change applies when Skybreaker restarts, once no agent is working.
+
 ## Assistants
 
 An assistant is an agent for everything that isn't a repo, with memory you approve, scheduled routines and a browser of its own. See [Assistants](assistants.md) to make one and put it to work.
