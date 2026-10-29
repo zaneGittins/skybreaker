@@ -190,6 +190,9 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("DELETE /api/ssh-keys/{id}", s.deleteSSHKey)
 	m.HandleFunc("GET /api/projects/{p}/ssh", s.sshRelay)
 	m.HandleFunc("GET /api/projects/{p}", s.project)
+	m.HandleFunc("POST /api/projects/{p}/jobs", s.addRoutine(s.inProject))
+	m.HandleFunc("PUT /api/projects/{p}/jobs/{name}", s.editRoutine(s.inProject))
+	m.HandleFunc("DELETE /api/projects/{p}/jobs/{name}", s.deleteRoutine(s.inProject))
 	m.HandleFunc("POST /api/projects/{p}/sandbox", s.sandbox)
 	m.HandleFunc("PUT /api/projects/{p}/workspace", s.fillWorkspace)
 	m.HandleFunc("POST /api/projects/{p}/sessions", s.newSession)
@@ -368,26 +371,44 @@ func (s *server) known(w http.ResponseWriter, name string) bool {
 	return true
 }
 
+// inProject is the project a request names, or a 404 for anything else.
+func (s *server) inProject(w http.ResponseWriter, r *http.Request) (string, bool) {
+	name := r.PathValue("p")
+	return name, s.known(w, name)
+}
+
 func (s *server) project(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("p")
 	if !s.known(w, name) {
 		return
 	}
 	view, sessions := s.view(r.Context(), name)
+	// Jobs are shown as saved, so a change shows at once even while it
+	// waits for a restart to run.
+	cfg, pending := s.Config, false
+	if s.Settings != nil {
+		if saved, _, err := s.Settings.Saved(); err == nil {
+			cfg = saved
+		}
+		pending = s.Settings.Pending()
+	}
 	var jobs []jobView
-	for _, j := range s.Config.Jobs {
+	for _, j := range cfg.Jobs {
 		if j.Project == name {
-			jobs = append(jobs, jobView{j, j.Ignored, j.Problem})
+			jobs = append(jobs, jobView{j, j.Ignored, j.Problem, cfg.AppJob(j.Name)})
 		}
 	}
+	p, _ := tsauth.FromContext(r.Context())
 	webutil.WriteJSON(w, http.StatusOK, map[string]any{
-		"project":  view,
-		"sessions": nonNil(sessions),
-		"pending":  nonNil(s.Approvals.Pending(name)),
-		"requests": nonNil(s.pendingRequests(name)),
-		"board":    s.boardCounts(name),
-		"runs":     nonNil(s.Store.ListRuns(name, 20)),
-		"jobs":     nonNil(jobs),
+		"project":       view,
+		"sessions":      nonNil(sessions),
+		"pending":       nonNil(s.Approvals.Pending(name)),
+		"requests":      nonNil(s.pendingRequests(name)),
+		"board":         s.boardCounts(name),
+		"runs":          nonNil(s.Store.ListRuns(name, 20)),
+		"jobs":          nonNil(jobs),
+		"jobs_pending":  pending,
+		"jobs_editable": s.Settings != nil && s.Config.Admin(p.Login) && s.Config.SettingsInApp(),
 	})
 }
 
@@ -396,6 +417,7 @@ type jobView struct {
 	*config.Job
 	Ignored []string `json:"ignored,omitempty"`
 	Problem string   `json:"problem,omitempty"`
+	App     bool     `json:"app"` // made in the app, so it can be changed there
 }
 
 func nonNil[T any](v []T) []T {

@@ -211,6 +211,10 @@ a.srow-open:hover { background: var(--surface-2); }
 .jobs { display: grid; gap: 10px; }
 .job { display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-radius: 18px; background: var(--surface); border: 1px solid var(--border); flex-wrap: wrap; }
 .job b { font-weight: 750; }
+.job > svg { width: 18px; height: 18px; flex: none; color: var(--muted); }
+.np-form .np-field[hidden] { display: none; }
+.np-input.job-prompt { height: auto; min-height: 96px; padding: 10px 12px; resize: vertical; font-family: var(--font); line-height: 1.5; }
+.np-input.job-agent { font-family: var(--font); font-size: 14px; padding: 0 10px; }
 .job-ignored { font-size: 12.5px; font-weight: 650; padding: 2px 8px; border-radius: 999px; background: var(--working-bg); color: var(--working); }
 
 /* ---- sheet (diff, run log) ---- */

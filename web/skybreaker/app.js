@@ -710,12 +710,75 @@ function chatList(p, live, ended) {
 
 // runsView is the project's schedules and their runs.
 function runsView(d) {
+  const p = d.project, can = d.jobs_editable;
+  const add = can ? el('button.empty-add', { type: 'button', onclick: () => jobSheet(p, null) }, svg(ICON.plus), 'Add a schedule') : null;
   if (!d.jobs.length && !d.runs.length) {
-    return el('div.empty-note', null, el('b', null, 'No schedules'), el('p', null, 'Add jobs to the config to run agents on a schedule, such as a nightly pass over the board.'));
+    return el('div.runs-view', null,
+      el('div.empty-note', null, el('b', null, 'No schedules'), el('p', null, can
+        ? 'Run an agent on a schedule, such as a nightly pass over the board.'
+        : 'Add jobs to the config to run agents on a schedule, such as a nightly pass over the board.')),
+      add);
   }
   return el('div.runs-view', null,
-    d.jobs.length ? el('div.jobs', null, d.jobs.map(jobRow)) : null,
+    d.jobs_pending ? el('p.np-status', null, svg(ICON.clock), 'Saved changes run once Skybreaker restarts, when no agent is working.') : null,
+    d.jobs.length ? el('div.jobs', null, d.jobs.map(j => jobRow(p, j, can && j.app))) : null,
+    add,
     d.runs.length ? el('div.table-wrap', null, runsTable(d.runs)) : null);
+}
+
+// jobSheet adds a schedule to a project, or changes one made in the app.
+function jobSheet(p, j) {
+  const field = (label, input, hint) => el('label.np-field', null, el('span.np-label', null, label), input, hint ? el('span.np-hint', null, hint) : null);
+  const name = el('input.np-input', { type: 'text', required: true, pattern: '[a-z0-9][a-z0-9-]{0,47}', placeholder: 'nightly-board', value: j?.name || '', autocapitalize: 'off', spellcheck: 'false' });
+  const sched = el('input.np-input.mono', { type: 'text', required: true, placeholder: '0 2 * * *', value: j?.schedule || '', autocapitalize: 'off', spellcheck: 'false' });
+  const words = el('span.np-hint');
+  const say = () => { words.textContent = sched.value ? asstSchedule(sched.value) : 'minute hour day month weekday, e.g. 0 2 * * * for every day at 2:00' };
+  sched.addEventListener('input', say);
+  say();
+  const agents = p.harnesses.filter(h => h !== 'shell');
+  const agent = el('select.np-input.job-agent', null, agents.map(h => el('option', { value: h, selected: h === j?.harness || null }, harnessLabel(h))));
+  let kind = j?.kind || 'board';
+  const prompt = el('textarea.np-input.job-prompt', { rows: '5', placeholder: 'Update dependencies and open a pull request if the tests pass.' });
+  prompt.value = j?.prompt || '';
+  const promptField = field('Prompt', prompt);
+  const boardHint = el('span.np-hint', null, 'Works the next Todo item on the board.');
+  const sync = () => { promptField.hidden = kind !== 'prompt'; prompt.required = kind === 'prompt'; boardHint.hidden = kind !== 'board' };
+  const what = el('div.np-field', null, el('span.np-label', null, 'What to do'),
+    seg([['board', 'Work the board'], ['prompt', 'Run a prompt']], kind, v => { kind = v; sync() }), boardHint);
+  sync();
+  const error = el('p.np-error', { role: 'alert', hidden: true });
+  const save = el('button.btn.primary', { type: 'submit' }, j ? 'Save' : 'Add schedule');
+  const base = `/api/projects/${encodeURIComponent(p.name)}/jobs`;
+  const form = el('form.np-form', {
+    onsubmit: async e => {
+      e.preventDefault();
+      save.disabled = true;
+      const v = { name: name.value.trim(), schedule: sched.value.trim(), kind, harness: agent.value, prompt: kind === 'prompt' ? prompt.value.trim() : '' };
+      try {
+        if (j) await api('PUT', base + '/' + encodeURIComponent(j.name), v);
+        else await api('POST', base, v);
+        closeSheet();
+        toast('Saved: it runs once Skybreaker restarts');
+        refresh();
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+        save.disabled = false;
+      }
+    },
+  }, field('Name', name, 'Lowercase letters, digits and dashes.'), el('label.np-field', null, el('span.np-label', null, 'Schedule'), sched, words),
+    agents.length > 1 ? field('Agent', agent) : null, what, promptField, error, save);
+  settingsSheet(j ? 'Edit schedule' : 'Add a schedule', p.name, form);
+  (j ? sched : name).focus();
+}
+
+async function deleteJob(p, j) {
+  if (!confirm(`Delete the schedule “${j.name}”?`)) return;
+  try {
+    await api('DELETE', `/api/projects/${encodeURIComponent(p.name)}/jobs/${encodeURIComponent(j.name)}`);
+    toast('Deleted: it stops once Skybreaker restarts');
+    refresh();
+  } catch (e) { toast(e.message, 'error') }
 }
 
 // openShell opens a terminal in the project's sandbox.
@@ -1029,7 +1092,7 @@ function endedRow(s) {
     s.screen ? el('button.icon-btn.bare', { type: 'button', onclick: close, 'aria-label': 'Drop last screen', title: 'Drop last screen' }, svg(ICON.x)) : null);
 }
 
-function jobRow(j) {
+function jobRow(p, j, editable) {
   const run = async () => {
     try {
       const r = await api('POST', `/api/jobs/${j.name}/run`, {});
@@ -1045,7 +1108,9 @@ function jobRow(j) {
     j.ignored?.length ? el('span.job-ignored', { title: `${j.harness} has no way to apply these, so its runs go without them` }, j.ignored.join(', ') + ' ignored') : null,
     j.problem ? el('span.job-ignored', { title: j.problem }, 'can\'t run: ' + j.problem) : null,
     el('span.grow'),
-    el('button.btn.sm', { onclick: run }, svg(ICON.play), 'Run now'));
+    el('button.btn.sm', { onclick: run }, svg(ICON.play), 'Run now'),
+    editable ? el('button.btn.ghost.sm', { type: 'button', onclick: () => jobSheet(p, j) }, 'Edit') : null,
+    editable ? el('button.btn.ghost.sm', { type: 'button', onclick: () => deleteJob(p, j) }, 'Delete') : null);
 }
 
 function runState(r) {
