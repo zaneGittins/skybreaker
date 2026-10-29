@@ -1,10 +1,10 @@
 module github.com/zaneGittins/skybreaker
 
-go 1.27.2
+go 1.27.3
 
 require (
 	go.yaml.in/yaml/v3 v3.0.5
-	tailscale.com v1.104.1
+	tailscale.com v1.104.2
 )
 
 require (
