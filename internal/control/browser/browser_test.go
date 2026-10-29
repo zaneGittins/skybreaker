@@ -443,15 +443,24 @@ func TestDragHoldsTheButton(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer b.Release(ctx)
-	title := func() string { s, _ := b.Status(ctx); return s.Title }
+	// Chromium hands moves to the page on its next frame, so the title
+	// catches up a moment after the call returns.
+	waitTitle := func(want string) string {
+		var got string
+		for end := time.Now().Add(5 * time.Second); got != want && time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+			s, _ := b.Status(ctx)
+			got = s.Title
+		}
+		return got
+	}
 	b.Mouse(ctx, Mouse{Type: "mousePressed", X: 10, Y: 10, Button: "left", ClickCount: 1})
 	b.Mouse(ctx, Mouse{Type: "mouseMoved", X: 40, Y: 10})
-	if got := title(); got != "buttons 1" {
+	if got := waitTitle("buttons 1"); got != "buttons 1" {
 		t.Fatalf("while held: %q", got)
 	}
 	b.Mouse(ctx, Mouse{Type: "mouseReleased", X: 40, Y: 10, Button: "left", ClickCount: 1})
 	b.Mouse(ctx, Mouse{Type: "mouseMoved", X: 60, Y: 10})
-	if got := title(); got != "buttons 0" {
+	if got := waitTitle("buttons 0"); got != "buttons 0" {
 		t.Fatalf("after: %q", got)
 	}
 }
