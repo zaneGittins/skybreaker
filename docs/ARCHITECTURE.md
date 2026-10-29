@@ -62,10 +62,10 @@ The config file is the base. The app adds to it from `<data_dir>/settings` (`con
 | `projects.json` | Projects created in the app |
 | `access.json` | Bundles, and bundles and hosts granted to projects |
 | `app-secrets.json` | Secrets and the GitHub App, merged with the secrets file by `secrets.Merge` |
-| `instructions.md`, `prompts.json`, `chat-modes.json` | Agent instructions, saved prompts, default chat modes |
+| `instructions.md`, `prompts.json`, `chat-modes.json`, `chat-styles.json` | Agent instructions, saved prompts, default chat modes, how each project's chats are named and coloured |
 | `routines.json` | Schedules made in the app (assistants' routines, projects' jobs), merged into the jobs |
 
-Every change goes through `config.Edit`: stage the files, load the whole config, run `broker.Check`, then rename into place. It returns the config before and after, so the UI can show what each project gains and loses (`DiffReaches`). Policy feeds the broker, sandbox networks, boards and previews, so access changes restart Skybreaker (`controld.ErrRestart`) once no chat is working. Instructions, prompts and chat modes apply without a restart.
+Every change goes through `config.Edit`: stage the files, load the whole config, run `broker.Check`, then rename into place. It returns the config before and after, so the UI can show what each project gains and loses (`DiffReaches`). Policy feeds the broker, sandbox networks, boards and previews, so access changes restart Skybreaker (`controld.ErrRestart`) once no chat is working. Instructions, prompts, chat modes and chat styles apply without a restart.
 
 ## Sandboxes
 

@@ -275,7 +275,7 @@ func Run(ctx context.Context, o Options) error {
 	tools := &mcp.Server{Name: "skybreaker", Version: o.Version,
 		Instructions: board.Instructions + "\n\n" + preview.Instructions + "\n\n" + assistant.ToolInstructions + "\n\n" + assistant.TaskInstructions + "\n\n" + browser.ToolInstructions,
 		Tools: []func(mcp.Caller) []mcp.Tool{board.Tools(boards), show.Tools(host), preview.Tools(previews, a),
-			assistant.Tools(assistants, cfg.Assistant), assistant.TaskTools(taskHost{a}), browser.Tools(host, cfg.Assistant)}}
+			assistant.Tools(assistants, cfg.Assistant), assistant.TaskTools(taskHost{a}), browser.Tools(host, cfg.Assistant), a.ChatStyleTools()}}
 
 	hk := hooks.New(a.CheckHookToken, a.HookEvent)
 	// Chats answer their harness's prompts in the conversation.
