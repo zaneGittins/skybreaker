@@ -108,6 +108,11 @@ func (a *App) chatOptions(s store.Session) chat.Options {
 // first if need be. A terminal the chat was continued in is closed: one
 // conversation can't have two harnesses writing to it.
 func (a *App) startChat(ctx context.Context, s store.Session, argv []string, env map[string]string) (*chat.Proc, error) {
+	unlock, guardErr := a.beginActivity(s.Project)
+	if guardErr != nil {
+		return nil, guardErr
+	}
+	defer unlock()
 	if err := a.StartSandbox(ctx, s.Project); err != nil {
 		return nil, err
 	}
@@ -389,9 +394,15 @@ func (a *App) ChatHandback(ctx context.Context, id, text, site string) error {
 }
 
 func (a *App) chatSend(id string, send func() error) error {
-	if _, err := a.chatSession(id); err != nil {
+	sess, err := a.chatSession(id)
+	if err != nil {
 		return err
 	}
+	unlock, err := a.beginActivity(sess.Project)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	defer a.lockSession(id)()
 	if _, err := a.reopen(id); err != nil {
 		return err
@@ -494,6 +505,11 @@ func (a *App) ChatTerminal(ctx context.Context, id string) (store.Session, error
 	if err != nil {
 		return store.Session{}, err
 	}
+	unlock, guardErr := a.beginActivity(s.Project)
+	if guardErr != nil {
+		return store.Session{}, guardErr
+	}
+	defer unlock()
 	if s.Status != store.StatusRunning {
 		return store.Session{}, errors.New("this session has ended")
 	}
