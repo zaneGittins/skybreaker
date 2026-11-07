@@ -321,7 +321,7 @@ func Run(ctx context.Context, o Options) error {
 	changes := &settings{configPath: o.ConfigPath, secrets: cfg.SecretsFile, instructions: cfg.Instructions(), prompts: cfg.Prompts(), chatModes: cfg.ChatModes(), app: a, broker: brk, boards: boards, restart: requestRestart}
 	apiHandler, err := api.New(api.Deps{
 		Config: cfg, Self: self, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews, SSHKeys: sshKeys,
-		Projects: changes, Settings: changes, Usage: tokensUsed, Assistants: assistants, Browsers: a,
+		Projects: changes, Settings: changes, System: a, Usage: tokensUsed, Assistants: assistants, Browsers: a,
 		Static: web.Skybreaker(), Version: o.Version,
 		Upgrade: func(w http.ResponseWriter, r *http.Request) (terminal.Conn, error) { return wsock.Accept(w, r) },
 		Bridge: func(ctx context.Context, c terminal.Conn, argv []string) error {
