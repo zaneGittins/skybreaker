@@ -16,9 +16,9 @@ import (
 type claude struct {
 	asks        map[string]claudeAsk // control request ID → what it asked
 	tools       map[string]*Tool     // tool_use ID → its card
-	agents      map[string]*Tool     // a background subagent's tool_use ID → its card, running past the turn
-	ended       map[string]*Tool     // background subagents ended by the task list, for a notification that comes late
-	tasks       map[string]string    // Claude's task ID for a background subagent → its tool_use ID
+	agents      map[string]*Tool     // a background subagent's or command's tool_use ID → its card, running past the turn
+	ended       map[string]*Tool     // background calls ended by the task list, for a notification that comes late
+	tasks       map[string]string    // Claude's task ID → its tool_use ID
 	inTurn      bool                 // a turn runs: between a message going in and its result
 	ran         bool                 // a turn has ended in this process
 	blocks      map[string]int       // message ID → text blocks finished in it
@@ -539,11 +539,14 @@ func (c *claude) user(l claudeLine, now time.Time) []Event {
 			continue
 		}
 		text := blockText(b.Content)
-		if t.Kind == ToolAgent && !b.IsError && launched(l.ToolUseResult) {
-			// A background subagent: its result says only that it
-			// started. It runs until a task_notification ends it.
+		if !b.IsError && launched(l.ToolUseResult) {
+			// A background subagent or command: its result says only
+			// that it started. It runs until a task_notification ends it.
 			c.agents[b.ToolUseID] = t
 			delete(c.tools, b.ToolUseID)
+			t.Background = true
+			cp := *t
+			out = append(out, Event{Time: now, Kind: KindTool, ID: b.ToolUseID, Tool: &cp})
 			continue
 		}
 		switch {
@@ -562,15 +565,16 @@ func (c *claude) user(l claudeLine, now time.Time) []Event {
 	return out
 }
 
-// launched reports whether an Agent tool's result is a background
-// launch rather than the subagent's answer.
+// launched reports whether a tool's result is a background launch rather
+// than the call's answer.
 func launched(result json.RawMessage) bool {
 	var r struct {
-		IsAsync bool   `json:"isAsync"`
-		Status  string `json:"status"`
+		IsAsync    bool   `json:"isAsync"`
+		Status     string `json:"status"`
+		Background string `json:"backgroundTaskId"`
 	}
 	json.Unmarshal(result, &r)
-	return r.IsAsync || r.Status == "async_launched"
+	return r.IsAsync || r.Status == "async_launched" || r.Background != ""
 }
 
 // task follows background subagents: a notification ends one, with its
@@ -579,7 +583,7 @@ func launched(result json.RawMessage) bool {
 func (c *claude) task(l claudeLine, now time.Time) []Event {
 	switch l.Subtype {
 	case "task_started":
-		if l.TaskID != "" && l.ToolUseID != "" && l.TaskType == "local_agent" {
+		if l.TaskID != "" && l.ToolUseID != "" {
 			c.tasks[l.TaskID] = l.ToolUseID
 		}
 	case "task_notification":
