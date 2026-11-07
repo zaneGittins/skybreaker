@@ -62,7 +62,8 @@ func devBrowser(dir string) func(*browser.Options) {
 //
 // Then open http://localhost:8099. Messages to Claude get a scripted turn;
 // one containing "approve" asks for approval, "ask" asks a question,
-// "agents" starts two background subagents that outlast the turn, and
+// "agents" starts two background subagents that outlast the turn,
+// "background" runs a command past the turn, and
 // "fail" fails. Codex asks you to sign in.
 func TestUIDev(t *testing.T) {
 	addr := os.Getenv("SKYBREAKER_UIDEV")
@@ -299,6 +300,9 @@ func devClaude(m map[string]any, say func(any), raw func(string)) {
 	case strings.Contains(text, "agents"):
 		devAgents(msg, say, raw)
 		return
+	case strings.Contains(text, "background"):
+		devBackground(msg, say, raw)
+		return
 	case strings.Contains(text, "fail"):
 		raw(`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: 529 Overloaded. The service is busy; try again in a moment.","duration_ms":900}`)
 		return
@@ -325,6 +329,25 @@ func devClaude(m map[string]any, say func(any), raw func(string)) {
 		min(0.95, 0.3+0.07*float64(n)), time.Now().Add(150*time.Minute).Unix(), time.Now().Add(80*time.Hour).Unix()))
 	raw(fmt.Sprintf(`{"type":"result","subtype":"success","is_error":false,"duration_ms":8200,"session_id":"dev-conv","modelUsage":{"claude-opus-5-5":{"contextWindow":400000,"inputTokens":%d,"cacheCreationInputTokens":%d,"cacheReadInputTokens":%d,"outputTokens":%d}}}`,
 		n*40, n*9000, n*180000, n*2500))
+}
+
+// devBackground plays a command run in the background: the turn ends at
+// once, and the command's end starts a turn of Claude's own.
+func devBackground(msg string, say func(any), raw func(string)) {
+	id, task := "bg-"+msg, "kb-"+msg
+	raw(`{"type":"assistant","message":{"id":"` + id + `m","content":[{"type":"tool_use","id":"` + id + `","name":"Bash","input":{"command":"go test ./...","description":"Run the full suite","run_in_background":true}}]},"parent_tool_use_id":null}`)
+	raw(`{"type":"system","subtype":"task_started","task_id":"` + task + `","tool_use_id":"` + id + `","description":"Run the full suite","is_backgrounded":true,"task_type":"local_bash"}`)
+	raw(`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + id + `","content":"Command running in background with ID: ` + task + `."}]},"tool_use_result":{"stdout":"","stderr":"","backgroundTaskId":"` + task + `"}}`)
+	stream(say, msg+"w", "The suite is running in the background. I'll pick up when it finishes.")
+	raw(`{"type":"result","subtype":"success","is_error":false,"duration_ms":1800,"session_id":"dev-conv"}`)
+	go func() {
+		time.Sleep(25 * time.Second)
+		raw(`{"type":"system","subtype":"task_notification","task_id":"` + task + `","tool_use_id":"` + id + `","status":"completed","summary":"Background command \"Run the full suite\" completed (exit code 0)"}`)
+		raw(`{"type":"system","subtype":"init","session_id":"dev-conv","model":"claude-opus-5-5","permissionMode":"default"}`)
+		time.Sleep(400 * time.Millisecond)
+		stream(say, id+"r", "The suite passed.")
+		raw(`{"type":"result","subtype":"success","is_error":false,"duration_ms":1500,"session_id":"dev-conv"}`)
+	}()
 }
 
 // devAgents plays what Claude Code does with background subagents: the

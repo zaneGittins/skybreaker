@@ -389,3 +389,63 @@ func TestCodexSubagentAsks(t *testing.T) {
 		t.Errorf("cards = %+v", tools)
 	}
 }
+
+// claude-background.jsonl: Claude Code 2.1.316 runs a command in the
+// background and ends its turn; the command finishes later and Claude takes
+// a turn of its own.
+func TestClaudeReplayBackgroundCommand(t *testing.T) {
+	events, _, _ := replaySent(t, newClaude(), "claude-background.jsonl", 1)
+	const cmd = "toolu_01NKC7mWjM8uy9dTkkSr2QAr"
+	end := turnIndex(events, TurnDone, 0)
+	if tl, _ := toolAt(events, cmd, end); tl.Status != StatusRunning || !tl.Background {
+		t.Errorf("at the turn's end = %+v, want running in the background", tl)
+	}
+	tools, _ := lastTool(events)
+	if tl := tools[cmd]; tl.Status != StatusDone || !strings.Contains(tl.Output, "completed (exit code 0)") {
+		t.Errorf("command = %+v, want done", tl)
+	}
+}
+
+// bgCommand is a script whose turn starts a command in the background and ends.
+func bgCommand(f *fakeClaude, m map[string]any) {
+	if m["type"] != "user" {
+		return
+	}
+	f.say(`{"type":"system","subtype":"init","session_id":"conv-1","model":"claude-test"}`)
+	f.say(`{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"make test","run_in_background":true}}]},"parent_tool_use_id":null}`)
+	f.say(`{"type":"system","subtype":"task_started","task_id":"k1","tool_use_id":"b1","is_backgrounded":true,"task_type":"local_bash"}`)
+	f.say(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"b1","content":"Command running in background with ID: k1."}]},"tool_use_result":{"stdout":"","backgroundTaskId":"k1"}}`)
+	f.say(`{"type":"result","subtype":"success","is_error":false,"duration_ms":5,"session_id":"conv-1"}`)
+}
+
+func TestManagerWorkingWhileBackgroundCommandRuns(t *testing.T) {
+	h := newHarness(t)
+	h.script = bgCommand
+	s := h.session("claude")
+	h.m.Send(context.Background(), s.ID, "go")
+	waitFor(t, "the turn's end", func() bool { return len(find(h.events(s.ID), KindTurn)) == 2 })
+	waitFor(t, "working on the command", func() bool { return h.state(s.ID).Note == "1 command running" })
+	if got := h.state(s.ID); got.State != store.ChatWorking {
+		t.Errorf("with the turn over and its command running: %q", got.State)
+	}
+	h.m.Reap(time.Now().Add(time.Hour))
+	if !h.m.Running(s.ID) {
+		t.Fatal("reaped a harness whose command runs")
+	}
+	h.mu.Lock()
+	f := h.procs[0]
+	h.mu.Unlock()
+	f.say(`{"type":"system","subtype":"task_notification","task_id":"k1","tool_use_id":"b1","status":"completed","summary":"done"}`)
+	waitFor(t, "idle", func() bool { return h.state(s.ID).State == store.ChatIdle })
+}
+
+func TestBackgroundNote(t *testing.T) {
+	for _, c := range []struct {
+		agents, cmds int
+		want         string
+	}{{1, 0, "1 agent working"}, {2, 0, "2 agents working"}, {0, 1, "1 command running"}, {0, 3, "3 commands running"}, {2, 1, "2 agents, 1 command running"}} {
+		if got := backgroundNote(c.agents, c.cmds); got != c.want {
+			t.Errorf("backgroundNote(%d, %d) = %q, want %q", c.agents, c.cmds, got, c.want)
+		}
+	}
+}
