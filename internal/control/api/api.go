@@ -72,7 +72,7 @@ type Backend interface {
 	ChatLogin(ctx context.Context, id string) error
 	ChatTerminal(ctx context.Context, id string) (store.Session, error)
 	ChatCompact(ctx context.Context, id string) error
-	StartReview(ctx context.Context, id, harness string) (store.Session, error)
+	StartReview(ctx context.Context, id, harness string, brief store.ReviewBrief) (store.Session, error)
 	ChatFork(ctx context.Context, id string) (store.Session, error)
 	ReopenChat(ctx context.Context, id string) (store.Session, error)
 	// Thread is an assistant's one chat with you; ThreadFresh carries it

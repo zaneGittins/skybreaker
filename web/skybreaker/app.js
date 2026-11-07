@@ -1946,19 +1946,45 @@ function workflowSheet(s) {
  sheet('Work stage',el('div.workflow-sheet',null,choices));
 }
 
-function reviewPicker(p,s) {
- let busy=false;
- const agents=(p.harnesses || []).filter(h=>state.meta?.chat?.[h]).sort((a,b)=>(a===s.harness)-(b===s.harness));
- const list=el('div.picker-list',null,agents.map(h=>el('button.pick',{type:'button',onclick:async()=>{
-  if(busy)return;busy=true;list.querySelectorAll('button').forEach(b=>b.disabled=true);
-  try {const review=await api('POST','/api/sessions/'+s.id+'/review',{harness:h});closeSheet();navigate('/s/'+review.id)}
-  catch(e){toast(e.message,'error');busy=false;list.querySelectorAll('button').forEach(b=>b.disabled=false)}
- }},agentMark(h),el('span.pick-text',null,el('b',null,harnessLabel(h)),el('span',null,'Review in a separate copy of the code')))));
- $('#sheet-root').replaceChildren(
-  el('div.backdrop', {onclick:closeSheet}),
-  el('div.picker', {role:'dialog', 'aria-modal':'true', 'aria-label':'Review with another agent'},
-   el('div.picker-grip'), el('div.picker-head',null,el('h2',null,'Review with…'),el('p',null,chatName(s))),
-   el('p.workflow-hint',null,'Includes current changes and uncommitted files. Findings stay linked to this chat.'),list,
-   el('button.btn.ghost.picker-cancel',{type:'button',onclick:closeSheet},'Cancel')));
- list.querySelector('button')?.focus();
+function reviewPicker(p, s) {
+  let busy = false;
+  const brief = s.review_brief || {};
+  const field = (label, key, rows, limit, placeholder) => {
+    const input = el('textarea.np-input', { rows, maxlength: limit, placeholder, required: key === 'requirements' });
+    input.value = brief[key] || '';
+    return { input, node: el('label.np-field', null, el('span.np-label', null, label), input) };
+  };
+  const requirements = field('Requirements', 'requirements', 3, 8000, 'What should this change do? Include constraints and unresolved questions.');
+  const acceptance = field('Acceptance criteria', 'acceptance', 3, 4000, 'What observable behavior would demonstrate that it works?');
+  const references = field('Referenced documents (optional)', 'references', 2, 4000, 'Repository paths or URLs for the specification and relevant source material.');
+  const form = el('form.review-brief', { onsubmit: e => e.preventDefault() }, requirements.node, acceptance.node, references.node);
+  const agents = (p.harnesses || []).filter(h => state.meta?.chat?.[h]).sort((a, b) => (a === s.harness) - (b === s.harness));
+  const list = el('div.picker-list', null, agents.map(h => el('button.pick', { type: 'button', onclick: async () => {
+    if (busy || !form.reportValidity()) return;
+    if (!requirements.input.value.trim()) { requirements.input.focus(); return; }
+    busy = true;
+    list.querySelectorAll('button').forEach(b => b.disabled = true);
+    try {
+      const review = await api('POST', '/api/sessions/' + s.id + '/review', {
+        harness: h,
+        brief: { requirements: requirements.input.value, acceptance: acceptance.input.value, references: references.input.value }
+      });
+      closeSheet();
+      navigate('/s/' + review.id);
+    } catch (e) {
+      toast(e.message, 'error');
+      busy = false;
+      list.querySelectorAll('button').forEach(b => b.disabled = false);
+    }
+  } }, agentMark(h), el('span.pick-text', null, el('b', null, 'Review with ' + harnessLabel(h)), el('span', null, 'Start fresh with this brief and a copy of the code')))));
+  $('#sheet-root').replaceChildren(
+    el('div.backdrop', { onclick: closeSheet }),
+    el('div.picker.review-picker', { role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Review brief' },
+      el('div.picker-grip'), el('div.picker-head', null, el('h2', null, 'Review brief'), el('p', null, chatName(s))),
+      el('p.workflow-hint', null, 'Check this brief before choosing a reviewer. Your implementation agent can draft it. The reviewer receives the brief and code, without the earlier conversation.'),
+      form,
+      el('p.workflow-hint', null, 'Missing or unclear criteria become review findings. The reviewer reports findings; you decide what changes and whether to merge.'),
+      list,
+      el('button.btn.ghost.picker-cancel', { type: 'button', onclick: closeSheet }, 'Cancel')));
+  requirements.input.focus();
 }

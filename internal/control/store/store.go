@@ -97,13 +97,21 @@ type Session struct {
 	// CarriedOn is the chat an assistant's thread moved on to from this one.
 	CarriedOn string `json:"carried_on,omitempty"`
 	// Pull records the latest pull request on its branch, including its outcome.
-	Pull        Pull   `json:"pull,omitzero"`
-	Workflow    string `json:"workflow,omitempty"`
-	ReviewOf    string `json:"review_of,omitempty"`
-	ReviewID    string `json:"review_id,omitempty"`
-	ReviewHead  string `json:"review_head,omitempty"`
-	ReviewTree  string `json:"review_tree,omitempty"`
-	ReviewStale bool   `json:"review_stale,omitempty"`
+	Pull        Pull        `json:"pull,omitzero"`
+	ReviewBrief ReviewBrief `json:"review_brief,omitzero"`
+	Workflow    string      `json:"workflow,omitempty"`
+	ReviewOf    string      `json:"review_of,omitempty"`
+	ReviewID    string      `json:"review_id,omitempty"`
+	ReviewHead  string      `json:"review_head,omitempty"`
+	ReviewTree  string      `json:"review_tree,omitempty"`
+	ReviewStale bool        `json:"review_stale,omitempty"`
+}
+
+// ReviewBrief is the standalone specification passed to a fresh reviewer.
+type ReviewBrief struct {
+	Requirements string `json:"requirements"`
+	Acceptance   string `json:"acceptance"`
+	References   string `json:"references"`
 }
 
 // Pull is a chat's pull request, and how far its checks and comments have

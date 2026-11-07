@@ -487,14 +487,15 @@ func serveKept(w http.ResponseWriter, r *http.Request, name string, f io.ReadSee
 
 func (s *server) startReview(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Harness string `json:"harness"`
+		Harness string            `json:"harness"`
+		Brief   store.ReviewBrief `json:"brief"`
 	}
 	if !decodeStrict(w, r, &in) {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Minute)
 	defer cancel()
-	review, err := s.Backend.StartReview(ctx, r.PathValue("id"), in.Harness)
+	review, err := s.Backend.StartReview(ctx, r.PathValue("id"), in.Harness, in.Brief)
 	if err != nil {
 		chatFail(w, err)
 		return

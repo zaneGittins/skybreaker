@@ -273,7 +273,7 @@ func Run(ctx context.Context, o Options) error {
 	// images in a chat, and previews of a sandbox's web server.
 	host := browserHost{a, assistants, cfg.Assistant}
 	tools := &mcp.Server{Name: "skybreaker", Version: o.Version,
-		Instructions: "For repository chats, call set_workflow with implementing when starting work and ready_for_review when implementation is complete. Review chats report changes_requested or ready_to_merge after their findings. Workflow status does not authorize commits, pushes, or merges.\n\n" + board.Instructions + "\n\n" + preview.Instructions + "\n\n" + assistant.ToolInstructions + "\n\n" + assistant.TaskInstructions + "\n\n" + browser.ToolInstructions,
+		Instructions: "For repository chats, call set_workflow with implementing when starting work and ready_for_review when implementation is complete. Before handing work back, call prepare_review to save standalone requirements, acceptance criteria, and document references, leaving out conversation history and author reasoning. Review chats report changes_requested or ready_to_merge after their findings. Workflow status does not authorize commits, pushes, or merges.\n\n" + board.Instructions + "\n\n" + preview.Instructions + "\n\n" + assistant.ToolInstructions + "\n\n" + assistant.TaskInstructions + "\n\n" + browser.ToolInstructions,
 		Tools: []func(mcp.Caller) []mcp.Tool{board.Tools(boards), show.Tools(host), preview.Tools(previews, a),
 			assistant.Tools(assistants, cfg.Assistant), assistant.TaskTools(taskHost{a}), browser.Tools(host, cfg.Assistant), a.ChatStyleTools(), a.WorkflowTools()}}
 

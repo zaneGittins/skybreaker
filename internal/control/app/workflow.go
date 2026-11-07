@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
@@ -17,7 +17,11 @@ import (
 var workflowStages = []string{"", "implementing", "ready_for_review", "reviewing", "changes_requested", "ready_to_merge", "finished", "abandoned"}
 
 // StartReview copies the code into an independent chat with a link back to its author.
-func (a *App) StartReview(ctx context.Context, id, harness string) (store.Session, error) {
+func (a *App) StartReview(ctx context.Context, id, harness string, brief store.ReviewBrief) (store.Session, error) {
+	brief = cleanReviewBrief(brief)
+	if err := checkReviewBrief(brief); err != nil {
+		return store.Session{}, err
+	}
 	defer a.lockSession(id)()
 	s, err := a.chatSession(id)
 	if err != nil {
@@ -49,7 +53,7 @@ func (a *App) StartReview(ctx context.Context, id, harness string) (store.Sessio
 		from.Worktree = workspaceDir
 	}
 	now := time.Now().UTC()
-	r := store.Session{ID: newSessionID(), Project: s.Project, Harness: harness, Mode: store.ModeChat, Status: store.StatusRunning, State: store.ChatIdle, PermMode: chat.ModeAsk, Created: now, Updated: now, Seen: now, Title: "Review: " + s.Title, Goal: s.Goal, ReviewOf: id}
+	r := store.Session{ID: newSessionID(), Project: s.Project, Harness: harness, Mode: store.ModeChat, Status: store.StatusRunning, State: store.ChatIdle, PermMode: chat.ModeAsk, Created: now, Updated: now, Seen: now, Title: "Review: " + s.Title, ReviewBrief: brief, ReviewOf: id}
 	if err = a.forkWorktree(ctx, from, &r); err != nil {
 		return store.Session{}, err
 	}
@@ -72,38 +76,19 @@ func (a *App) StartReview(ctx context.Context, id, harness string) (store.Sessio
 			return store.Session{}, err
 		}
 	}
-	r.Handoff = fmt.Sprintf("Review the implementation from chat %s independently. Work only in this copied worktree. Review the changes relative to %s, including uncommitted and untracked files. Do not edit, commit, push, or open a PR. Report actionable findings with file and line references, or explicitly say no findings. The source may have changed since this snapshot.\nTask: %s\nGoal: %s\nCall set_workflow with changes_requested if fixes are needed, or ready_to_merge if your review found no blockers. This is an agent review, not human merge approval.", id, base, s.Title, s.Goal)
-	events, _ := a.chat.Events(id, 0)
-	var requests []string
-	for _, event := range events {
-		if event.Kind == chat.KindUser {
-			requests = append(requests, event.Text)
-		}
-	}
-	var requirements strings.Builder
-	if len(requests) > 0 {
-		first := []rune(requests[0])
-		requirements.WriteString("\n\nInitial request:\n" + string(first[:min(len(first), 4000)]))
-		var recent []string
-		size := 0
-		for i := len(requests) - 1; i > 0 && size < 8000; i-- {
-			text := []rune(requests[i])
-			part := string(text[:min(len(text), 4000, 8000-size)])
-			recent = append(recent, part)
-			size += len([]rune(part))
-		}
-		slices.Reverse(recent)
-		for _, text := range recent {
-			requirements.WriteString("\n\nLater request:\n" + text)
-		}
-	}
+	r.Handoff = fmt.Sprintf(`You are a fresh, independent code reviewer. The standalone review brief below and its referenced source material define the intended behavior. Inspect the copied code and tests, including uncommitted and untracked files, relative to base commit %s.
+Do not retrieve the author's conversation, prior reviewer conversations, or their reasoning. Do not infer undocumented requirements from the implementation. Treat missing requirements, ambiguous acceptance criteria, and unavailable references as review findings. Identify assumptions explicitly and distinguish verified behavior from untested claims.
+Check correctness, clarity, edge cases, and test coverage against the brief. Report actionable findings with file and line references and the criterion affected, or explicitly say no findings. List validation performed and remaining uncertainties.
+Work only in this copied worktree. Do not edit, commit, push, or open a PR. Call set_workflow with changes_requested when there are blockers or missing information; use ready_to_merge only when the brief is sufficient and no blockers remain. The human resolves trade-offs and decides whether to merge.
 
-	r.Handoff += "\n\nTask context (quoted user requests):" + requirements.String()
+%s`, base, reviewBriefText(brief))
+
 	if err = a.store.CreateSession(r); err != nil {
 		a.dropWorktree(r)
 		return store.Session{}, err
 	}
 	if err = a.store.UpdateSession(id, func(x *store.Session) {
+		x.ReviewBrief = brief
 		x.ReviewID = r.ID
 		x.ReviewHead = r.ReviewHead
 		x.ReviewTree = r.ReviewTree
@@ -112,10 +97,11 @@ func (a *App) StartReview(ctx context.Context, id, harness string) (store.Sessio
 	}); err != nil {
 		return r, err
 	}
+	a.chat.Note(r.ID, reviewBriefText(brief))
 	a.chat.Note(id, "Review started in chat "+r.ID+" with "+harness+".")
 	a.Publish(Event{Type: "session", Project: s.Project, Session: id, Data: "review started"})
 	a.Publish(Event{Type: "session", Project: s.Project, Session: r.ID, Data: "started"})
-	if err = a.ChatSend(ctx, r.ID, "Review the code snapshot and report your findings."); err != nil {
+	if err = a.ChatSend(ctx, r.ID, "Review this code snapshot against the standalone brief and report your findings."); err != nil {
 		a.chat.Note(r.ID, "Review could not start: "+err.Error()+". Send a message to retry.")
 	}
 	return r, nil
@@ -137,6 +123,10 @@ func (a *App) WorkflowTools() func(mcp.Caller) []mcp.Tool {
 			if err := json.Unmarshal(args, &in); err != nil {
 				return "", err
 			}
+			current, _ := a.store.Session(c.Session)
+			if current.ReviewOf != "" && in.Stage == "ready_to_merge" && strings.TrimSpace(current.ReviewBrief.Acceptance) == "" {
+				return "", errors.New("report missing acceptance criteria as a finding and request changes")
+			}
 			s, err := a.EditSession(c.Session, SessionEdit{Workflow: &in.Stage})
 			if err != nil {
 				return "", err
@@ -156,6 +146,70 @@ func (a *App) WorkflowTools() func(mcp.Caller) []mcp.Tool {
 				}
 			}
 			return "Work stage updated.", err
-		}}}
+		}}, {
+			Name: "prepare_review", Description: "Write a standalone review brief for the human to inspect before starting a fresh reviewer. State intended behavior and acceptance criteria, plus relevant document paths or URLs. Record unresolved questions explicitly. Do not include conversation transcripts, author reasoning, or claims that the implementation is correct. This saves the brief; it does not start a review.",
+			Input: json.RawMessage(`{"type":"object","properties":{"requirements":{"type":"string"},"acceptance":{"type":"string"},"references":{"type":"string"}},"required":["requirements"],"additionalProperties":false}`),
+			Call: func(ctx context.Context, c mcp.Caller, args json.RawMessage) (string, error) {
+				var brief store.ReviewBrief
+				if err := json.Unmarshal(args, &brief); err != nil {
+					return "", err
+				}
+				brief = cleanReviewBrief(brief)
+				if err := checkReviewBrief(brief); err != nil {
+					return "", err
+				}
+				defer a.lockSession(c.Session)()
+				s, err := a.chatSession(c.Session)
+				if err != nil {
+					return "", err
+				}
+				if s.ReviewOf != "" {
+					return "", errors.New("reviewers report gaps; the implementation chat prepares the brief")
+				}
+				if err = a.store.UpdateSession(s.ID, func(x *store.Session) {
+					if x.ReviewID != "" && x.ReviewBrief != brief {
+						x.ReviewStale = true
+					}
+					x.ReviewBrief = brief
+				}); err != nil {
+					return "", err
+				}
+				a.Publish(Event{Type: "session", Project: s.Project, Session: s.ID, Data: "review brief"})
+				return "Review brief saved. The user can inspect it in Review with… before selecting a reviewer.", nil
+			},
+		}}
 	}
+}
+
+func cleanReviewBrief(b store.ReviewBrief) store.ReviewBrief {
+	b.Requirements = strings.TrimSpace(b.Requirements)
+	b.Acceptance = strings.TrimSpace(b.Acceptance)
+	b.References = strings.TrimSpace(b.References)
+	return b
+}
+
+func checkReviewBrief(b store.ReviewBrief) error {
+	if strings.TrimSpace(b.Requirements) == "" {
+		return errors.New("provide standalone requirements for the review")
+	}
+	for _, field := range []struct {
+		name, text string
+		limit      int
+	}{{"requirements", b.Requirements, 8000}, {"acceptance criteria", b.Acceptance, 4000}, {"references", b.References, 4000}} {
+		if !utf8.ValidString(field.text) || utf8.RuneCountInString(field.text) > field.limit {
+			return fmt.Errorf("%s must be valid text of at most %d characters", field.name, field.limit)
+		}
+	}
+	return nil
+}
+
+func reviewBriefText(b store.ReviewBrief) string {
+	acceptance, references := b.Acceptance, b.References
+	if acceptance == "" {
+		acceptance = "Not supplied. Report missing acceptance criteria as a finding."
+	}
+	if references == "" {
+		references = "None supplied."
+	}
+	return "## Review brief\n\n### Requirements\n" + b.Requirements + "\n\n### Acceptance criteria\n" + acceptance + "\n\n### Referenced documents\n" + references
 }
