@@ -691,7 +691,7 @@ function chatsView(p, d, b, live, ended) {
   const waiting = [...(d.requests || []).map(a => requestCard(a, p.tint)), ...d.pending.map(a => approvalCard(a, p.tint))];
   const main = el('div.p-main', null,
     waiting.length ? el('div.approvals', null, waiting) : null,
-    ...chatList(p, live, ended),
+    workflowList(p, d.sessions.filter(s => !s.parent && !s.carried_on)),
     upNext(p, b),
     b.history && boardChart(b.history) ? el('section.list-sec.phone-only.p-chart', null, el('div.sec-title', null, el('h2', null, 'Board, last 14 days')), boardChart(b.history)) : null);
   return el('div.p-cols', null, main, el('aside.p-side.desk-only', null, boardSnapshot(p, b)));
@@ -1901,4 +1901,64 @@ function agentsEditor(p, { onSaved } = {}) {
 // agentsSheet is agentsEditor for a code project, from its menu.
 function agentsSheet(p) {
   sheet('Agents', el('div.ag-sheet', null, agentsEditor(p, { onSaved: closeSheet })));
+}
+
+
+function workflowList(p, sessions) {
+ const roots = sessions.filter(s => !s.review_of || !sessions.some(x => x.id === s.review_of));
+ const group = s => workGroup(s);
+ const options = [['all', 'All'], ['review', 'Needs review'], ['working', 'Working'], ['other', 'Other'], ['earlier', 'Earlier']];
+ const box = el('div.workflow-list'), filters = el('div.workflow-filters', {role:'group', 'aria-label':'Filter chats'}), list = el('div');
+ let selected = prefs.get('workflowFilter:' + p.name) || 'all';
+ const draw = () => {
+  filters.replaceChildren(...options.map(([key,label]) => el('button' + (key === selected ? '.on' : ''), {type:'button', 'aria-pressed':String(key === selected), onclick:() => {selected=key;prefs.set('workflowFilter:'+p.name,key);draw()}}, label, el('span', null, String(roots.filter(s => key === 'all' || group(s) === key).length)))));
+  list.replaceChildren(...options.slice(1).filter(([key]) => selected === 'all' || selected === key).map(([key,label]) => {
+   const rows=roots.filter(s => group(s) === key);
+   if (!rows.length) return null;
+   return el('section.list-sec', null, el('div.sec-title',null,el('h2',null,label),el('span.n',null,String(rows.length))),el('div.row-list',null,rows.map(s => workflowRow(p,s,sessions))));
+  }).filter(Boolean));
+  if (!list.children.length) list.append(el('p.home-quiet', null, 'No chats in this view.'));
+ };
+ box.append(filters,list);draw();return box;
+}
+
+function workflowRow(p,s,sessions) {
+ const stage=workStage(s), reviewer=sessions.find(x => x.id === s.review_id);
+ const reviews=sessions.filter(x=>x.review_of===s.id);
+ const more=el('div.workflow-meta');
+ if (s.mode === 'chat') more.append(el('button.workflow-chip.st-'+stage.tone,{type:'button',title:'Change work stage',onclick:()=>workflowSheet(s)},stage.label || 'Set stage'));
+ if (s.pull?.number) {
+  const label='#'+s.pull.number+' '+(s.pull.state === 'merged'?'Merged':s.pull.state === 'closed'?'Closed':s.pull.draft?'Draft':s.pull.state === 'open'?'Open':'Status unknown');
+  const url=safeHref(s.pull.url || '');
+  more.append(el(url?'a.workflow-chip.pull':'span.workflow-chip.pull',url?{href:url,target:'_blank',rel:'noopener noreferrer',title:s.pull.synced?'Synced '+ago(s.pull.synced):'Pull request'}:null,label));
+ }
+ if (s.review_of) more.append(el('a.workflow-link',{href:'/s/'+s.review_of,'data-link':true},'Implementation chat'));
+ for (const review of reviews) more.append(el('a.workflow-link',{href:'/s/'+review.id,'data-link':true},harnessLabel(review.harness)+' review · '+(review.id===s.review_id?sessionTone(review).label:'Earlier')));
+ if (s.mode === 'chat' && !s.review_of && !['working','waiting'].includes(s.state) && !s.terminal) more.append(el('button.workflow-action',{type:'button',onclick:()=>reviewPicker(p,s)},reviewer?'Review again…':'Review with…'));
+ return el('div.workflow-row',null,sessionRow(s),more);
+}
+
+function workflowSheet(s) {
+ const current=workStage(s);
+ const choices=el('div.picker-list',null,[['','Unset'],...Object.entries(WORK_STAGES)].map(([key,label])=>el('button.btn.ghost',{type:'button',onclick:async()=>{
+  try {await api('PATCH','/api/sessions/'+s.id,{workflow:key});closeSheet();refresh()} catch(e){toast(e.message,'error')}
+ }},label+(key===current.key?' · Current':''))));
+ sheet('Work stage',el('div.workflow-sheet',null,choices));
+}
+
+function reviewPicker(p,s) {
+ let busy=false;
+ const agents=(p.harnesses || []).filter(h=>state.meta?.chat?.[h]).sort((a,b)=>(a===s.harness)-(b===s.harness));
+ const list=el('div.picker-list',null,agents.map(h=>el('button.pick',{type:'button',onclick:async()=>{
+  if(busy)return;busy=true;list.querySelectorAll('button').forEach(b=>b.disabled=true);
+  try {const review=await api('POST','/api/sessions/'+s.id+'/review',{harness:h});closeSheet();navigate('/s/'+review.id)}
+  catch(e){toast(e.message,'error');busy=false;list.querySelectorAll('button').forEach(b=>b.disabled=false)}
+ }},agentMark(h),el('span.pick-text',null,el('b',null,harnessLabel(h)),el('span',null,'Review in a separate copy of the code')))));
+ $('#sheet-root').replaceChildren(
+  el('div.backdrop', {onclick:closeSheet}),
+  el('div.picker', {role:'dialog', 'aria-modal':'true', 'aria-label':'Review with another agent'},
+   el('div.picker-grip'), el('div.picker-head',null,el('h2',null,'Review with…'),el('p',null,chatName(s))),
+   el('p.workflow-hint',null,'Includes current changes and uncommitted files. Findings stay linked to this chat.'),list,
+   el('button.btn.ghost.picker-cancel',{type:'button',onclick:closeSheet},'Cancel')));
+ list.querySelector('button')?.focus();
 }

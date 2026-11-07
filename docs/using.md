@@ -96,3 +96,13 @@ uv tool install ansible-core    # Python tools
 ```
 
 For setup every sandbox needs, commit `.skybreaker/setup.sh` to the repo. It runs as root in `/workspace` when a new sandbox starts, and chats wait for it to finish. Its log is `/var/log/skybreaker-setup.log`.
+
+## Track work and request an agent review
+
+A project's Chats tab groups chats into Needs review, Working, Other, and Earlier. Filter buttons show counts. Each chat keeps its work stage separate from its agent's activity. Use the stage badge to update it yourself; agents can report their stage with `set_workflow`.
+
+PR badges link to GitHub and distinguish draft, open, merged, and closed without merge. GitHub status refreshes on the existing two-minute polling cycle when GitHub access is configured. A closed chat can still have an open PR.
+
+Choose **Review with…** on a chat row or from the chat's menu, then select an enabled agent. Skybreaker creates a linked chat in its own worktree, copying committed, uncommitted, and untracked changes (excluding ignored files). The reviewer gets the task context and is asked to report findings without modifying or publishing the code. Claude can review Codex's work, and Codex can review Claude's.
+
+Review links stay on the implementation chat, including earlier reviews. A reviewer can report Changes requested or Ready to merge. Resuming implementation marks its review outdated, and review results are checked against the source code snapshot before updating its stage. Ready to merge is an agent's assessment; merging remains a human decision.

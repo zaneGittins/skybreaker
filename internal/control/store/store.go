@@ -96,14 +96,24 @@ type Session struct {
 	Handoff string `json:"handoff,omitempty"`
 	// CarriedOn is the chat an assistant's thread moved on to from this one.
 	CarriedOn string `json:"carried_on,omitempty"`
-	// Pull is the open pull request its branch has on GitHub, as followed.
-	Pull Pull `json:"pull,omitzero"`
+	// Pull records the latest pull request on its branch, including its outcome.
+	Pull        Pull   `json:"pull,omitzero"`
+	Workflow    string `json:"workflow,omitempty"`
+	ReviewOf    string `json:"review_of,omitempty"`
+	ReviewID    string `json:"review_id,omitempty"`
+	ReviewHead  string `json:"review_head,omitempty"`
+	ReviewTree  string `json:"review_tree,omitempty"`
+	ReviewStale bool   `json:"review_stale,omitempty"`
 }
 
 // Pull is a chat's pull request, and how far its checks and comments have
 // been passed on to the chat. Rounds counts follow-ups sent since your last
 // message; Paused is set once they stop for you.
 type Pull struct {
+	State   string    `json:"state,omitempty"`
+	Draft   bool      `json:"draft,omitempty"`
+	Head    string    `json:"head,omitempty"`
+	Synced  time.Time `json:"synced,omitzero"`
 	Number  int       `json:"number"`
 	URL     string    `json:"url,omitempty"`
 	Checked string    `json:"checked,omitempty"` // the head commit whose checks were handled

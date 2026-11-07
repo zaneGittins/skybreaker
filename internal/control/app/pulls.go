@@ -26,10 +26,13 @@ const maxCommentText = 2000
 var commitRe = regexp.MustCompile(`^[0-9a-f]{1,64}$`)
 
 type ghPull struct {
-	Number  int       `json:"number"`
-	URL     string    `json:"html_url"`
-	Created time.Time `json:"created_at"`
-	Head    struct {
+	State    string     `json:"state"`
+	Draft    bool       `json:"draft"`
+	MergedAt *time.Time `json:"merged_at"`
+	Number   int        `json:"number"`
+	URL      string     `json:"html_url"`
+	Created  time.Time  `json:"created_at"`
+	Head     struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
 }
@@ -62,20 +65,19 @@ func (a *App) FollowPulls(ctx context.Context) {
 		}
 		var due []store.Session
 		for _, s := range a.store.ListSessions(project) {
-			if s.Mode == store.ModeChat && s.Status == store.StatusRunning && s.Worktree != "" && !s.WorktreeGone && s.Terminal == "" {
+			if s.Mode == store.ModeChat && s.ReviewOf == "" {
 				due = append(due, s)
 			}
 		}
 		if len(due) == 0 {
 			continue
 		}
-		if st, err := a.sandbox.Status(ctx, project); err != nil || !st.Running {
-			continue
-		}
 		for _, s := range due {
 			if err := a.followPull(ctx, p, s); err != nil {
 				a.logPullErr(project, err)
-				break
+				if ctx.Err() != nil {
+					return
+				}
 			}
 		}
 	}
@@ -95,19 +97,30 @@ func (a *App) logPullErr(project string, err error) {
 }
 
 func (a *App) followPull(ctx context.Context, p *config.Project, s store.Session) error {
-	branch, err := a.git(ctx, s.Project, s.Worktree, "symbolic-ref", "-q", "--short", "HEAD")
-	if err != nil || !config.ValidBranch(branch) {
+	branch := s.Branch
+	if !s.WorktreeGone && (s.Worktree != "" || s.Status == store.StatusRunning) {
+		if st, err := a.sandbox.Status(ctx, s.Project); err == nil && st.Running {
+			if current, err := a.git(ctx, s.Project, workdir(s), "symbolic-ref", "-q", "--short", "HEAD"); err == nil {
+				branch = current
+			}
+		}
+	}
+	if !config.ValidBranch(branch) {
 		return nil
+	}
+	if branch != s.Branch {
+		a.store.UpdateSession(s.ID, func(x *store.Session) { x.Branch = branch })
 	}
 	owner, _, _ := strings.Cut(p.Repo, "/")
 	var pulls []ghPull
-	q := url.Values{"head": {owner + ":" + branch}, "state": {"open"}}
+	q := url.Values{"head": {owner + ":" + branch}, "state": {"all"}}
 	if err := a.github.GitHubGet(ctx, p.Repo, "/pulls?"+q.Encode(), &pulls); err != nil {
 		return err
 	}
 	if len(pulls) == 0 || pulls[0].Number <= 0 || !commitRe.MatchString(pulls[0].Head.SHA) {
 		if s.Pull.Number != 0 {
 			a.store.UpdateSession(s.ID, func(x *store.Session) { x.Pull = store.Pull{} })
+			a.Publish(Event{Type: "session", Project: s.Project, Session: s.ID, Data: "pull request"})
 		}
 		return nil
 	}
@@ -115,6 +128,29 @@ func (a *App) followPull(ctx context.Context, p *config.Project, s store.Session
 	seen := s.Pull
 	if seen.Number != pr.Number {
 		seen = store.Pull{Number: pr.Number, URL: pr.URL, Since: pr.Created}
+	}
+
+	seen.State, seen.Draft, seen.Head, seen.Synced = pr.State, pr.Draft, pr.Head.SHA, time.Now().UTC()
+	if seen.State == "" {
+		seen.State = "open"
+	}
+	if pr.MergedAt != nil {
+		seen.State = "merged"
+	}
+	// PR status remains useful even when checks or comments cannot be read.
+	a.store.UpdateSession(s.ID, func(x *store.Session) {
+		if x.Pull.Number != seen.Number {
+			x.Pull = seen
+		}
+		if x.ReviewID != "" && x.ReviewHead != pr.Head.SHA {
+			x.ReviewStale = true
+		}
+		x.Pull.Number, x.Pull.URL, x.Pull.State, x.Pull.Draft, x.Pull.Head, x.Pull.Synced = seen.Number, seen.URL, seen.State, seen.Draft, seen.Head, seen.Synced
+		x.Branch = branch
+	})
+	a.Publish(Event{Type: "session", Project: s.Project, Session: s.ID, Data: "pull request"})
+	if seen.State != "open" || s.Status != store.StatusRunning || s.Terminal != "" {
+		return nil
 	}
 
 	checked, failed := seen.Checked, []string(nil)

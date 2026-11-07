@@ -484,3 +484,20 @@ func serveKept(w http.ResponseWriter, r *http.Request, name string, f io.ReadSee
 	h.Set("Cache-Control", "private, max-age=31536000, immutable")
 	http.ServeContent(w, r, "", time.Time{}, f)
 }
+
+func (s *server) startReview(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Harness string `json:"harness"`
+	}
+	if !decodeStrict(w, r, &in) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Minute)
+	defer cancel()
+	review, err := s.Backend.StartReview(ctx, r.PathValue("id"), in.Harness)
+	if err != nil {
+		chatFail(w, err)
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, review)
+}

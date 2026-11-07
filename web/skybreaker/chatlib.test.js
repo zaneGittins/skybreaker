@@ -720,3 +720,14 @@ test('shownImages: the images a chat showed, newest first, one per path', () => 
   assert.equal(shownImages(c)[0].file, 'p9.png');
   assert.deepEqual(shownImages(newChat()), []);
 });
+
+test('workflow groups keep PR outcomes separate from agent activity', () => {
+ const { workStage, workGroup } = require('./chatlib.js');
+ assert.equal(workStage({state:'idle'}).key, '');
+ assert.equal(workGroup({state:'idle',workflow:'ready_for_review'}), 'review');
+ assert.equal(workGroup({state:'working',workflow:'ready_for_review'}), 'working');
+ assert.equal(workStage({pull:{state:'merged'},state:'idle'}).label, 'Finished');
+ assert.equal(workStage({pull:{state:'closed'}}).label, 'Closed without merge');
+ assert.equal(workStage({workflow:'ready_to_merge',review_stale:true}).label, 'Review outdated');
+ assert.equal(workStage({workflow:'ready_to_merge'}).label, 'Ready to merge');
+});
