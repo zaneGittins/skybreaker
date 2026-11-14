@@ -89,4 +89,16 @@ pi:
 
 Then give the project the `local-models` bundle and add `pi` to its harnesses. Pick the model with `/model` in pi. The sandbox reaches the server only through this route, and no key is stored in it.
 
-For a hosted provider, run `/login` in pi and allow that provider's API host in the project's policy.
+A model is an ID, or pi's own fields for it, written through to pi's `models.json`. Set the context window so pi compacts before the model runs out:
+
+```yaml
+      models:
+        - id: qwen3-coder:30b
+          contextWindow: 32768
+          maxTokens: 8192
+          reasoning: false
+```
+
+`baseUrl`, `api`, `apiKey`, `headers`, `authHeader` and `provider` are refused there: where a request goes and what key it carries are the route's.
+
+A hosted, OpenAI-compatible API works the same way, with an `https` upstream and the key injected by the broker, so the sandbox never holds it. `do-inference` in [skybreaker.example.yaml](../deploy/skybreaker.example.yaml) does this for DigitalOcean's serverless inference. For a provider pi knows itself, you can instead run `/login` in pi and allow that provider's API host in the project's policy, but then the key lives in the sandbox.
