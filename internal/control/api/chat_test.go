@@ -659,3 +659,23 @@ func TestChatShownNamesDownloads(t *testing.T) {
 		}
 	}
 }
+
+func (b *fakeBackend) StartReview(ctx context.Context, id, harness string, brief store.ReviewBrief) (store.Session, error) {
+	return store.Session{ID: "review", ReviewOf: id, Harness: harness, ReviewBrief: brief}, nil
+}
+
+func TestStartReviewAPI(t *testing.T) {
+	f := newFixture(t, you)
+	code, body := f.do(t, "POST", "/api/sessions/s1/review", `{"harness":"codex","brief":{"requirements":"Reconnect safely","acceptance":"Deliver once","references":"docs/sessions.md"}}`, nil)
+	if code != 200 || !strings.Contains(body, `"review_of":"s1"`) || !strings.Contains(body, `"harness":"codex"`) || !strings.Contains(body, `"acceptance":"Deliver once"`) {
+		t.Fatalf("review: %d %s", code, body)
+	}
+	code, _ = f.do(t, "POST", "/api/sessions/s1/review", `{"harness":"codex","project":"other"}`, nil)
+	if code != http.StatusBadRequest {
+		t.Fatalf("unexpected field: %d", code)
+	}
+	code, _ = f.do(t, "POST", "/api/sessions/s1/review", `{"harness":"codex","brief":{"requirements":"x","history":"private conversation"}}`, nil)
+	if code != http.StatusBadRequest {
+		t.Fatalf("unexpected brief field: %d", code)
+	}
+}

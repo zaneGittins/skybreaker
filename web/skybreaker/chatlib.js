@@ -859,3 +859,22 @@ function agentActivity(it) {
 }
 
 if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, liveGroups, waitingByPlace, dockPlaces, placeKey, resting, closable, openCount, chatGroups, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, runningCommands, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages, tasksWorking };
+
+const WORK_STAGES = { implementing: 'Implementing', ready_for_review: 'Ready for review', reviewing: 'Reviewing', changes_requested: 'Changes requested', ready_to_merge: 'Ready to merge', finished: 'Finished', abandoned: 'Abandoned' };
+function workStage(s) {
+ if (s.pull?.state === 'merged') return {key:'finished',label:'Finished',tone:'done'};
+ if (s.pull?.state === 'closed') return {key:'abandoned',label:'Closed without merge',tone:'backlog'};
+ if (s.review_stale) return {key:'ready_for_review',label:'Review outdated',tone:'review'};
+ const key = s.workflow || '';
+ return {key,label:WORK_STAGES[key] || '',tone:['ready_for_review','reviewing','changes_requested'].includes(key)?'review':key==='ready_to_merge'||key==='finished'?'done':key==='implementing'?'in_progress':'backlog'};
+}
+function workGroup(s) {
+ const stage=workStage(s).key;
+ if (['finished','abandoned'].includes(stage)) return 'earlier';
+ if (['working','waiting'].includes(s.state) && s.status !== 'exited' && s.status !== 'killed') return 'working';
+ if (['implementing','reviewing'].includes(stage) && (!s.status || s.status === 'running')) return 'working';
+ if (['ready_for_review','changes_requested','ready_to_merge'].includes(stage)) return 'review';
+ if (s.status && s.status !== 'running') return 'earlier';
+ return 'other';
+}
+if (typeof module !== 'undefined') Object.assign(module.exports, {workStage,workGroup});

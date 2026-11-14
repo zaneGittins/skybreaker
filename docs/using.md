@@ -97,6 +97,18 @@ uv tool install ansible-core    # Python tools
 
 For setup every sandbox needs, commit `.skybreaker/setup.sh` to the repo. It runs as root in `/workspace` when a new sandbox starts, and chats wait for it to finish. Its log is `/var/log/skybreaker-setup.log`.
 
+## Track work and request an agent review
+
+A project's Chats tab groups chats into Needs review, Working, Other, and Earlier. Filter buttons show counts. Each chat keeps its work stage separate from its agent's activity. Use the stage badge to update it yourself; agents can report their stage with `set_workflow`.
+
+PR badges link to GitHub and distinguish draft, open, merged, and closed without merge. GitHub status refreshes on the existing two-minute polling cycle when GitHub access is configured. A closed chat can still have an open PR.
+
+Choose **Review with…** on a chat row or from the chat's menu, inspect the standalone review brief, then select an enabled agent. The implementation agent can draft the brief with `prepare_review`; you can edit its requirements, acceptance criteria, and referenced documents before starting. Requirements are mandatory; missing or unclear acceptance criteria become findings. Skybreaker creates a linked chat in its own worktree, copying committed, uncommitted, and untracked changes (excluding ignored files). The reviewer starts with the brief and code, without the earlier conversation, the author's reasoning, or prior review conclusions. The exact brief is preserved with the review. The reviewer is asked to identify undocumented assumptions, missing information, and code defects without modifying or publishing the code. Claude can review Codex's work, and Codex can review Claude's.
+
+Review links stay on the implementation chat, including earlier reviews. A reviewer can report Changes requested or Ready to merge. Resuming implementation marks its review outdated, and review results are checked against the source code snapshot before updating its stage. Ready to merge is an agent's assessment; merging remains a human decision.
+
+This follows the fresh-reviewer principle of the [Elephant-Goldfish Model](https://github.com/google/elephant-goldfish-model): the author retains context and produces a standalone artifact; the reviewer examines it independently. This code-review handoff does not implement EGM's complete specification-design workflow. Context separation controls what Skybreaker supplies and instructs the reviewer to read; it is not a separate filesystem or network security boundary.
+
 ## Server resources and cleanup
 
 Admins can open **Settings → System** to see host CPU, memory and disk usage. A small summary also appears in the desktop sidebar and on Home on a phone. CPU and memory include all host processes; disk describes the filesystem holding Skybreaker data. Memory usage excludes memory the operating system can make available again.

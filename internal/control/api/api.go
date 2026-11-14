@@ -73,6 +73,7 @@ type Backend interface {
 	ChatLogin(ctx context.Context, id string) error
 	ChatTerminal(ctx context.Context, id string) (store.Session, error)
 	ChatCompact(ctx context.Context, id string) error
+	StartReview(ctx context.Context, id, harness string, brief store.ReviewBrief) (store.Session, error)
 	ChatFork(ctx context.Context, id string) (store.Session, error)
 	ReopenChat(ctx context.Context, id string) (store.Session, error)
 	// Thread is an assistant's one chat with you; ThreadFresh carries it
@@ -223,6 +224,7 @@ func New(d Deps) (http.Handler, error) {
 	m.HandleFunc("POST /api/sessions/{id}/terminal", s.chatTerminal)
 	m.HandleFunc("POST /api/sessions/{id}/compact", s.chatCompact)
 	m.HandleFunc("POST /api/sessions/{id}/fork", s.chatFork)
+	m.HandleFunc("POST /api/sessions/{id}/review", s.startReview)
 	m.HandleFunc("POST /api/sessions/{id}/reopen", s.chatReopen)
 	m.HandleFunc("POST /api/sessions/{id}/fresh", s.chatFresh)
 	m.HandleFunc("POST /api/sessions/{id}/seen", s.seen)

@@ -409,6 +409,9 @@ func (a *App) chatSend(id string, send func() error) error {
 	}
 	a.store.UpdateSession(id, func(x *store.Session) {
 		x.Seen = time.Now().UTC()
+		if x.ReviewID != "" {
+			x.ReviewStale = true
+		}
 		x.Pull.Rounds, x.Pull.Paused = 0, false
 	})
 	return send()
@@ -617,6 +620,9 @@ func (a *App) chatUsage(id string, u *chat.Usage, limits []chat.Limit) {
 // it now needs the user, or finished. The push names the harness and
 // project, never what the agent said.
 func (a *App) chatChanged(before, after store.Session) {
+	if after.State == store.ChatWorking && before.State != store.ChatWorking && after.ReviewID != "" {
+		a.store.UpdateSession(after.ID, func(s *store.Session) { s.ReviewStale = true })
+	}
 	a.Publish(Event{Type: "session", Project: after.Project, Session: after.ID, Data: after.State})
 	a.taskChanged(before, after)
 	var m notify.Message
@@ -1048,13 +1054,17 @@ const (
 // SessionEdit changes what a session is called, its colour and its goal;
 // a nil field is left as it is, and an empty colour or goal clears it.
 type SessionEdit struct {
-	Title *string `json:"title"`
-	Color *string `json:"color"`
-	Goal  *string `json:"goal"`
+	Workflow *string `json:"workflow"`
+	Title    *string `json:"title"`
+	Color    *string `json:"color"`
+	Goal     *string `json:"goal"`
 }
 
 // CheckEdit refuses an edit the UI shouldn't store.
 func CheckEdit(e SessionEdit) error {
+	if e.Workflow != nil && !slices.Contains(workflowStages, *e.Workflow) {
+		return errors.New("invalid workflow stage")
+	}
 	if e.Title != nil {
 		t := strings.TrimSpace(*e.Title)
 		if t == "" {
@@ -1083,6 +1093,9 @@ func (a *App) EditSession(id string, e SessionEdit) (store.Session, error) {
 		return store.Session{}, fmt.Errorf("session %s: %w", id, ErrNotFound)
 	}
 	err := a.store.UpdateSession(id, func(s *store.Session) {
+		if e.Workflow != nil {
+			s.Workflow = *e.Workflow
+		}
 		if e.Title != nil {
 			s.Title, s.OwnTitle = strings.TrimSpace(*e.Title), true
 		}

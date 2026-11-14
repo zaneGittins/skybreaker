@@ -424,3 +424,29 @@ details.earlier .row-list { margin-top: 4px; }
 .cmd-hint.on { border-color: var(--text-2); }
 .swatch-hint { display: flex; align-items: center; gap: 7px; font-size: 13px; }
 .swatch { width: 14px; height: 14px; border-radius: 50%; background: var(--sc); }
+
+/* Work stages and pull requests stay with their implementation chat. */
+.workflow-list { display: grid; gap: 16px; }
+.workflow-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.workflow-filters button { display: flex; gap: 7px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--muted); font: 600 12px var(--font); }
+.workflow-filters button.on { background: var(--surface-3); border-color: var(--border-strong); color: var(--text); }
+.workflow-filters button span { font: 500 11px var(--mono); }
+.workflow-row + .workflow-row { border-top: 1px solid var(--border); }
+.workflow-row .srow, .workflow-row .srow-wrap { border-bottom: 0; }
+.workflow-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 14px 12px 56px; }
+.workflow-chip { border: 0; border-radius: 6px; padding: 3px 7px; background: var(--c-bg,var(--surface-3)); color: var(--c-ink,var(--text-2)); font: 600 11.5px var(--font); }
+.workflow-chip.pull { background: var(--surface-3); color: var(--text-2); }
+.workflow-link { color: var(--muted); font-size: 12px; }
+.workflow-link:hover { color: var(--text); }
+.workflow-action { margin-left: auto; padding: 4px 0 4px 8px; border: 0; background: transparent; color: var(--text-2); font: 600 12px var(--font); }
+.workflow-action:hover { color: var(--sun); }
+@media (max-width: 600px) { .workflow-action { margin-left: 0; padding-left: 0; } }
+
+.workflow-sheet { padding: 20px 26px; overflow: auto; }
+.workflow-hint { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+.review-picker { width: min(540px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; }
+.review-brief { display: grid; gap: 12px; }
+.review-brief textarea { resize: vertical; min-height: 64px; font: 400 14px/1.5 var(--font); }
+.review-picker .pick-text b { text-transform: none; }
+@media (max-width: 760px) { .review-picker { width: 100%; max-height: calc(100dvh - 16px); } }

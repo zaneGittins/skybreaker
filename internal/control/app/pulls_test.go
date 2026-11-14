@@ -49,7 +49,7 @@ func pullChat(t *testing.T) (*fixture, *fakeGitHub, store.Session) {
 	f.app.github = gh
 	s := startedChat(t, f, NewOptions{OwnBranch: true})
 	g.run(g.dir(s.ID), "branch", "-m", "fix/login")
-	gh.set("zaneGittins/orbit/pulls?head=zaneGittins%3Afix%2Flogin&state=open",
+	gh.set("zaneGittins/orbit/pulls?head=zaneGittins%3Afix%2Flogin&state=all",
 		`[{"number":12,"html_url":"https://github.com/zaneGittins/orbit/pull/12","created_at":"2026-10-01T10:00:00Z","head":{"sha":"aaa"}}]`)
 	gh.set("zaneGittins/orbit/commits/aaa/status", `{"statuses":[]}`)
 	noComments(gh)
@@ -99,7 +99,7 @@ func TestFailedChecksGoToTheChatOnce(t *testing.T) {
 		t.Errorf("the same failure went twice: %q", got)
 	}
 	// A new push that passes says nothing.
-	gh.set("zaneGittins/orbit/pulls?head=zaneGittins%3Afix%2Flogin&state=open",
+	gh.set("zaneGittins/orbit/pulls?head=zaneGittins%3Afix%2Flogin&state=all",
 		`[{"number":12,"html_url":"https://github.com/zaneGittins/orbit/pull/12","created_at":"2026-10-01T10:00:00Z","head":{"sha":"bbb"}}]`)
 	gh.set("zaneGittins/orbit/commits/bbb/status", `{"statuses":[]}`)
 	gh.set("zaneGittins/orbit/commits/bbb/check-runs?per_page=100", `{"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}`)
@@ -170,7 +170,7 @@ func TestOnlyWriteAccessCommentsGoToTheChat(t *testing.T) {
 func TestFollowUpsPauseAfterThreeRounds(t *testing.T) {
 	f, gh, s := pullChat(t)
 	push := func(sha string) {
-		gh.set("zaneGittins/orbit/pulls?head=zaneGittins%3Afix%2Flogin&state=open",
+		gh.set("zaneGittins/orbit/pulls?head=zaneGittins%3Afix%2Flogin&state=all",
 			`[{"number":12,"html_url":"https://github.com/zaneGittins/orbit/pull/12","created_at":"2026-10-01T10:00:00Z","head":{"sha":"`+sha+`"}}]`)
 		gh.set("zaneGittins/orbit/commits/"+sha+"/status", `{"statuses":[{"context":"ci/build","state":"failure","target_url":"https://ci.example/1"}]}`)
 		gh.set("zaneGittins/orbit/commits/"+sha+"/check-runs?per_page=100", `{"check_runs":[]}`)
@@ -225,7 +225,7 @@ func TestBusyChatGetsItsFollowUpLater(t *testing.T) {
 
 func TestNoPullRequestNoReads(t *testing.T) {
 	f, gh, s := pullChat(t)
-	gh.set("zaneGittins/orbit/pulls?head=zaneGittins%3Afix%2Flogin&state=open", `[]`)
+	gh.set("zaneGittins/orbit/pulls?head=zaneGittins%3Afix%2Flogin&state=all", `[]`)
 	f.app.FollowPulls(context.Background())
 	for _, r := range gh.reads {
 		if !strings.Contains(r, "/pulls?head=") {
@@ -238,4 +238,25 @@ func TestNoPullRequestNoReads(t *testing.T) {
 	// Nor any GitHub at all without the App.
 	f.app.github = nil
 	f.app.FollowPulls(context.Background())
+}
+
+func TestClosedPullKeepsOutcome(t *testing.T) {
+	for _, state := range []string{"closed", "merged"} {
+		t.Run(state, func(t *testing.T) {
+			f, gh, s := pullChat(t)
+			merged := "null"
+			if state == "merged" {
+				merged = `"2026-01-01T00:00:00Z"`
+			}
+			gh.set("zaneGittins/orbit/pulls?head=zaneGittins%3Afix%2Flogin&state=all", `[{"number":12,"state":"closed","merged_at":`+merged+`,"head":{"sha":"aaa"}}]`)
+			follow(t, f, s.ID)
+			x, _ := f.app.store.Session(s.ID)
+			if x.Pull.State != state || x.Pull.Number != 12 {
+				t.Fatalf("pull = %+v", x.Pull)
+			}
+			if len(sent(f, s.ID)) != 0 {
+				t.Fatal("closed PR prompted agent")
+			}
+		})
+	}
 }
