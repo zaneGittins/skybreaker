@@ -42,6 +42,7 @@ type fakeBackend struct {
 	onSend     func()   // called as a message is sent
 	filled     []string // project: archive, for each FillWorkspace
 	fillErr    error
+	styles     map[string]config.ChatStyle
 }
 
 func (b *fakeBackend) SandboxState(_ context.Context, p string) (sandbox.State, error) {

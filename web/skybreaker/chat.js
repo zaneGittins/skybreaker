@@ -591,7 +591,7 @@ async function renderChat(seq, d) {
     if (r.added && startNode) { startNode.remove(); startNode = null }
     if (e.kind === 'info') head();
     if (e.kind === 'turn' && e.turn?.state !== 'working') { markSeen(); v.refreshMeta() }
-    if (e.kind === 'tool' && e.tool?.kind === 'agent' && e.tool.status !== 'running' && !chat.working) { markSeen(); v.refreshMeta() }
+    if (e.kind === 'tool' && (e.tool?.kind === 'agent' || e.tool?.background) && e.tool.status !== 'running' && !chat.working) { markSeen(); v.refreshMeta() }
     // The agent asking you to take over its browser: show it here at once,
     // not only when the app's own event comes.
     if (e.kind === 'tool' && e.tool?.status !== 'running' && /browser_takeover/.test(e.tool?.name || '')) v.refreshTakeover?.();
@@ -1318,12 +1318,12 @@ async function renderChat(seq, d) {
   }
 
   // --- the working line ---
-  // It shows while the turn runs, and while subagents do after it: what's
-  // happening now, and for how long.
+  // It shows while the turn runs, and while subagents or background
+  // commands do after it: what's happening now, and for how long.
   const drawWorking = () => {
-    const agents = runningAgents(chat);
-    working.hidden = !(chat.working || agents.length) || chat.asks.size > 0;
-    avSet(asstMark, asstMotion(chat.asks.size + (v.takeover ? 1 : 0), (chat.working ? 1 : 0) + agents.length + tasksWorking(chat)));
+    const agents = runningAgents(chat), commands = runningCommands(chat);
+    working.hidden = !(chat.working || agents.length || commands.length) || chat.asks.size > 0;
+    avSet(asstMark, asstMotion(chat.asks.size + (v.takeover ? 1 : 0), (chat.working ? 1 : 0) + agents.length + commands.length + tasksWorking(chat)));
     const lead = agents[agents.length - 1];
     agentsBtn.hidden = !lead;
     if (lead) {
@@ -1331,8 +1331,8 @@ async function renderChat(seq, d) {
       agentsBtn.setAttribute('aria-label', `${agentsBtn.textContent} working: show ${lead.tool.title ? reveal(lead.tool.title) : 'it'}`);
     }
     if (working.hidden) return;
-    const text = reveal(chat.working ? activityLabel(chat) : [lead.tool.title, agentActivity(lead)].filter(Boolean).join(' · '));
-    const since = chat.working ? chat.turnStart : agents[0].since;
+    const text = reveal(chat.working ? activityLabel(chat) : lead ? [lead.tool.title, agentActivity(lead)].filter(Boolean).join(' · ') : clipLabel(ACTIVITY.command(commands[0].tool.title)));
+    const since = chat.working ? chat.turnStart : (agents[0] || commands[0]).since;
     const wtext = working.querySelector('.wtext');
     if (wtext.textContent !== text) wtext.textContent = text;
     const secs = since ? Math.max(0, Math.round((Date.now() - Date.parse(since)) / 1000)) : -1;

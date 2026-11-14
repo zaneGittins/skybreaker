@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zaneGittins/skybreaker/internal/control/app"
+	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/preview"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
 )
@@ -89,5 +90,24 @@ func (b *fakeBackend) EditSession(id string, e app.SessionEdit) (store.Session, 
 	if e.Color != nil {
 		s.Color = *e.Color
 	}
+	return s, nil
+}
+
+func (b *fakeBackend) ChatStyle(project string) (config.ChatStyle, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.styles[project], nil
+}
+
+func (b *fakeBackend) SetChatStyle(project string, s config.ChatStyle) (config.ChatStyle, error) {
+	if err := config.CheckChatStyle(s); err != nil {
+		return config.ChatStyle{}, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.styles == nil {
+		b.styles = map[string]config.ChatStyle{}
+	}
+	b.styles[project] = s
 	return s, nil
 }

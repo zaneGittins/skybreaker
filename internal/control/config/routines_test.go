@@ -38,17 +38,37 @@ func TestRoutines(t *testing.T) {
 		t.Errorf("routines.json mode %v", fi.Mode().Perm())
 	}
 	for name, bad := range map[string]Job{
-		"a coding project": {Name: "x", Project: "orbit", Schedule: "@daily", Prompt: "x"},
-		"a board job":      {Name: "x", Project: "pip", Schedule: "@daily", Kind: JobBoard},
-		"a bad schedule":   {Name: "x", Project: "pip", Schedule: "sometimes", Prompt: "x"},
-		"no prompt":        {Name: "x", Project: "pip", Schedule: "@daily"},
-		"a file job name":  {Name: "nightly-orbit", Project: "pip", Schedule: "@daily", Prompt: "x"},
-		"a taken name":     {Name: "morning-brief", Project: "pip", Schedule: "@daily", Prompt: "x"},
-		"no project":       {Name: "x", Project: "ghost", Schedule: "@daily", Prompt: "x"},
+		"a board job":     {Name: "x", Project: "pip", Schedule: "@daily", Kind: JobBoard},
+		"a bad schedule":  {Name: "x", Project: "pip", Schedule: "sometimes", Prompt: "x"},
+		"no prompt":       {Name: "x", Project: "pip", Schedule: "@daily"},
+		"a bad harness":   {Name: "x", Project: "orbit", Harness: "pi", Schedule: "@daily", Prompt: "x"},
+		"a file job name": {Name: "nightly-orbit", Project: "pip", Schedule: "@daily", Prompt: "x"},
+		"a taken name":    {Name: "morning-brief", Project: "pip", Schedule: "@daily", Prompt: "x"},
+		"no project":      {Name: "x", Project: "ghost", Schedule: "@daily", Prompt: "x"},
 	} {
 		if err := addRoutine(path, bad); err == nil {
 			t.Errorf("%s: added", name)
 		}
+	}
+}
+
+// A coding project's schedules are made in the app too, as a prompt or a
+// pass over its board.
+func TestProjectSchedules(t *testing.T) {
+	path := mainConfig(t)
+	if err := addRoutine(path, Job{Name: "board-pass", Project: "orbit", Harness: "codex", Schedule: "0 3 * * *", Kind: JobBoard}); err != nil {
+		t.Fatal(err)
+	}
+	if err := addRoutine(path, Job{Name: "deps", Project: "orbit", Schedule: "@weekly", Prompt: "Update dependencies."}); err != nil {
+		t.Fatal(err)
+	}
+	c := mustLoad(t, path)
+	j, ok := c.Job("board-pass")
+	if !ok || j.Kind != JobBoard || j.Harness != "codex" || !c.AppJob("board-pass") || !c.AppJob("deps") {
+		t.Fatalf("job %+v", j)
+	}
+	if j, _ := c.Job("deps"); j.Harness != "claude" || j.Kind != JobPrompt {
+		t.Fatalf("deps %+v", j)
 	}
 }
 

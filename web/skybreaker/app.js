@@ -142,6 +142,7 @@ function busy() {
 const refresh = debounce(() => {
   // A chat streams on its own, and so does a browser; one you've taken over
   // must not be closed and handed back by a redraw.
+  if (state.route?.name === 'settings' && state.route.section === 'system') return;
   if (!state.route || state.route.name === 'session' || state.route.name === 'thread' || state.route.tab === 'browser' || state.route.tab === 'takeover') return;
   // An open sheet that can redraw itself does, so what you answer there
   // leaves it; the page waits until the sheet closes.
@@ -184,6 +185,7 @@ async function renderHome(seq) {
   const rail = use ? [limitsCard(use.limits), tokensCard(use.hours)].filter(Boolean) : [];
   $('#app').replaceChildren(el('div.page.home', null,
     el('header.home-head', null, el('h1', null, asstGreeting()), el('p', null, summary)),
+    systemSummary(true),
     d.projects.length ? null : homeWelcome(),
     el('div.home-grid', null,
       el('div.home-main', null,
@@ -710,12 +712,124 @@ function chatList(p, live, ended) {
 
 // runsView is the project's schedules and their runs.
 function runsView(d) {
+  const p = d.project, can = d.jobs_editable;
+  const add = can ? el('button.empty-add', { type: 'button', onclick: () => jobSheet(p, null) }, svg(ICON.plus), 'Add a schedule') : null;
   if (!d.jobs.length && !d.runs.length) {
-    return el('div.empty-note', null, el('b', null, 'No schedules'), el('p', null, 'Add jobs to the config to run agents on a schedule, such as a nightly pass over the board.'));
+    return el('div.runs-view', null,
+      el('div.empty-note', null, el('b', null, 'No schedules'), el('p', null, can
+        ? 'Run an agent on a schedule, such as a nightly pass over the board.'
+        : 'Add jobs to the config to run agents on a schedule, such as a nightly pass over the board.')),
+      add);
   }
   return el('div.runs-view', null,
-    d.jobs.length ? el('div.jobs', null, d.jobs.map(jobRow)) : null,
+    d.jobs_pending ? el('p.np-status', null, svg(ICON.clock), 'Saved changes run once Skybreaker restarts, when no agent is working.') : null,
+    d.jobs.length ? el('div.jobs', null, d.jobs.map(j => jobRow(p, j, can && j.app))) : null,
+    add,
     d.runs.length ? el('div.table-wrap', null, runsTable(d.runs)) : null);
+}
+
+// jobSheet adds a schedule to a project, or changes one made in the app.
+function jobSheet(p, j) {
+  const field = (label, input, hint) => el('label.np-field', null, el('span.np-label', null, label), input, hint ? el('span.np-hint', null, hint) : null);
+  const name = el('input.np-input', { type: 'text', required: true, pattern: '[a-z0-9][a-z0-9-]{0,47}', placeholder: 'nightly-board', value: j?.name || '', autocapitalize: 'off', spellcheck: 'false' });
+  const sched = el('input.np-input.mono', { type: 'text', required: true, placeholder: '0 2 * * *', value: j?.schedule || '', autocapitalize: 'off', spellcheck: 'false' });
+  const words = el('span.np-hint');
+  const say = () => { words.textContent = sched.value ? asstSchedule(sched.value) : 'minute hour day month weekday, e.g. 0 2 * * * for every day at 2:00' };
+  sched.addEventListener('input', say);
+  say();
+  const agents = p.harnesses.filter(h => h !== 'shell');
+  const agent = el('select.np-input.job-agent', null, agents.map(h => el('option', { value: h, selected: h === j?.harness || null }, harnessLabel(h))));
+  let kind = j?.kind || 'board';
+  const prompt = el('textarea.np-input.job-prompt', { rows: '5', placeholder: 'Update dependencies and open a pull request if the tests pass.' });
+  prompt.value = j?.prompt || '';
+  const promptField = field('Prompt', prompt);
+  const boardHint = el('span.np-hint', null, 'Works the next Todo item on the board.');
+  const sync = () => { promptField.hidden = kind !== 'prompt'; prompt.required = kind === 'prompt'; boardHint.hidden = kind !== 'board' };
+  const what = el('div.np-field', null, el('span.np-label', null, 'What to do'),
+    seg([['board', 'Work the board'], ['prompt', 'Run a prompt']], kind, v => { kind = v; sync() }), boardHint);
+  sync();
+  const error = el('p.np-error', { role: 'alert', hidden: true });
+  const save = el('button.btn.primary', { type: 'submit' }, j ? 'Save' : 'Add schedule');
+  const base = `/api/projects/${encodeURIComponent(p.name)}/jobs`;
+  const form = el('form.np-form', {
+    onsubmit: async e => {
+      e.preventDefault();
+      save.disabled = true;
+      const v = { name: name.value.trim(), schedule: sched.value.trim(), kind, harness: agent.value, prompt: kind === 'prompt' ? prompt.value.trim() : '' };
+      try {
+        if (j) await api('PUT', base + '/' + encodeURIComponent(j.name), v);
+        else await api('POST', base, v);
+        closeSheet();
+        toast('Saved: it runs once Skybreaker restarts');
+        refresh();
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+        save.disabled = false;
+      }
+    },
+  }, field('Name', name, 'Lowercase letters, digits and dashes.'), el('label.np-field', null, el('span.np-label', null, 'Schedule'), sched, words),
+    agents.length > 1 ? field('Agent', agent) : null, what, promptField, error, save);
+  settingsSheet(j ? 'Edit schedule' : 'Add a schedule', p.name, form);
+  (j ? sched : name).focus();
+}
+
+// CHAT_FORMATS are the ways a chat's name can be written, shown by example.
+const CHAT_FORMATS = [['', 'As the agent writes it', 'Fix the login token leak'], ['lower', 'lowercase', 'fix the login token leak'],
+  ['kebab', 'kebab-case', 'fix-the-login-token-leak'], ['snake', 'snake_case', 'fix_the_login_token_leak']];
+
+// chatStyleSheet sets how a project's agents name and colour new chats.
+async function chatStyleSheet(p) {
+  const path = `/api/projects/${encodeURIComponent(p.name)}/chat-style`;
+  let st;
+  try { st = (await api('GET', path)).style } catch (e) { toast(e.message, 'error'); return }
+  const field = (label, input, hint) => el('label.np-field', null, el('span.np-label', null, label), input, hint || null);
+  const example = el('span.np-hint');
+  const say = () => { example.textContent = 'Like ' + CHAT_FORMATS.find(f => f[0] === format.value)[2] };
+  const format = el('select.np-input', { onchange: say }, CHAT_FORMATS.map(([v, label]) => el('option', { value: v }, label)));
+  format.value = st.format || '';
+  say();
+  const max = el('input.np-input.cs-max', { type: 'number', min: '10', max: '80', inputmode: 'numeric', placeholder: 'No limit', value: st.max_length || '' });
+  const guide = el('textarea.np-input.job-prompt', { rows: '3', maxlength: '500', placeholder: 'Start with the area, like api or ui.' });
+  guide.value = st.guide || '';
+  const colors = CHAT_COLORS.map(c => {
+    const input = el('input.np-input', { type: 'text', maxlength: '200', value: st.colors?.[c] || '', placeholder: 'Not used', 'aria-label': 'What ' + c + ' is for' });
+    return { c, input, row: el('label.cs-color.sc-' + c, null, el('span.swatch'), el('span.cs-name', null, c), input) };
+  });
+  const error = el('p.np-error', { role: 'alert', hidden: true });
+  const send = async (v, done) => {
+    try {
+      await api('PUT', path, v);
+      closeSheet();
+      toast(done);
+    } catch (err) { error.textContent = err.message; error.hidden = false }
+  };
+  const set = !!(st.format || st.max_length || st.guide || Object.keys(st.colors || {}).length);
+  const form = el('form.np-form', {
+    onsubmit: e => {
+      e.preventDefault();
+      const v = { format: format.value, max_length: Number(max.value) || 0, guide: guide.value.trim(), colors: {} };
+      for (const { c, input } of colors) if (input.value.trim()) v.colors[c] = input.value.trim();
+      send(v, 'Saved: new chats are named this way');
+    },
+  }, field('Format', format, example), field('Length limit', max, el('span.np-hint', null, 'Characters, from 10 to 80.')),
+    field('Naming guide', guide, el('span.np-hint', null, 'Anything else the agent should follow.')),
+    el('div.np-field', null, el('span.np-label', null, 'Colours'), el('span.np-hint', null, 'What each colour marks. The agent picks the one that fits.'),
+      el('div.cs-colors', null, colors.map(x => x.row))),
+    error,
+    el('div.cs-acts', null,
+      set ? el('button.btn.ghost', { type: 'button', onclick: () => send({}, 'Cleared: chats are named from their first message') }, 'Clear') : null,
+      el('button.btn.primary', { type: 'submit' }, 'Save')));
+  settingsSheet('Chat names', p.name, el('p.np-hint.cs-lead', null, 'Agents name and colour each new chat this way. A name or colour you set yourself stays.'), form);
+}
+
+async function deleteJob(p, j) {
+  if (!confirm(`Delete the schedule “${j.name}”?`)) return;
+  try {
+    await api('DELETE', `/api/projects/${encodeURIComponent(p.name)}/jobs/${encodeURIComponent(j.name)}`);
+    toast('Deleted: it stops once Skybreaker restarts');
+    refresh();
+  } catch (e) { toast(e.message, 'error') }
 }
 
 // openShell opens a terminal in the project's sandbox.
@@ -748,6 +862,7 @@ function sandboxSheet(p, live) {
         act(ICON.code, 'Open in VS Code', () => vscodeSheet(p), { sub: 'Remote - SSH, from your computer' }),
         act(ICON.clock, 'Schedules', go(projectPath(p.name, 'runs'))),
         act(ICON.agent, 'Agents', () => agentsSheet(p), { sub: p.harnesses.filter(h => h !== 'shell').map(harnessLabel).join(', ') }),
+        act(ICON.pencil, 'Chat names', () => chatStyleSheet(p), { sub: 'How agents name and colour new chats' }),
         p.running
           ? act(ICON.stop, 'Stop sandbox', () => { closeSheet(); if (!live || confirm(`Stop ${p.name}'s sandbox? ${plural(live, 'chat')} pause and resume later.`)) sandboxAction(p.name, 'stop') },
             { cls: '.danger', sub: live ? `${plural(live, 'chat')} pause and resume later` : '' })
@@ -1029,7 +1144,7 @@ function endedRow(s) {
     s.screen ? el('button.icon-btn.bare', { type: 'button', onclick: close, 'aria-label': 'Drop last screen', title: 'Drop last screen' }, svg(ICON.x)) : null);
 }
 
-function jobRow(j) {
+function jobRow(p, j, editable) {
   const run = async () => {
     try {
       const r = await api('POST', `/api/jobs/${j.name}/run`, {});
@@ -1045,7 +1160,9 @@ function jobRow(j) {
     j.ignored?.length ? el('span.job-ignored', { title: `${j.harness} has no way to apply these, so its runs go without them` }, j.ignored.join(', ') + ' ignored') : null,
     j.problem ? el('span.job-ignored', { title: j.problem }, 'can\'t run: ' + j.problem) : null,
     el('span.grow'),
-    el('button.btn.sm', { onclick: run }, svg(ICON.play), 'Run now'));
+    el('button.btn.sm', { onclick: run }, svg(ICON.play), 'Run now'),
+    editable ? el('button.btn.ghost.sm', { type: 'button', onclick: () => jobSheet(p, j) }, 'Edit') : null,
+    editable ? el('button.btn.ghost.sm', { type: 'button', onclick: () => deleteJob(p, j) }, 'Delete') : null);
 }
 
 function runState(r) {
@@ -1690,6 +1807,7 @@ async function boot() {
     state.meta = await api('GET', '/api/meta');
   } catch (e) { toast(e.message, 'error') }
   setupPush();
+  startSystemMonitor();
   activityBadge();
   $('#new-chat').addEventListener('click', startNewChat);
   addEventListener('keydown', e => {

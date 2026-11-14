@@ -99,6 +99,9 @@ type Tool struct {
 	Removed int             `json:"removed,omitempty"`
 	Exit    *int            `json:"exit,omitempty"`
 	Parent  string          `json:"parent,omitempty"` // the subagent call this one belongs to
+	// Background marks a call that runs on past its turn, like a command
+	// started in the background.
+	Background bool `json:"background,omitempty"`
 }
 
 // Ask kinds.

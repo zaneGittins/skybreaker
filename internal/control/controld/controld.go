@@ -275,7 +275,7 @@ func Run(ctx context.Context, o Options) error {
 	tools := &mcp.Server{Name: "skybreaker", Version: o.Version,
 		Instructions: board.Instructions + "\n\n" + preview.Instructions + "\n\n" + assistant.ToolInstructions + "\n\n" + assistant.TaskInstructions + "\n\n" + browser.ToolInstructions,
 		Tools: []func(mcp.Caller) []mcp.Tool{board.Tools(boards), show.Tools(host), preview.Tools(previews, a),
-			assistant.Tools(assistants, cfg.Assistant), assistant.TaskTools(taskHost{a}), browser.Tools(host, cfg.Assistant)}}
+			assistant.Tools(assistants, cfg.Assistant), assistant.TaskTools(taskHost{a}), browser.Tools(host, cfg.Assistant), a.ChatStyleTools()}}
 
 	hk := hooks.New(a.CheckHookToken, a.HookEvent)
 	// Chats answer their harness's prompts in the conversation.
@@ -321,7 +321,7 @@ func Run(ctx context.Context, o Options) error {
 	changes := &settings{configPath: o.ConfigPath, secrets: cfg.SecretsFile, instructions: cfg.Instructions(), prompts: cfg.Prompts(), chatModes: cfg.ChatModes(), app: a, broker: brk, boards: boards, restart: requestRestart}
 	apiHandler, err := api.New(api.Deps{
 		Config: cfg, Self: self, Backend: a, Approvals: hk, Network: brk, Board: boards, MCP: tools, Runs: sched, Store: st, Identifier: uiNet, Push: push, Previews: previews, SSHKeys: sshKeys,
-		Projects: changes, Settings: changes, Usage: tokensUsed, Assistants: assistants, Browsers: a,
+		Projects: changes, Settings: changes, System: a, Usage: tokensUsed, Assistants: assistants, Browsers: a,
 		Static: web.Skybreaker(), Version: o.Version,
 		Upgrade: func(w http.ResponseWriter, r *http.Request) (terminal.Conn, error) { return wsock.Accept(w, r) },
 		Bridge: func(ctx context.Context, c terminal.Conn, argv []string) error {

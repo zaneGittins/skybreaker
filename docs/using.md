@@ -26,6 +26,8 @@
 
 Anything else goes to the agent as usual.
 
+**Names and colours.** Pick **Chat names** in a project's menu to have its agents name and colour new chats for you: a format (such as `kebab-case`), a length limit, a short naming guide, and what each colour is for, like red for a vulnerability or green for UI work. The agent names the chat with the `name_chat` tool on its first message, and Skybreaker holds the name to the format and limit. A name or colour you set yourself stays.
+
 **Attachments.** Paste or drop files on a desktop, or tap the paperclip. Up to 10 files per message, 10 MB each. The agent finds them under `/root/.skybreaker/attachments/<session>`.
 
 **Context.** The ring at the top right fills as the chat uses up the model's context: yellow past 60%, red past 85%. Tap it to compact or start fresh.
@@ -45,6 +47,10 @@ Each project has a board of bugs, features and chores. Agents pick up, claim and
 ```sh
 claude mcp add --transport http --scope user skybreaker https://skybreaker.<your-tailnet>.ts.net/mcp
 ```
+
+## Schedules
+
+A project's **Runs** tab lists its schedules and their runs. An admin clicks **Add a schedule** to run an agent on a cron schedule, either working the next Todo item on the board or running a prompt. Schedules made in the app can be edited or deleted there; jobs in the config file stay as they are. A change applies when Skybreaker restarts, once no agent is working.
 
 ## Assistants
 
@@ -90,3 +96,15 @@ uv tool install ansible-core    # Python tools
 ```
 
 For setup every sandbox needs, commit `.skybreaker/setup.sh` to the repo. It runs as root in `/workspace` when a new sandbox starts, and chats wait for it to finish. Its log is `/var/log/skybreaker-setup.log`.
+
+## Server resources and cleanup
+
+Admins can open **Settings → System** to see host CPU, memory and disk usage. A small summary also appears in the desktop sidebar and on Home on a phone. CPU and memory include all host processes; disk describes the filesystem holding Skybreaker data. Memory usage excludes memory the operating system can make available again.
+
+System scans storage inside running project and assistant sandboxes, with separate totals for Go build cache, Docker, the workspace, worktrees and other home files. Scans are cached for one minute. Stopped sandboxes are not started to measure them, and these totals do not include host Docker images or storage outside the listed directories.
+
+Expand a project and choose **Review cleanup** to select Go build cache, Docker build cache and dangling images. The Docker age is configurable, initially seven days. Docker's total includes volumes and images that may be in use, so it is not a reclaimable-space estimate. Go cache size is an estimate; cleanup reports measured space recovered afterward, including when only part of the cleanup succeeded.
+
+Cleanup requires a running sandbox, no active terminal, SSH connection, setup or scheduled run, and chats quiet for 15 minutes. New agent work is refused while cleanup holds the project. Closing the page does not cancel an accepted cleanup. Workspaces, worktrees, Docker containers and volumes, Go module downloads and agent history are kept. Go cleanup covers the configured build cache inside the sandbox's home directory; caches configured elsewhere are left alone. Builds may take longer afterward.
+
+Cleanup is manual in this version. It follows the app's admin permissions and is disabled when `app_settings: false`.

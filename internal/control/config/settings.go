@@ -34,7 +34,7 @@ type Paths struct {
 	Projects string // projects created in the app
 	Access   string // the app's bundles, and what it grants each project
 	Secrets  string // secrets added in the app (never shown again)
-	Routines string // assistants' scheduled routines
+	Routines string // schedules made in the app: assistants' routines and projects' jobs
 }
 
 // AppPaths are where this configuration's app files are.
@@ -261,23 +261,19 @@ func Edit(configPath string, change func(*AppFiles) error, check func(*Config) e
 	if err := change(&f); err != nil {
 		return nil, nil, err
 	}
-	// A new routine must be for an assistant; an old one whose assistant
-	// is gone, or is no longer one, goes, so it never runs again.
-	assistant := func(name string) bool {
-		if a := f.Projects[name]; a != nil {
-			return a.Kind == KindAssistant
-		}
-		p := before.Projects[name]
-		return p != nil && p.Kind == KindAssistant && !before.Added(name)
+	// A new schedule must be for a project; an old one whose project is
+	// gone goes, so it never runs again.
+	exists := func(name string) bool {
+		return f.Projects[name] != nil || before.Projects[name] != nil && !before.Added(name)
 	}
 	kept := f.Routines[:0]
 	for _, j := range f.Routines {
 		switch {
 		case j == nil:
-		case assistant(j.Project):
+		case exists(j.Project):
 			kept = append(kept, j)
 		case !had[j.Name]:
-			return nil, nil, fmt.Errorf("routine %s: no assistant %q", j.Name, j.Project)
+			return nil, nil, fmt.Errorf("schedule %s: no project %q", j.Name, j.Project)
 		}
 	}
 	f.Routines = kept

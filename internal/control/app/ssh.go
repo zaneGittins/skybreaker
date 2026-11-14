@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
@@ -65,6 +66,16 @@ const sshdWait = 20 * time.Second
 // it isn't running. The connection is the host's own, to the sandbox's
 // fixed address: the sandbox is never given a way to reach in.
 func (a *App) SSHConn(ctx context.Context, project string) (net.Conn, error) {
+	unlock, guardErr := a.beginActivity(project)
+	if guardErr != nil {
+		return nil, guardErr
+	}
+	owned := false
+	defer func() {
+		if !owned {
+			unlock()
+		}
+	}()
 	if _, err := a.project(project); err != nil {
 		return nil, err
 	}
@@ -77,7 +88,8 @@ func (a *App) SSHConn(ctx context.Context, project string) (net.Conn, error) {
 	for {
 		c, err := a.dial(ctx, addr)
 		if err == nil {
-			return c, nil
+			owned = true
+			return &maintenanceConn{Conn: c, release: unlock}, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -86,3 +98,12 @@ func (a *App) SSHConn(ctx context.Context, project string) (net.Conn, error) {
 		}
 	}
 }
+
+// maintenanceConn keeps cleanup out for the lifetime of an SSH connection.
+type maintenanceConn struct {
+	net.Conn
+	once    sync.Once
+	release func()
+}
+
+func (c *maintenanceConn) Close() error { err := c.Conn.Close(); c.once.Do(c.release); return err }

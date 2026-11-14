@@ -145,22 +145,21 @@ func writeTemp(path string, b []byte) (string, error) {
 	return tmp.Name(), nil
 }
 
-// mergeRoutines adds assistants' routines to the jobs. The app makes them
-// for assistants only, as prompts; one whose assistant is gone is left
-// unused rather than stopping Skybreaker starting.
+// mergeRoutines adds the schedules made in the app to the jobs: an
+// assistant's are prompts, a coding project's prompts or board passes. One
+// whose project is gone is left unused rather than stopping Skybreaker
+// starting, until the next change drops it.
 func (c *Config) mergeRoutines(routines []*Job, path string) error {
 	c.appJobs = map[string]bool{}
 	for i, j := range routines {
 		if j == nil {
 			return fmt.Errorf("%s: routine %d is empty", path, i)
 		}
-		// One whose assistant is gone, or is no longer one, waits unused
-		// until the next change drops it.
-		if p := c.Projects[j.Project]; p == nil || p.Kind != KindAssistant {
+		p := c.Projects[j.Project]
+		if p == nil {
 			continue
 		}
-		switch {
-		case j.Kind != "" && j.Kind != JobPrompt:
+		if p.Kind == KindAssistant && j.Kind != "" && j.Kind != JobPrompt {
 			return fmt.Errorf("%s: routine %s: an assistant's routine is a prompt", path, j.Name)
 		}
 		if c.appJobs[j.Name] {
@@ -172,5 +171,5 @@ func (c *Config) mergeRoutines(routines []*Job, path string) error {
 	return nil
 }
 
-// AppJob reports whether a job is an assistant's routine, made in the app.
+// AppJob reports whether a job was made in the app, so the app may change it.
 func (c *Config) AppJob(name string) bool { return c.appJobs[name] }

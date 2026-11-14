@@ -107,6 +107,9 @@ type App struct {
 	readyPoll time.Duration // how often waitReady checks the sandbox
 	usage     *usage.Store
 
+	maintenance sync.Map // project -> activity and maintenance gate
+	storage     sync.Map // project -> cached storage scan
+
 	locksMu sync.Mutex
 	locks   map[string]*sync.Mutex // per project: serialises its starts and stops
 
@@ -274,6 +277,11 @@ func (a *App) lockSession(id string) (unlock func()) { return a.lockProject("ses
 // fresh broker token, the broker CA, the hook settings and the MCP
 // config; a token held for an earlier container is revoked first.
 func (a *App) StartSandbox(ctx context.Context, project string) error {
+	unlock, guardErr := a.beginActivity(project)
+	if guardErr != nil {
+		return guardErr
+	}
+	defer unlock()
 	p, err := a.project(project)
 	if err != nil {
 		return err
@@ -597,6 +605,11 @@ func (a *App) RenewTokens(ctx context.Context) {
 
 // StopSandbox stops the container and revokes its broker token.
 func (a *App) StopSandbox(ctx context.Context, project string) error {
+	unlock, guardErr := a.beginActivity(project)
+	if guardErr != nil {
+		return guardErr
+	}
+	defer unlock()
 	if _, err := a.project(project); err != nil {
 		return err
 	}
@@ -626,6 +639,11 @@ func (a *App) StopSandbox(ctx context.Context, project string) error {
 
 // Exec runs a command in a project's sandbox.
 func (a *App) Exec(ctx context.Context, project string, args ...string) ([]byte, error) {
+	unlock, guardErr := a.beginActivity(project)
+	if guardErr != nil {
+		return nil, guardErr
+	}
+	defer unlock()
 	return a.sandbox.Exec(ctx, project, args...)
 }
 
@@ -640,6 +658,11 @@ func newSessionID() string {
 // NewSession starts a harness TUI in a new tmux session in the project's
 // sandbox, starting the sandbox if needed.
 func (a *App) NewSession(ctx context.Context, project, harnessName, title string, opts NewOptions) (store.Session, error) {
+	unlock, guardErr := a.beginActivity(project)
+	if guardErr != nil {
+		return store.Session{}, guardErr
+	}
+	defer unlock()
 	p, err := a.project(project)
 	if err != nil {
 		return store.Session{}, err

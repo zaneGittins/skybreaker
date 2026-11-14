@@ -34,6 +34,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/scheduler"
 	"github.com/zaneGittins/skybreaker/internal/control/sshkeys"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
+	host "github.com/zaneGittins/skybreaker/internal/control/system"
 	"github.com/zaneGittins/skybreaker/internal/control/terminal"
 	"github.com/zaneGittins/skybreaker/internal/control/usage"
 	"github.com/zaneGittins/skybreaker/internal/notify/webpush"
@@ -87,6 +88,8 @@ type Backend interface {
 	ReviewSession(ctx context.Context, id string) (app.Review, error)
 	Listening(ctx context.Context, project string) ([]preview.Listening, error)
 	EditSession(id string, e app.SessionEdit) (store.Session, error)
+	ChatStyle(project string) (config.ChatStyle, error)
+	SetChatStyle(project string, s config.ChatStyle) (config.ChatStyle, error)
 	// SetAuthorizedKeys gives every sandbox's sshd these keys.
 	SetAuthorizedKeys(keys []byte) error
 	// SSHConn connects to the project's sandbox sshd, starting the sandbox.
@@ -148,6 +151,7 @@ type Deps struct {
 	Projects   ProjectAdder      // nil when projects can't be created here
 	SSHKeys    *sshkeys.Store    // nil when SSH into sandboxes is off
 	Settings   Settings          // nil when settings can't be changed here
+	System     System            // nil when host resources are unavailable
 	Usage      Usage             // nil when tokens aren't counted
 	Assistants *assistant.Store  // nil when there are none
 	Browsers   Browsers          // nil when assistants have no browser
@@ -161,10 +165,11 @@ type Deps struct {
 
 type server struct {
 	Deps
-	tints map[string]int
-	ssh   relays
-	gh    ghStates
-	chart chartCache
+	tints       map[string]int
+	ssh         relays
+	gh          ghStates
+	chart       chartCache
+	hostMetrics *host.Sampler
 	// uploads holds a place for each message with attachments being decoded.
 	uploads chan struct{}
 }
@@ -173,23 +178,31 @@ func New(d Deps) (http.Handler, error) {
 	if d.Config == nil || d.Backend == nil || d.Approvals == nil || d.Network == nil || d.Board == nil || d.Runs == nil || d.Store == nil || d.Identifier == nil || d.Static == nil {
 		return nil, errors.New("api: missing dependency")
 	}
-	s := &server{Deps: d, tints: map[string]int{}, uploads: make(chan struct{}, 2)}
+	s := &server{hostMetrics: host.New(d.Config.DataDir), Deps: d, tints: map[string]int{}, uploads: make(chan struct{}, 2)}
 	for i, name := range slices.Sorted(maps.Keys(d.Config.Projects)) {
 		s.tints[name] = i % 8
 	}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	m.HandleFunc("GET /api/meta", s.meta)
+	m.HandleFunc("GET /api/system", s.systemStatus)
+	m.HandleFunc("GET /api/projects/{p}/storage", s.projectStorage)
+	m.HandleFunc("POST /api/projects/{p}/cleanup", s.cleanStorage)
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("GET /api/projects", s.projects)
 	m.HandleFunc("POST /api/projects", s.createProject)
 	m.HandleFunc("PUT /api/projects/{p}/harnesses", s.setHarnesses)
+	m.HandleFunc("GET /api/projects/{p}/chat-style", s.chatStyle)
+	m.HandleFunc("PUT /api/projects/{p}/chat-style", s.setChatStyle)
 	m.HandleFunc("GET /api/capabilities", s.capabilities)
 	m.HandleFunc("GET /api/ssh-keys", s.sshKeys)
 	m.HandleFunc("POST /api/ssh-keys", s.addSSHKey)
 	m.HandleFunc("DELETE /api/ssh-keys/{id}", s.deleteSSHKey)
 	m.HandleFunc("GET /api/projects/{p}/ssh", s.sshRelay)
 	m.HandleFunc("GET /api/projects/{p}", s.project)
+	m.HandleFunc("POST /api/projects/{p}/jobs", s.addRoutine(s.inProject))
+	m.HandleFunc("PUT /api/projects/{p}/jobs/{name}", s.editRoutine(s.inProject))
+	m.HandleFunc("DELETE /api/projects/{p}/jobs/{name}", s.deleteRoutine(s.inProject))
 	m.HandleFunc("POST /api/projects/{p}/sandbox", s.sandbox)
 	m.HandleFunc("PUT /api/projects/{p}/workspace", s.fillWorkspace)
 	m.HandleFunc("POST /api/projects/{p}/sessions", s.newSession)
@@ -252,7 +265,7 @@ func fail(w http.ResponseWriter, err error) {
 		webutil.Error(w, http.StatusConflict, "this request was already decided or has expired")
 	case errors.Is(err, app.ErrNoRepo):
 		webutil.Error(w, http.StatusConflict, err.Error())
-	case errors.Is(err, app.ErrBusy), errors.Is(err, app.ErrWorkspaceFull):
+	case errors.Is(err, app.ErrMaintenance), errors.Is(err, app.ErrBusy), errors.Is(err, app.ErrWorkspaceFull):
 		webutil.Error(w, http.StatusConflict, err.Error())
 	default:
 		webutil.Error(w, http.StatusInternalServerError, err.Error())
@@ -368,26 +381,44 @@ func (s *server) known(w http.ResponseWriter, name string) bool {
 	return true
 }
 
+// inProject is the project a request names, or a 404 for anything else.
+func (s *server) inProject(w http.ResponseWriter, r *http.Request) (string, bool) {
+	name := r.PathValue("p")
+	return name, s.known(w, name)
+}
+
 func (s *server) project(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("p")
 	if !s.known(w, name) {
 		return
 	}
 	view, sessions := s.view(r.Context(), name)
+	// Jobs are shown as saved, so a change shows at once even while it
+	// waits for a restart to run.
+	cfg, pending := s.Config, false
+	if s.Settings != nil {
+		if saved, _, err := s.Settings.Saved(); err == nil {
+			cfg = saved
+		}
+		pending = s.Settings.Pending()
+	}
 	var jobs []jobView
-	for _, j := range s.Config.Jobs {
+	for _, j := range cfg.Jobs {
 		if j.Project == name {
-			jobs = append(jobs, jobView{j, j.Ignored, j.Problem})
+			jobs = append(jobs, jobView{j, j.Ignored, j.Problem, cfg.AppJob(j.Name)})
 		}
 	}
+	p, _ := tsauth.FromContext(r.Context())
 	webutil.WriteJSON(w, http.StatusOK, map[string]any{
-		"project":  view,
-		"sessions": nonNil(sessions),
-		"pending":  nonNil(s.Approvals.Pending(name)),
-		"requests": nonNil(s.pendingRequests(name)),
-		"board":    s.boardCounts(name),
-		"runs":     nonNil(s.Store.ListRuns(name, 20)),
-		"jobs":     nonNil(jobs),
+		"project":       view,
+		"sessions":      nonNil(sessions),
+		"pending":       nonNil(s.Approvals.Pending(name)),
+		"requests":      nonNil(s.pendingRequests(name)),
+		"board":         s.boardCounts(name),
+		"runs":          nonNil(s.Store.ListRuns(name, 20)),
+		"jobs":          nonNil(jobs),
+		"jobs_pending":  pending,
+		"jobs_editable": s.Settings != nil && s.Config.Admin(p.Login) && s.Config.SettingsInApp(),
 	})
 }
 
@@ -396,6 +427,7 @@ type jobView struct {
 	*config.Job
 	Ignored []string `json:"ignored,omitempty"`
 	Problem string   `json:"problem,omitempty"`
+	App     bool     `json:"app"` // made in the app, so it can be changed there
 }
 
 func nonNil[T any](v []T) []T {
@@ -554,6 +586,41 @@ func (s *server) session(w http.ResponseWriter, r *http.Request) {
 		project["kind"], project["look"] = config.KindAssistant, s.Assistants.Get(sess.Project).Look
 	}
 	webutil.WriteJSON(w, http.StatusOK, map[string]any{"session": sess, "project": project})
+}
+
+// chatStyle is how a project's agents name and colour their chats.
+func (s *server) chatStyle(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("p")
+	if !s.known(w, name) {
+		return
+	}
+	st, err := s.Backend.ChatStyle(name)
+	if err != nil {
+		webutil.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"style": st})
+}
+
+// setChatStyle saves it, like a chat's own name and colour: anyone may.
+func (s *server) setChatStyle(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("p")
+	if !s.known(w, name) {
+		return
+	}
+	var in config.ChatStyle
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		webutil.Error(w, http.StatusBadRequest, "bad style: "+err.Error())
+		return
+	}
+	st, err := s.Backend.SetChatStyle(name, in)
+	if err != nil {
+		webutil.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	webutil.WriteJSON(w, http.StatusOK, map[string]any{"style": st})
 }
 
 // editSession renames a session, colours it or sets its goal.

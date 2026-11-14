@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/zaneGittins/skybreaker/internal/control/chat"
+	"github.com/zaneGittins/skybreaker/internal/control/config"
 	"github.com/zaneGittins/skybreaker/internal/control/mcp"
 	"github.com/zaneGittins/skybreaker/internal/control/sandbox"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
@@ -107,6 +108,11 @@ func (a *App) chatOptions(s store.Session) chat.Options {
 // first if need be. A terminal the chat was continued in is closed: one
 // conversation can't have two harnesses writing to it.
 func (a *App) startChat(ctx context.Context, s store.Session, argv []string, env map[string]string) (*chat.Proc, error) {
+	unlock, guardErr := a.beginActivity(s.Project)
+	if guardErr != nil {
+		return nil, guardErr
+	}
+	defer unlock()
 	if err := a.StartSandbox(ctx, s.Project); err != nil {
 		return nil, err
 	}
@@ -376,7 +382,10 @@ func (a *App) chatSession(id string) (store.Session, error) {
 
 // ChatSend sends a chat a message, carrying it on first if it had ended.
 func (a *App) ChatSend(ctx context.Context, id, text string, files ...chat.File) error {
-	return a.chatSend(id, func() error { return a.chat.Send(ctx, id, text, files...) })
+	return a.chatSend(id, func() error {
+		a.styleFirstMessage(id)
+		return a.chat.Send(ctx, id, text, files...)
+	})
 }
 
 // ChatHandback tells a chat you've handed its browser back, on site.
@@ -385,9 +394,15 @@ func (a *App) ChatHandback(ctx context.Context, id, text, site string) error {
 }
 
 func (a *App) chatSend(id string, send func() error) error {
-	if _, err := a.chatSession(id); err != nil {
+	sess, err := a.chatSession(id)
+	if err != nil {
 		return err
 	}
+	unlock, err := a.beginActivity(sess.Project)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	defer a.lockSession(id)()
 	if _, err := a.reopen(id); err != nil {
 		return err
@@ -490,6 +505,11 @@ func (a *App) ChatTerminal(ctx context.Context, id string) (store.Session, error
 	if err != nil {
 		return store.Session{}, err
 	}
+	unlock, guardErr := a.beginActivity(s.Project)
+	if guardErr != nil {
+		return store.Session{}, guardErr
+	}
+	defer unlock()
 	if s.Status != store.StatusRunning {
 		return store.Session{}, errors.New("this session has ended")
 	}
@@ -1020,9 +1040,6 @@ func (a *App) MCPCaller(r *http.Request) (mcp.Caller, error) {
 	return c, nil
 }
 
-// ChatColors are the colours a chat can be given, to tell sessions apart.
-var ChatColors = []string{"sun", "titan", "mars", "aurora", "stormlight", "voidlight", "venus", "comet"}
-
 const (
 	maxTitle = 200
 	maxGoal  = 500
@@ -1047,8 +1064,8 @@ func CheckEdit(e SessionEdit) error {
 			return fmt.Errorf("a title is at most %d characters", maxTitle)
 		}
 	}
-	if e.Color != nil && *e.Color != "" && !slices.Contains(ChatColors, *e.Color) {
-		return fmt.Errorf("colours are %s", strings.Join(ChatColors, ", "))
+	if e.Color != nil && *e.Color != "" && !slices.Contains(config.ChatColors, *e.Color) {
+		return fmt.Errorf("colours are %s", strings.Join(config.ChatColors, ", "))
 	}
 	if e.Goal != nil && utf8.RuneCountInString(strings.TrimSpace(*e.Goal)) > maxGoal {
 		return fmt.Errorf("a goal is at most %d characters", maxGoal)
@@ -1056,7 +1073,8 @@ func CheckEdit(e SessionEdit) error {
 	return nil
 }
 
-// EditSession renames a session, colours it or sets its goal.
+// EditSession renames a session, colours it or sets its goal. A name or
+// colour set here is yours: an agent's name_chat leaves it be.
 func (a *App) EditSession(id string, e SessionEdit) (store.Session, error) {
 	if err := CheckEdit(e); err != nil {
 		return store.Session{}, err
@@ -1066,10 +1084,10 @@ func (a *App) EditSession(id string, e SessionEdit) (store.Session, error) {
 	}
 	err := a.store.UpdateSession(id, func(s *store.Session) {
 		if e.Title != nil {
-			s.Title = strings.TrimSpace(*e.Title)
+			s.Title, s.OwnTitle = strings.TrimSpace(*e.Title), true
 		}
 		if e.Color != nil {
-			s.Color = *e.Color
+			s.Color, s.OwnColor = *e.Color, true
 		}
 		if e.Goal != nil {
 			s.Goal = strings.TrimSpace(*e.Goal)

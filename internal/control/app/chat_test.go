@@ -27,6 +27,7 @@ import (
 type fakeSpawn struct {
 	mu    sync.Mutex
 	argvs [][]string
+	sent  []string // the user messages it was sent, as JSON
 }
 
 func (f *fakeSpawn) spawn(_ context.Context, argv []string) (*chat.Proc, error) {
@@ -42,6 +43,9 @@ func (f *fakeSpawn) spawn(_ context.Context, argv []string) (*chat.Proc, error) 
 			var m map[string]any
 			json.Unmarshal(sc.Bytes(), &m)
 			if m["type"] == "user" {
+				f.mu.Lock()
+				f.sent = append(f.sent, sc.Text())
+				f.mu.Unlock()
 				io.WriteString(outW, `{"type":"system","subtype":"init","session_id":"conv-1","model":"m"}`+"\n")
 				io.WriteString(outW, `{"type":"result","subtype":"success","duration_ms":1}`+"\n")
 			}
