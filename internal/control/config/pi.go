@@ -29,8 +29,56 @@ type PiProvider struct {
 	// Path is where the API is under the route; default /v1, or the
 	// route's root for llama.cpp.
 	Path string `json:"path" yaml:"path"`
-	// Models are the model IDs to offer; a llama.cpp router lists its own.
-	Models []string `json:"models" yaml:"models"`
+	// Models are the models to offer, each an ID or pi's own fields for it;
+	// a llama.cpp router lists its own.
+	Models []PiModel `json:"models" yaml:"models"`
+}
+
+// PiModel is one model a provider offers: its ID, and pi's own settings for
+// it (contextWindow, maxTokens, reasoning, cost, ...), written through to
+// pi's models.json. Settings that would change where a request goes or what
+// credential it carries are the route's, and refused.
+type PiModel struct {
+	ID       string
+	Settings map[string]json.RawMessage
+}
+
+// piRouteFields are the model fields pi lets override its provider's
+// endpoint, protocol or credentials.
+var piRouteFields = []string{"api", "apiKey", "authHeader", "baseUrl", "headers", "provider"}
+
+var piFieldRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{0,63}$`)
+
+// UnmarshalJSON takes a model as an ID or as an object with an "id".
+func (m *PiModel) UnmarshalJSON(b []byte) error {
+	*m = PiModel{}
+	if err := json.Unmarshal(b, &m.ID); err == nil {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil || fields == nil {
+		return errors.New("a model is an ID or an object with an id")
+	}
+	if err := json.Unmarshal(fields["id"], &m.ID); err != nil {
+		return errors.New("a model object needs a string id")
+	}
+	delete(fields, "id")
+	if len(fields) > 0 {
+		m.Settings = fields
+	}
+	return nil
+}
+
+// MarshalJSON writes the model as pi reads it.
+func (m PiModel) MarshalJSON() ([]byte, error) {
+	if len(m.Settings) == 0 {
+		return json.Marshal(map[string]string{"id": m.ID})
+	}
+	out := map[string]json.RawMessage{}
+	maps.Copy(out, m.Settings)
+	id, _ := json.Marshal(m.ID)
+	out["id"] = id
+	return json.Marshal(out)
 }
 
 // LlamaCPP is the API name of a llama.cpp router.
@@ -81,9 +129,22 @@ func (c *Config) validatePi() error {
 		if !piPathRe.MatchString(p.Path) {
 			bad("provider %s: path %q must look like /v1", name, p.Path)
 		}
+		seen := map[string]bool{}
 		for _, m := range p.Models {
-			if !piModelRe.MatchString(m) {
-				bad("provider %s: %q isn't a model ID", name, m)
+			if !piModelRe.MatchString(m.ID) {
+				bad("provider %s: %q isn't a model ID", name, m.ID)
+			}
+			if seen[m.ID] {
+				bad("provider %s: model %s is listed twice", name, m.ID)
+			}
+			seen[m.ID] = true
+			for _, k := range slices.Sorted(maps.Keys(m.Settings)) {
+				switch {
+				case !piFieldRe.MatchString(k):
+					bad("provider %s: model %s: %q isn't a pi model field", name, m.ID, k)
+				case slices.Contains(piRouteFields, k):
+					bad("provider %s: model %s: %s belongs to the route, not the model", name, m.ID, k)
+				}
 			}
 		}
 		if p.API == LlamaCPP {
@@ -124,9 +185,9 @@ func (c *Config) PiConfig(project, token string) ([]byte, map[string]string) {
 		if path == "" {
 			path = "/v1"
 		}
-		models := []map[string]string{}
-		for _, m := range pr.Models {
-			models = append(models, map[string]string{"id": m})
+		models := pr.Models
+		if models == nil {
+			models = []PiModel{}
 		}
 		providers[name] = map[string]any{
 			"baseUrl": broker + pr.Route + path, "api": pr.API, "apiKey": "$SKYBREAKER_TOKEN", "models": models,
