@@ -34,6 +34,7 @@ import (
 	"github.com/zaneGittins/skybreaker/internal/control/scheduler"
 	"github.com/zaneGittins/skybreaker/internal/control/sshkeys"
 	"github.com/zaneGittins/skybreaker/internal/control/store"
+	host "github.com/zaneGittins/skybreaker/internal/control/system"
 	"github.com/zaneGittins/skybreaker/internal/control/terminal"
 	"github.com/zaneGittins/skybreaker/internal/control/usage"
 	"github.com/zaneGittins/skybreaker/internal/notify/webpush"
@@ -151,6 +152,7 @@ type Deps struct {
 	Projects   ProjectAdder      // nil when projects can't be created here
 	SSHKeys    *sshkeys.Store    // nil when SSH into sandboxes is off
 	Settings   Settings          // nil when settings can't be changed here
+	System     System            // nil when host resources are unavailable
 	Usage      Usage             // nil when tokens aren't counted
 	Assistants *assistant.Store  // nil when there are none
 	Browsers   Browsers          // nil when assistants have no browser
@@ -164,10 +166,11 @@ type Deps struct {
 
 type server struct {
 	Deps
-	tints map[string]int
-	ssh   relays
-	gh    ghStates
-	chart chartCache
+	tints       map[string]int
+	ssh         relays
+	gh          ghStates
+	chart       chartCache
+	hostMetrics *host.Sampler
 	// uploads holds a place for each message with attachments being decoded.
 	uploads chan struct{}
 }
@@ -176,13 +179,16 @@ func New(d Deps) (http.Handler, error) {
 	if d.Config == nil || d.Backend == nil || d.Approvals == nil || d.Network == nil || d.Board == nil || d.Runs == nil || d.Store == nil || d.Identifier == nil || d.Static == nil {
 		return nil, errors.New("api: missing dependency")
 	}
-	s := &server{Deps: d, tints: map[string]int{}, uploads: make(chan struct{}, 2)}
+	s := &server{hostMetrics: host.New(d.Config.DataDir), Deps: d, tints: map[string]int{}, uploads: make(chan struct{}, 2)}
 	for i, name := range slices.Sorted(maps.Keys(d.Config.Projects)) {
 		s.tints[name] = i % 8
 	}
 	m := http.NewServeMux()
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	m.HandleFunc("GET /api/meta", s.meta)
+	m.HandleFunc("GET /api/system", s.systemStatus)
+	m.HandleFunc("GET /api/projects/{p}/storage", s.projectStorage)
+	m.HandleFunc("POST /api/projects/{p}/cleanup", s.cleanStorage)
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("GET /api/projects", s.projects)
 	m.HandleFunc("POST /api/projects", s.createProject)
@@ -261,7 +267,7 @@ func fail(w http.ResponseWriter, err error) {
 		webutil.Error(w, http.StatusConflict, "this request was already decided or has expired")
 	case errors.Is(err, app.ErrNoRepo):
 		webutil.Error(w, http.StatusConflict, err.Error())
-	case errors.Is(err, app.ErrBusy), errors.Is(err, app.ErrWorkspaceFull):
+	case errors.Is(err, app.ErrMaintenance), errors.Is(err, app.ErrBusy), errors.Is(err, app.ErrWorkspaceFull):
 		webutil.Error(w, http.StatusConflict, err.Error())
 	default:
 		webutil.Error(w, http.StatusInternalServerError, err.Error())

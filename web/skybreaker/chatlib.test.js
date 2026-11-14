@@ -577,6 +577,21 @@ test('runningAgents: subagents at work, past the turn that started them', () => 
   assert.equal(sessionTone({ mode: 'chat', status: 'running', state: 'working', note: '2 agents working' }).label, '2 agents working');
 });
 
+test('runningCommands: commands left running in the background', () => {
+  const { runningCommands } = require('./chatlib.js');
+  const c = newChat();
+  const tool = (seq, id, t) => foldChat(c, { seq, kind: 'tool', id, tool: { kind: 'command', status: 'running', ...t } });
+  foldChat(c, { seq: 1, kind: 'turn', turn: { state: 'working' } });
+  tool(2, 'b1', { title: 'make test' });
+  tool(3, 'f1', { title: 'ls' });
+  tool(4, 'b1', { title: 'make test', background: true });
+  tool(5, 'f1', { title: 'ls', status: 'done' });
+  foldChat(c, { seq: 6, kind: 'turn', turn: { state: 'done' } });
+  assert.deepEqual(runningCommands(c).map(x => x.id), ['b1']);
+  tool(7, 'b1', { title: 'make test', background: true, status: 'done' });
+  assert.deepEqual(runningCommands(c), []);
+});
+
 test('modelName: model IDs the way people say them', () => {
   const { modelName } = require('./chatlib.js');
   assert.equal(modelName('claude-opus-5-5'), 'Opus 5.5');

@@ -142,6 +142,7 @@ function busy() {
 const refresh = debounce(() => {
   // A chat streams on its own, and so does a browser; one you've taken over
   // must not be closed and handed back by a redraw.
+  if (state.route?.name === 'settings' && state.route.section === 'system') return;
   if (!state.route || state.route.name === 'session' || state.route.name === 'thread' || state.route.tab === 'browser' || state.route.tab === 'takeover') return;
   // An open sheet that can redraw itself does, so what you answer there
   // leaves it; the page waits until the sheet closes.
@@ -184,6 +185,7 @@ async function renderHome(seq) {
   const rail = use ? [limitsCard(use.limits), tokensCard(use.hours)].filter(Boolean) : [];
   $('#app').replaceChildren(el('div.page.home', null,
     el('header.home-head', null, el('h1', null, asstGreeting()), el('p', null, summary)),
+    systemSummary(true),
     d.projects.length ? null : homeWelcome(),
     el('div.home-grid', null,
       el('div.home-main', null,
@@ -1805,6 +1807,7 @@ async function boot() {
     state.meta = await api('GET', '/api/meta');
   } catch (e) { toast(e.message, 'error') }
   setupPush();
+  startSystemMonitor();
   activityBadge();
   $('#new-chat').addEventListener('click', startNewChat);
   addEventListener('keydown', e => {

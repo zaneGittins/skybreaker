@@ -32,7 +32,7 @@ func TestPiConfig(t *testing.T) {
 		}
 	}
 	write(etc, "mcp.json", `{"mcpServers":{"skybreaker":{"type":"http","url":"http://broker:7701/mcp/orbit/tok/-"}}}`)
-	write(etc, "pi-models.json", `{"providers":{"ollama":{"baseUrl":"http://broker:8080/ollama/v1","api":"openai-completions","apiKey":"$SKYBREAKER_TOKEN","models":[{"id":"qwen3-coder:30b"}]}}}`)
+	write(etc, "pi-models.json", `{"providers":{"ollama":{"baseUrl":"http://broker:8080/ollama/v1","api":"openai-completions","apiKey":"$SKYBREAKER_TOKEN","models":[{"id":"qwen3-coder:30b","contextWindow":32768,"reasoning":true}]}}}`)
 	write(agent, "models.json", `{"providers":{"mine":{"baseUrl":"https://x.example/v1","api":"openai-completions","models":[{"id":"m"}]}}}`)
 	write(agent, "mcp.json", `{"mcpServers":{"docs":{"url":"https://docs.example/mcp"}}}`)
 	run()
@@ -40,6 +40,10 @@ func TestPiConfig(t *testing.T) {
 	providers := read("models.json")["providers"].(map[string]any)
 	if providers["ollama"] == nil || providers["mine"] == nil {
 		t.Fatalf("providers %v", providers)
+	}
+	// A model's own settings come through whole.
+	if m := providers["ollama"].(map[string]any)["models"].([]any)[0].(map[string]any); m["contextWindow"] != 32768.0 || m["reasoning"] != true {
+		t.Fatalf("model settings %v", m)
 	}
 	servers := read("mcp.json")["mcpServers"].(map[string]any)
 	if servers["skybreaker"] == nil || servers["docs"] == nil {

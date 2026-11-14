@@ -456,9 +456,9 @@ func (m *Manager) read(r *run, gen int, p *Proc, exited chan struct{}) {
 	for id := range r.asks {
 		m.emit(r, Event{Kind: KindAnswered, ID: id, Text: "withdrawn"})
 	}
-	// Tool calls die with the harness, subagents with them. Their cards
+	// Tool calls die with the harness, background ones with them. Their cards
 	// end before the turn does, out of r.tools, so they don't settle it.
-	open, agents := r.tools, r.agents()
+	open, agents := r.tools, r.behind()
 	r.tools = map[string]Tool{}
 	for id, t := range open {
 		t.Status = StatusFailed
@@ -470,7 +470,7 @@ func (m *Manager) read(r *run, gen int, p *Proc, exited chan struct{}) {
 	if !r.working && agents > 0 && r.stopping {
 		m.settle(r, true)
 	}
-	// Subagents that were still working died with it, turn or no turn.
+	// Background work that was still running died with it, turn or no turn.
 	if r.working || agents > 0 && !r.stopping {
 		if r.stopping {
 			m.emit(r, Event{Kind: KindTurn, Turn: &Turn{State: TurnInterrupted}})
@@ -552,7 +552,7 @@ func (m *Manager) emit(r *run, e Event) {
 				m.setState(r, store.ChatFailed, firstLine(e.Turn.Error), nil)
 				// Subagents still at work keep it working; the failure
 				// has been told.
-				if r.agents() > 0 {
+				if r.behind() > 0 {
 					m.settle(r, true)
 				}
 			}
@@ -561,13 +561,13 @@ func (m *Manager) emit(r *run, e Event) {
 			m.settle(r, true)
 		}
 	case KindTool:
-		before := r.agents()
+		before := r.behind()
 		if e.Tool.Status == StatusRunning {
 			r.tools[e.ID] = *e.Tool
 		} else {
 			delete(r.tools, e.ID)
 		}
-		if r.agents() != before && !r.working && len(r.asks) == 0 && !r.login {
+		if r.behind() != before && !r.working && len(r.asks) == 0 && !r.login {
 			m.settle(r, false)
 		}
 	case KindLogin:
@@ -607,32 +607,56 @@ func (m *Manager) emit(r *run, e Event) {
 	}
 }
 
-// agents counts the subagents still running. Callers hold r.mu.
-func (r *run) agents() int {
-	n := 0
+// background counts the subagents and background commands still running.
+// Callers hold r.mu.
+func (r *run) background() (agents, commands int) {
 	for _, t := range r.tools {
-		if t.Kind == ToolAgent {
-			n++
+		switch {
+		case t.Kind == ToolAgent:
+			agents++
+		case t.Background && t.Parent == "":
+			commands++
 		}
 	}
-	return n
+	return agents, commands
+}
+
+// behind is how many calls run on past their turn. Callers hold r.mu.
+func (r *run) behind() int {
+	a, c := r.background()
+	return a + c
 }
 
 // settle sets the state of a session whose turn isn't running: working
-// while its subagents are, else idle. Only a turn's end replaces a failed
-// turn's state. Callers hold r.mu.
+// while its subagents or background commands are, else idle. Only a turn's
+// end replaces a failed turn's state. Callers hold r.mu.
 func (m *Manager) settle(r *run, turnEnded bool) {
 	if s, _ := m.c.Sessions.Session(r.id); s.State == store.ChatFailed && !turnEnded {
 		return
 	}
-	switch n := r.agents(); {
-	case n == 1:
-		m.setState(r, store.ChatWorking, "1 agent working", nil)
-	case n > 1:
-		m.setState(r, store.ChatWorking, strconv.Itoa(n)+" agents working", nil)
-	default:
+	if a, c := r.background(); a+c > 0 {
+		m.setState(r, store.ChatWorking, backgroundNote(a, c), nil)
+	} else {
 		m.setState(r, store.ChatIdle, "", nil)
 	}
+}
+
+// backgroundNote says what runs on between turns, as in "1 agent, 2
+// commands running".
+func backgroundNote(agents, commands int) string {
+	count := func(n int, what string) string {
+		if n == 1 {
+			return "1 " + what
+		}
+		return strconv.Itoa(n) + " " + what + "s"
+	}
+	switch {
+	case commands == 0:
+		return count(agents, "agent") + " working"
+	case agents == 0:
+		return count(commands, "command") + " running"
+	}
+	return count(agents, "agent") + ", " + count(commands, "command") + " running"
 }
 
 // setState records a session's state (empty keeps it) and tells OnChange.
@@ -1072,7 +1096,7 @@ func (m *Manager) Reap(now time.Time) {
 	var idle []string
 	for id, r := range runs {
 		r.mu.Lock()
-		if r.proc != nil && !r.working && len(r.asks) == 0 && r.agents() == 0 && now.Sub(r.used) > m.c.IdleStop {
+		if r.proc != nil && !r.working && len(r.asks) == 0 && r.behind() == 0 && now.Sub(r.used) > m.c.IdleStop {
 			idle = append(idle, id)
 		}
 		r.mu.Unlock()

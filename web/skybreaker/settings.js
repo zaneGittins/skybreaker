@@ -21,6 +21,7 @@ const oneLine = s => String(s || '').split('\n').map(x => x.trim()).find(Boolean
 // The sections, in two groups: what agents read, and what they reach. Each
 // says in a few words where it stands, for the index on a phone.
 const SETTINGS = [
+  ['Server', [{ id: 'system', label: 'System', icon: 'bolt', sum: () => 'Resources and cache cleanup' }]],
   ['Agents', [
     { id: 'instructions', label: 'Instructions', icon: 'file', sum: c => oneLine(c.ins?.text) || 'None yet' },
     { id: 'prompts', label: 'Prompts', icon: 'prompt', n: c => c.pr?.prompts.length, sum: c => c.pr?.prompts.length ? plural(c.pr.prompts.length, 'prompt') : 'None yet' },
@@ -57,7 +58,7 @@ async function renderSettings(seq, r = { section: null }) {
   const section = r.section || 'instructions';
   const body = r.item !== undefined
     ? (section === 'bundles' ? bundlePage(c, r.item) : accessPage(c, r.item))
-    : { instructions: instructionsSection, prompts: promptsSection, rules: rulesSection, modes: modesSection, github: githubSection, secrets: secretsSection, bundles: bundlesSection, access: accessSection }[section](c);
+    : { instructions: instructionsSection, prompts: promptsSection, rules: rulesSection, modes: modesSection, github: githubSection, secrets: secretsSection, bundles: bundlesSection, access: accessSection, system: () => systemSection(c, projects) }[section](c);
   // On a phone a section is its own page, back to the index; an item, back
   // to its section.
   const label = s => SETTINGS.flatMap(([, x]) => x).find(x => x.id === s)?.label;
@@ -70,7 +71,7 @@ async function renderSettings(seq, r = { section: null }) {
   ].filter(Boolean);
   $('#app').replaceChildren(el('div.wrap.settings' + (r.section ? '' : '.set-index'), null,
     el('section.inbox-head.set-head', null, el('div', null, el('h1', null, 'Settings'),
-      el('p', null, 'What your agents read, and what they can reach with which credentials. Your config file is the base, shown read-only; what you change here adds to it.'))),
+      el('p', null, 'Your server, what agents read, and what they can reach. Your config file is the base, shown read-only; what you change here adds to it.'))),
     banners.length ? el('div.set-banners', null, banners) : null,
     el('div.set-layout', null, settingsNav(c, section, r.section),
       el('div.set-content', null, back, body))));

@@ -156,7 +156,7 @@ func (s *server) decodeSend(w http.ResponseWriter, r *http.Request, v any) bool 
 // chatFail maps a chat error: unknown sessions are 404, anything else the
 // user can act on is 400.
 func chatFail(w http.ResponseWriter, err error) {
-	if errors.Is(err, app.ErrBusy) {
+	if errors.Is(err, app.ErrBusy) || errors.Is(err, app.ErrMaintenance) {
 		fail(w, err)
 		return
 	}

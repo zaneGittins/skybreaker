@@ -188,6 +188,16 @@ capabilities:
       rules:
         - { match: "* /**", action: auto }
 
+  # A hosted, OpenAI-compatible model API for pi (DigitalOcean's serverless
+  # inference). The broker adds the key; the sandbox never has it.
+  do-inference:
+    - route: /do-ai                     # pi reaches it as http://broker:8080/do-ai
+      upstream: https://inference.do-ai.run
+      inject: { bearer: do_inference }
+      rules:
+        - { match: "POST /v1/chat/completions", action: auto }
+        - { match: "GET /v1/models", action: auto }
+
 # pi in a sandbox whose project has the route is told about each server
 # (in its models.json, keyed by the sandbox's broker token, so no secret).
 pi:
@@ -196,6 +206,17 @@ pi:
       route: /llm
       api: openai-completions           # Ollama, vLLM, LM Studio; llama.cpp for a llama.cpp router
       models: [qwen3-coder:30b]         # a llama.cpp router lists its own
+    digitalocean:
+      route: /do-ai
+      api: openai-completions
+      models:
+        # A model is an ID, or pi's own fields for it (contextWindow,
+        # maxTokens, reasoning, cost, ...). baseUrl, apiKey and headers are
+        # the route's.
+        - id: deepseek-v4.1-flash
+          contextWindow: 1048576
+          maxTokens: 65536
+          cost: { input: 0.30, output: 1.20, cacheRead: 0.30, cacheWrite: 0 }
 
 # Harnesses are built in: claude, codex, pi, and shell (a plain terminal
 # every project gets). Override one here if you need to:

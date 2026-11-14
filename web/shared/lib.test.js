@@ -20,6 +20,8 @@ test('route', () => {
   assert.deepEqual(route('/r/r20261017020000abcd'), { name: 'run', id: 'r20261017020000abcd' });
   assert.deepEqual(route('/activity'), { name: 'activity' });
   assert.deepEqual(route('/settings'), { name: 'settings' });
+  assert.deepEqual(route('/settings/system'), { name: 'settings', section: 'system' });
+  assert.deepEqual(route('/settings/system/project'), { name: 'notfound' });
   assert.deepEqual(route('/settings/prompts'), { name: 'settings', section: 'prompts' });
   assert.deepEqual(route('/settings/bundles/openai'), { name: 'settings', section: 'bundles', item: 'openai' });
   assert.deepEqual(route('/settings/bundles/new'), { name: 'settings', section: 'bundles', item: 'new' });

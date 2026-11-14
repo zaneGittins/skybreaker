@@ -108,3 +108,15 @@ Choose **Review with…** on a chat row or from the chat's menu, inspect the sta
 Review links stay on the implementation chat, including earlier reviews. A reviewer can report Changes requested or Ready to merge. Resuming implementation marks its review outdated, and review results are checked against the source code snapshot before updating its stage. Ready to merge is an agent's assessment; merging remains a human decision.
 
 This follows the fresh-reviewer principle of the [Elephant-Goldfish Model](https://github.com/google/elephant-goldfish-model): the author retains context and produces a standalone artifact; the reviewer examines it independently. This code-review handoff does not implement EGM's complete specification-design workflow. Context separation controls what Skybreaker supplies and instructs the reviewer to read; it is not a separate filesystem or network security boundary.
+
+## Server resources and cleanup
+
+Admins can open **Settings → System** to see host CPU, memory and disk usage. A small summary also appears in the desktop sidebar and on Home on a phone. CPU and memory include all host processes; disk describes the filesystem holding Skybreaker data. Memory usage excludes memory the operating system can make available again.
+
+System scans storage inside running project and assistant sandboxes, with separate totals for Go build cache, Docker, the workspace, worktrees and other home files. Scans are cached for one minute. Stopped sandboxes are not started to measure them, and these totals do not include host Docker images or storage outside the listed directories.
+
+Expand a project and choose **Review cleanup** to select Go build cache, Docker build cache and dangling images. The Docker age is configurable, initially seven days. Docker's total includes volumes and images that may be in use, so it is not a reclaimable-space estimate. Go cache size is an estimate; cleanup reports measured space recovered afterward, including when only part of the cleanup succeeded.
+
+Cleanup requires a running sandbox, no active terminal, SSH connection, setup or scheduled run, and chats quiet for 15 minutes. New agent work is refused while cleanup holds the project. Closing the page does not cancel an accepted cleanup. Workspaces, worktrees, Docker containers and volumes, Go module downloads and agent history are kept. Go cleanup covers the configured build cache inside the sandbox's home directory; caches configured elsewhere are left alone. Builds may take longer afterward.
+
+Cleanup is manual in this version. It follows the app's admin permissions and is disabled when `app_settings: false`.

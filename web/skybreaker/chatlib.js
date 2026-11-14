@@ -847,6 +847,10 @@ function runningAgents(c) {
   return out.sort((a, b) => at(a) - at(b));
 }
 
+// runningCommands lists the commands the agent left running in the
+// background, the oldest first.
+const runningCommands = c => c.items.filter(it => it.type === 'tool' && it.tool.kind !== 'agent' && it.tool.background && it.tool.status === 'running');
+
 // agentActivity says what a subagent is doing: its newest running step.
 function agentActivity(it) {
   const step = [...(it.children || [])].reverse().find(x => x.tool.status === 'running');
@@ -854,7 +858,7 @@ function agentActivity(it) {
   return it.children?.length ? 'Thinking' : 'Starting';
 }
 
-if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, liveGroups, waitingByPlace, dockPlaces, placeKey, resting, closable, openCount, chatGroups, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages, tasksWorking };
+if (typeof module !== 'undefined') module.exports = { signInHost, mdBlocks, mdInline, safeHref, previewURL, parseCommand, commandHints, promptText, CHAT_COLORS, diffFiles, newChat, foldChat, sessionTone, liveGroups, waitingByPlace, dockPlaces, placeKey, resting, closable, openCount, chatGroups, currentModel, currentEffort, effortChoice, effortName, modelLine, modelName, modelLabel, splitTarget, activityLabel, runningAgents, runningCommands, agentActivity, contextUse, fmtTokens, ATTACH, scalable, attachProblem, readProblem, thumbSize, fitSize, fmtSize, composerAction, backTo, shownImages, tasksWorking };
 
 const WORK_STAGES = { implementing: 'Implementing', ready_for_review: 'Ready for review', reviewing: 'Reviewing', changes_requested: 'Changes requested', ready_to_merge: 'Ready to merge', finished: 'Finished', abandoned: 'Abandoned' };
 function workStage(s) {
