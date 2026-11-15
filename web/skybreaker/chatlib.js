@@ -878,3 +878,32 @@ function workGroup(s) {
  return 'other';
 }
 if (typeof module !== 'undefined') Object.assign(module.exports, {workStage,workGroup});
+
+// runTone is a scheduled run's state, as a chat row shows one.
+function runTone(r) {
+  switch (r.status) {
+    case 'running': return { tone: 'work', label: 'Running' };
+    case 'ok': return { tone: 'idle', label: 'Done' };
+    case 'failed': return { tone: 'bad', label: 'Failed' };
+    case 'timeout': return { tone: 'bad', label: 'Timed out' };
+  }
+  return { tone: 'ended', label: String(r.status || '') };
+}
+
+// chatWindow is which of a chat's items are drawn: the last keep of them
+// when it opens, keep more each time you scroll near the top. A long
+// conversation then opens at once, and holds only what you've looked at.
+function chatWindow(keep) {
+  return {
+    start: total => Math.max(0, total - keep),
+    // older is the range to draw before start, or null at the first item.
+    older: start => start > 0 ? [Math.max(0, start - keep), start] : null,
+    // restart is whether to draw only the last keep items afresh: for a
+    // burst bigger than that (a long replay), or, back at the bottom, when
+    // reading far up left over three times that drawn. Items from drawn
+    // to total are drawn; pending more are to come.
+    restart: ({ drawn, total, pending, atBottom }) =>
+      atBottom && (pending > keep || total - drawn > 3 * keep),
+  };
+}
+if (typeof module !== 'undefined') Object.assign(module.exports, { runTone, chatWindow });

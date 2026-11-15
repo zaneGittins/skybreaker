@@ -746,3 +746,33 @@ test('workflow groups keep PR outcomes separate from agent activity', () => {
  assert.equal(workStage({workflow:'ready_to_merge',review_stale:true}).label, 'Review outdated');
  assert.equal(workStage({workflow:'ready_to_merge'}).label, 'Ready to merge');
 });
+
+const { runTone, chatWindow } = require('./chatlib.js');
+
+test('runTone: a scheduled run in a chat list reads like a chat', () => {
+  assert.deepEqual(runTone({ status: 'running' }), { tone: 'work', label: 'Running' });
+  assert.deepEqual(runTone({ status: 'ok' }), { tone: 'idle', label: 'Done' });
+  assert.deepEqual(runTone({ status: 'failed' }), { tone: 'bad', label: 'Failed' });
+  assert.deepEqual(runTone({ status: 'timeout' }), { tone: 'bad', label: 'Timed out' });
+  assert.deepEqual(runTone({ status: 'odd' }), { tone: 'ended', label: 'odd' });
+});
+
+test('chatWindow: a long chat draws its last items, older ones as you scroll up', () => {
+  const w = chatWindow(80);
+  // Opening draws the last 80 of 1,000.
+  assert.equal(w.start(1000), 920);
+  assert.equal(w.start(30), 0);
+  // Scrolling up draws the 80 before what's drawn, down to the first.
+  assert.deepEqual(w.older(920), [840, 920]);
+  assert.deepEqual(w.older(50), [0, 50]);
+  assert.equal(w.older(0), null);
+  // New items draw one by one, but a burst bigger than the window (a long
+  // replay) starts over from the end when you're at the bottom.
+  assert.equal(w.restart({ drawn: 920, total: 1000, pending: 5, atBottom: true }), false);
+  assert.equal(w.restart({ drawn: 0, total: 0, pending: 1000, atBottom: true }), true);
+  assert.equal(w.restart({ drawn: 0, total: 0, pending: 1000, atBottom: false }), false);
+  // Back at the bottom after reading far up, what's drawn is cut back.
+  assert.equal(w.restart({ drawn: 100, total: 1000, pending: 0, atBottom: true }), true);
+  assert.equal(w.restart({ drawn: 100, total: 1000, pending: 0, atBottom: false }), false);
+  assert.equal(w.restart({ drawn: 800, total: 1000, pending: 0, atBottom: true }), false);
+});
