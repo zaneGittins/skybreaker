@@ -100,3 +100,45 @@ func TestPiWrapperInstructions(t *testing.T) {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
+
+// pi gives up on a model server after a few short retries; a quota that
+// refills by the minute needs longer. pi-config.mjs sets longer ones,
+// unless pi's settings already say, and keeps Skybreaker's fallback lists
+// out of pi's models.json, where pi would take them for its own.
+func TestPiConfigRetriesAndFallbacks(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	etc, agent := t.TempDir(), t.TempDir()
+	run := func() {
+		t.Helper()
+		cmd := exec.Command("node", "pi-config.mjs")
+		cmd.Env = append(os.Environ(), "SKYBREAKER_ETC="+etc, "PI_CODING_AGENT_DIR="+agent)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+	}
+	read := func(name string) map[string]any {
+		var v map[string]any
+		b, _ := os.ReadFile(filepath.Join(agent, name))
+		json.Unmarshal(b, &v)
+		return v
+	}
+	os.WriteFile(filepath.Join(etc, "pi-models.json"), []byte(`{"providers":{"do":{"baseUrl":"http://broker:8080/do/v1","api":"openai-completions","apiKey":"$SKYBREAKER_TOKEN","models":[{"id":"a"},{"id":"b"}]}},"fallbacks":{"do":["a","b"]}}`), 0o644)
+	os.WriteFile(filepath.Join(agent, "settings.json"), []byte(`{"theme":"dark"}`), 0o644)
+	run()
+	if m := read("models.json"); m["fallbacks"] != nil || m["providers"] == nil {
+		t.Fatalf("models.json %v", m)
+	}
+	s := read("settings.json")
+	retry, _ := s["retry"].(map[string]any)
+	if s["theme"] != "dark" || retry["maxRetries"] != 8.0 || retry["maxAgentDelayMs"] != 120000.0 {
+		t.Fatalf("settings %v", s)
+	}
+	// What's set stays.
+	os.WriteFile(filepath.Join(agent, "settings.json"), []byte(`{"retry":{"maxRetries":2}}`), 0o644)
+	run()
+	if retry, _ := read("settings.json")["retry"].(map[string]any); retry["maxRetries"] != 2.0 || retry["maxAgentDelayMs"] != 120000.0 {
+		t.Fatalf("own retries %v", retry)
+	}
+}

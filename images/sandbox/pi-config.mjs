@@ -1,6 +1,7 @@
 // Puts what Skybreaker provides into pi's own config before pi starts: its
-// MCP server (the board, show and preview tools), and the model servers
-// behind broker routes from /etc/skybreaker/pi-models.json. Providers it
+// MCP server (the board, show and preview tools), the model servers behind
+// broker routes from /etc/skybreaker/pi-models.json (its providers only:
+// its fallbacks are pi-fallback.mjs's), and longer retries. Providers it
 // added before are replaced; anything else in pi's config is left alone.
 // Usage: node pi-config.mjs [--skybreaker-mcp <mcp.json>]
 import fs from 'node:fs';
@@ -49,4 +50,16 @@ if (before.length || Object.keys(given).length) {
   models.providers = providers;
   write(f, models);
   write(noteFile, Object.keys(given));
+}
+
+// Retries: pi's own give up within a minute or so, and a model server's
+// quota can take longer than that to refill. Longer ones, unless pi's
+// settings already say.
+const settingsFile = path.join(agent, 'settings.json');
+const settings = object(read(settingsFile));
+const retry = object(settings.retry);
+const longer = { maxRetries: 8, maxAgentDelayMs: 120000 };
+if (Object.keys(longer).some(k => !(k in retry))) {
+  settings.retry = { ...longer, ...retry };
+  write(settingsFile, settings);
 }

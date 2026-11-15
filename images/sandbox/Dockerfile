@@ -86,6 +86,7 @@ COPY sshd-env.sh /usr/local/sbin/skybreaker-sshd-env
 # pi, with Skybreaker's MCP server and model servers merged into its config.
 COPY skybreaker-pi.sh /usr/local/bin/skybreaker-pi
 COPY pi-config.mjs /usr/local/lib/skybreaker/pi-config.mjs
+COPY pi-lost-arguments.mjs pi-fallback.mjs /usr/local/lib/skybreaker/pi-extensions/
 RUN chmod 755 /usr/local/bin/skybreaker-entrypoint /usr/local/bin/skybreaker-check-protocols /usr/local/sbin/runc \
       /usr/local/sbin/skybreaker-authorized-keys /usr/local/sbin/skybreaker-sshd-env /usr/local/bin/skybreaker-pi
 

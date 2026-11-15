@@ -32,7 +32,14 @@ type PiProvider struct {
 	// Models are the models to offer, each an ID or pi's own fields for it;
 	// a llama.cpp router lists its own.
 	Models []PiModel `json:"models" yaml:"models"`
+	// Fallback, when set, is the order pi tries some of those models in,
+	// as one model, <provider>/auto: when one is out of quota, the next
+	// answers.
+	Fallback []string `json:"fallback,omitempty" yaml:"fallback,omitempty"`
 }
+
+// PiAuto is the ID of a provider's model that falls back through its list.
+const PiAuto = "auto"
 
 // PiModel is one model a provider offers: its ID, and pi's own settings for
 // it (contextWindow, maxTokens, reasoning, cost, ...), written through to
@@ -147,6 +154,24 @@ func (c *Config) validatePi() error {
 				}
 			}
 		}
+		if p.Fallback != nil {
+			switch {
+			case seen[PiAuto]:
+				bad("provider %s: a model named %s hides the fallback model %s/%s", name, PiAuto, name, PiAuto)
+			case len(p.Fallback) < 2:
+				bad("provider %s: fallback lists the models to try in order, at least two", name)
+			}
+			used := map[string]bool{}
+			for _, id := range p.Fallback {
+				switch {
+				case !seen[id]:
+					bad("provider %s: fallback model %q isn't one of its models", name, id)
+				case used[id]:
+					bad("provider %s: fallback lists %s twice", name, id)
+				}
+				used[id] = true
+			}
+		}
 		if p.API == LlamaCPP {
 			if llamas++; llamas > 1 {
 				bad("only one provider can be a llama.cpp router")
@@ -171,6 +196,7 @@ func (c *Config) PiConfig(project, token string) ([]byte, map[string]string) {
 	}
 	broker := "http://broker:" + strconv.Itoa(int(c.Broker.Port))
 	providers := map[string]any{}
+	fallbacks := map[string][]string{}
 	var env map[string]string
 	for _, name := range slices.Sorted(maps.Keys(c.Pi.Providers)) {
 		pr := c.Pi.Providers[name]
@@ -192,10 +218,19 @@ func (c *Config) PiConfig(project, token string) ([]byte, map[string]string) {
 		providers[name] = map[string]any{
 			"baseUrl": broker + pr.Route + path, "api": pr.API, "apiKey": "$SKYBREAKER_TOKEN", "models": models,
 		}
+		if len(pr.Fallback) > 0 {
+			fallbacks[name] = pr.Fallback
+		}
 	}
 	if len(providers) == 0 {
 		return nil, env
 	}
-	b, _ := json.MarshalIndent(map[string]any{"providers": providers}, "", "  ")
+	// Fallbacks go beside pi's providers, for skybreaker-pi's extension:
+	// pi-config.mjs passes pi the providers only.
+	out := map[string]any{"providers": providers}
+	if len(fallbacks) > 0 {
+		out["fallbacks"] = fallbacks
+	}
+	b, _ := json.MarshalIndent(out, "", "  ")
 	return append(b, '\n'), env
 }
