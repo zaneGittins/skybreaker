@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,11 @@ const (
 	defaultAPIBase = "https://api.github.com"
 	// Refresh this long before expiry so a token never lapses mid-push.
 	refreshBefore = 5 * time.Minute
+	// maxBody bounds a response: a page of 100 pull requests runs to about
+	// a megabyte.
+	maxBody = 4 << 20
+	// maxETags bounds the reads kept for revalidation.
+	maxETags = 256
 )
 
 // ParseKey reads an App private key in PKCS#1 (GitHub's download format) or
@@ -69,6 +75,16 @@ type App struct {
 	mu      sync.Mutex
 	repos   map[string]*repoEntry
 	account string // the configured installation's owner, once looked up
+
+	// etags are Get's last answers by path, sent back as If-None-Match:
+	// GitHub doesn't count a 304 against the rate limit.
+	etagMu sync.Mutex
+	etags  map[string]etagged
+}
+
+type etagged struct {
+	etag string
+	body []byte
 }
 
 // repoEntry serialises minting per repo, so concurrent pushes share a token.
@@ -177,10 +193,33 @@ type StatusError struct {
 	Method, Path string
 	Status       int
 	Message      string
+
+	limited bool
+	retryAt time.Time
 }
 
 func (e *StatusError) Error() string {
 	return fmt.Sprintf("githubapp: %s %s: status %d: %s", e.Method, e.Path, e.Status, e.Message)
+}
+
+// RateLimited reports whether GitHub refused for its rate limit, and when it
+// says to try again (zero when it didn't say).
+func (e *StatusError) RateLimited() (time.Time, bool) { return e.retryAt, e.limited }
+
+// rateLimit reads a refusal's rate-limit headers: a 429, or a 403 with no
+// requests left, a Retry-After or a message that says so.
+func (e *StatusError) rateLimit(h http.Header, now time.Time) {
+	retry := h.Get("Retry-After")
+	e.limited = e.Status == http.StatusTooManyRequests || e.Status == http.StatusForbidden &&
+		(h.Get("X-RateLimit-Remaining") == "0" || retry != "" || strings.Contains(strings.ToLower(e.Message), "rate limit"))
+	if !e.limited {
+		return
+	}
+	if s, err := strconv.Atoi(retry); err == nil && s >= 0 {
+		e.retryAt = now.Add(time.Duration(s) * time.Second)
+	} else if r, err := strconv.ParseInt(h.Get("X-RateLimit-Reset"), 10, 64); err == nil && r > 0 {
+		e.retryAt = time.Unix(r, 0)
+	}
 }
 
 // Installed reports whether the App is installed on repo ("owner/name").
@@ -279,7 +318,37 @@ func (a *App) Get(ctx context.Context, repo, path string, out any) error {
 	if err != nil {
 		return err
 	}
-	return a.do(ctx, http.MethodGet, "/repos/"+repo+path, tok, nil, http.StatusOK, out)
+	path = "/repos/" + repo + path
+	a.etagMu.Lock()
+	cached := a.etags[path]
+	a.etagMu.Unlock()
+	resp, b, err := a.send(ctx, http.MethodGet, path, tok, nil, cached.etag)
+	if err != nil {
+		return err
+	}
+	switch {
+	case resp.StatusCode == http.StatusNotModified && cached.etag != "":
+		b = cached.body
+	case resp.StatusCode != http.StatusOK:
+		return a.statusError(http.MethodGet, path, resp, b)
+	case resp.Header.Get("ETag") != "":
+		a.etagMu.Lock()
+		if a.etags == nil {
+			a.etags = map[string]etagged{}
+		}
+		if _, ok := a.etags[path]; !ok && len(a.etags) >= maxETags {
+			for k := range a.etags {
+				delete(a.etags, k)
+				break
+			}
+		}
+		a.etags[path] = etagged{resp.Header.Get("ETag"), b}
+		a.etagMu.Unlock()
+	}
+	if err := json.Unmarshal(b, out); err != nil {
+		return fmt.Errorf("githubapp: GET %s: %w", path, err)
+	}
+	return nil
 }
 
 func (a *App) call(ctx context.Context, method, path string, in any, want int, out any) error {
@@ -292,11 +361,37 @@ func (a *App) call(ctx context.Context, method, path string, in any, want int, o
 
 // do makes one request to the API with bearer auth.
 func (a *App) do(ctx context.Context, method, path, auth string, in any, want int, out any) error {
+	resp, b, err := a.send(ctx, method, path, auth, in, "")
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != want {
+		return a.statusError(method, path, resp, b)
+	}
+	if err := json.Unmarshal(b, out); err != nil {
+		return fmt.Errorf("githubapp: %s %s: %w", method, path, err)
+	}
+	return nil
+}
+
+func (a *App) statusError(method, path string, resp *http.Response, b []byte) error {
+	var e struct {
+		Message string `json:"message"`
+	}
+	json.Unmarshal(b, &e)
+	se := &StatusError{Method: method, Path: path, Status: resp.StatusCode, Message: e.Message}
+	se.rateLimit(resp.Header, a.now())
+	return se
+}
+
+// send makes one request, revalidating etag when it's set, and reads the
+// response's body.
+func (a *App) send(ctx context.Context, method, path, auth string, in any, etag string) (*http.Response, []byte, error) {
 	var rd io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		rd = bytes.NewReader(b)
 	}
@@ -306,7 +401,7 @@ func (a *App) do(ctx context.Context, method, path, auth string, in any, want in
 	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimSuffix(base, "/")+path, rd)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -314,28 +409,21 @@ func (a *App) do(ctx context.Context, method, path, auth string, in any, want in
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
 	client := a.HTTP
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("githubapp: %s %s: %w", method, path, err)
+		return nil, nil, fmt.Errorf("githubapp: %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 	if err != nil {
-		return fmt.Errorf("githubapp: %s %s: %w", method, path, err)
+		return nil, nil, fmt.Errorf("githubapp: %s %s: %w", method, path, err)
 	}
-	if resp.StatusCode != want {
-		var e struct {
-			Message string `json:"message"`
-		}
-		json.Unmarshal(b, &e)
-		return &StatusError{Method: method, Path: path, Status: resp.StatusCode, Message: e.Message}
-	}
-	if err := json.Unmarshal(b, out); err != nil {
-		return fmt.Errorf("githubapp: %s %s: %w", method, path, err)
-	}
-	return nil
+	return resp, b, nil
 }
