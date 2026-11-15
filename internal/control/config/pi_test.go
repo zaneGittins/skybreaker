@@ -107,3 +107,51 @@ func TestPiConfigInvalid(t *testing.T) {
 		}
 	}
 }
+
+// A provider's fallback is the order a sandbox's pi tries its models in
+// when one is out of quota. It goes beside pi's providers, for Skybreaker's
+// extension, never into them, where pi would take it for its own setting.
+func TestPiConfigFallback(t *testing.T) {
+	c, err := load(t, strings.Replace(piConfig, `"api": "openai-completions", "models"`, `"api": "openai-completions", "fallback": ["glm-4.7", "qwen3-coder:30b"], "models"`, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := c.PiConfig("orbit", "t")
+	var m struct {
+		Providers map[string]map[string]any `json:"providers"`
+		Fallbacks map[string][]string       `json:"fallbacks"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("%s: %v", b, err)
+	}
+	if got := m.Fallbacks["ollama"]; len(got) != 2 || got[0] != "glm-4.7" || got[1] != "qwen3-coder:30b" {
+		t.Fatalf("fallbacks %v", m.Fallbacks)
+	}
+	if _, ok := m.Providers["ollama"]["fallback"]; ok {
+		t.Fatal("fallback went into pi's provider")
+	}
+	// Without one, there's nothing to say.
+	c, _ = load(t, piConfig)
+	if b, _ := c.PiConfig("orbit", "t"); strings.Contains(string(b), "fallbacks") {
+		t.Fatalf("fallbacks without any: %s", b)
+	}
+}
+
+func TestPiConfigFallbackInvalid(t *testing.T) {
+	for name, fallback := range map[string]string{
+		"one model":      `["glm-4.7"]`,
+		"unlisted model": `["glm-4.7", "gpt-9"]`,
+		"twice":          `["glm-4.7", "glm-4.7"]`,
+		"not a list":     `"glm-4.7"`,
+	} {
+		cfg := strings.Replace(piConfig, `"api": "openai-completions", "models"`, `"api": "openai-completions", "fallback": `+fallback+`, "models"`, 1)
+		if _, err := load(t, cfg); err == nil {
+			t.Errorf("%s: loaded", name)
+		}
+	}
+	// The virtual model is <provider>/auto, so a real model can't be "auto".
+	cfg := strings.Replace(piConfig, `"api": "openai-completions", "models": ["qwen3-coder:30b"`, `"api": "openai-completions", "fallback": ["auto", "qwen3-coder:30b"], "models": ["auto", "qwen3-coder:30b"`, 1)
+	if _, err := load(t, cfg); err == nil {
+		t.Error("a model named auto with a fallback: loaded")
+	}
+}

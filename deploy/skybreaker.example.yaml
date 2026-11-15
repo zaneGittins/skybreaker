@@ -209,14 +209,43 @@ pi:
     digitalocean:
       route: /do-ai
       api: openai-completions
+      # DigitalOcean caps each model's tokens a day (cached ones count). pi
+      # offers digitalocean/auto, which moves to the next of these when one
+      # is out.
+      fallback: [deepseek-v4.1-flash, deepseek-v4.1-flash-1017]
       models:
         # A model is an ID, or pi's own fields for it (contextWindow,
         # maxTokens, reasoning, cost, ...). baseUrl, apiKey and headers are
         # the route's.
         - id: deepseek-v4.1-flash
-          contextWindow: 1048576
+          # Below the model's 1M, so pi compacts sooner and each request
+          # spends less of the daily cap.
+          contextWindow: 200000
           maxTokens: 65536
-          cost: { input: 0.30, output: 1.20, cacheRead: 0.30, cacheWrite: 0 }
+          reasoning: true
+          # pi's thinking levels as DeepSeek's efforts. medium, pi's default,
+          # runs at high, as DigitalOcean does when a request names none.
+          thinkingLevelMap: { minimal: null, low: low, medium: high, high: high, max: max }
+          cost: { input: 0.30, output: 1.20, cacheRead: 0.006, cacheWrite: 0 }
+          # pi knows DeepSeek's dialect only on DeepSeek's own API.
+          compat:
+            thinkingFormat: deepseek
+            requiresReasoningContentOnAssistantMessages: true
+            supportsDeveloperRole: false
+            supportsStore: false
+            maxTokensField: max_tokens
+        - id: deepseek-v4.1-flash-1017
+          contextWindow: 200000
+          maxTokens: 65536
+          reasoning: true
+          thinkingLevelMap: { minimal: null, low: low, medium: high, high: high, max: max }
+          cost: { input: 0.30, output: 1.20, cacheRead: 0.006, cacheWrite: 0 }
+          compat:
+            thinkingFormat: deepseek
+            requiresReasoningContentOnAssistantMessages: true
+            supportsDeveloperRole: false
+            supportsStore: false
+            maxTokensField: max_tokens
 
 # Harnesses are built in: claude, codex, pi, and shell (a plain terminal
 # every project gets). Override one here if you need to:
