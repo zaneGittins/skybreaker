@@ -693,7 +693,7 @@ function chatsView(p, d, b, live, ended) {
   const waiting = [...(d.requests || []).map(a => requestCard(a, p.tint)), ...d.pending.map(a => approvalCard(a, p.tint))];
   const main = el('div.p-main', null,
     waiting.length ? el('div.approvals', null, waiting) : null,
-    workflowList(p, d.sessions.filter(s => !s.parent && !s.carried_on)),
+    workflowList(p, d.sessions.filter(s => !s.parent && !s.carried_on), d.runs || []),
     upNext(p, b),
     b.history && boardChart(b.history) ? el('section.list-sec.phone-only.p-chart', null, el('div.sec-title', null, el('h2', null, 'Board, last 14 days')), boardChart(b.history)) : null);
   return el('div.p-cols', null, main, el('aside.p-side.desk-only', null, boardSnapshot(p, b)));
@@ -1789,12 +1789,19 @@ function setupSideToggle() {
     btn.setAttribute('aria-expanded', String(!collapsed));
   };
   apply(root.dataset.side === 'collapsed');
-  btn.addEventListener('click', () => {
-    const collapsed = root.dataset.side !== 'collapsed';
+  const set = collapsed => {
+    if (collapsed === (root.dataset.side === 'collapsed')) return;
     prefs.set('side', collapsed ? 'collapsed' : 'open');
     apply(collapsed);
     // A terminal fits itself to the window; the sidebar moved its edge.
     setTimeout(() => dispatchEvent(new Event('resize')), 220);
+  };
+  btn.addEventListener('click', () => set(root.dataset.side !== 'collapsed'));
+  // [ collapses it and ] opens it, when the key isn't someone's typing.
+  addEventListener('keydown', e => {
+    if ((e.key !== '[' && e.key !== ']') || !shortcut(e)) return;
+    e.preventDefault();
+    set(e.key === '[');
   });
 }
 
@@ -1907,22 +1914,41 @@ function agentsSheet(p) {
 }
 
 
-function workflowList(p, sessions) {
+function workflowList(p, sessions, runs = []) {
  const roots = sessions.filter(s => !s.review_of || !sessions.some(x => x.id === s.review_of));
  const group = s => workGroup(s);
- const options = [['all', 'All'], ['review', 'Needs review'], ['working', 'Working'], ['other', 'Other'], ['earlier', 'Earlier']];
+ // Scheduled runs are listed with the chats, to read back like one.
+ const options = [['all', 'All'], ['review', 'Needs review'], ['working', 'Working'], ['other', 'Other'], ['earlier', 'Earlier'], ['scheduled', 'Scheduled']];
+ const count = key => key === 'scheduled' ? runs.length : roots.filter(s => key === 'all' || group(s) === key).length + (key === 'all' ? runs.length : 0);
  const box = el('div.workflow-list'), filters = el('div.workflow-filters', {role:'group', 'aria-label':'Filter chats'}), list = el('div');
  let selected = prefs.get('workflowFilter:' + p.name) || 'all';
  const draw = () => {
-  filters.replaceChildren(...options.map(([key,label]) => el('button' + (key === selected ? '.on' : ''), {type:'button', 'aria-pressed':String(key === selected), onclick:() => {selected=key;prefs.set('workflowFilter:'+p.name,key);draw()}}, label, el('span', null, String(roots.filter(s => key === 'all' || group(s) === key).length)))));
+  filters.replaceChildren(...options.map(([key,label]) => el('button' + (key === selected ? '.on' : ''), {type:'button', 'aria-pressed':String(key === selected), onclick:() => {selected=key;prefs.set('workflowFilter:'+p.name,key);draw()}}, label, el('span', null, String(count(key))))));
   list.replaceChildren(...options.slice(1).filter(([key]) => selected === 'all' || selected === key).map(([key,label]) => {
-   const rows=roots.filter(s => group(s) === key);
+   const rows = key === 'scheduled' ? runs.map(runRow) : roots.filter(s => group(s) === key).map(s => workflowRow(p,s,sessions));
    if (!rows.length) return null;
-   return el('section.list-sec', null, el('div.sec-title',null,el('h2',null,label),el('span.n',null,String(rows.length))),el('div.row-list',null,rows.map(s => workflowRow(p,s,sessions))));
+   return el('section.list-sec', null, el('div.sec-title',null,el('h2',null,label),el('span.n',null,String(rows.length))),el('div.row-list',null,rows));
   }).filter(Boolean));
   if (!list.children.length) list.append(el('p.home-quiet', null, 'No chats in this view.'));
  };
  box.append(filters,list);draw();return box;
+}
+
+// runRow is a scheduled run in a chat list; it opens as a read-only chat.
+function runRow(r) {
+ const t = runTone(r);
+ return el('a.srow.srow-open.tone-' + t.tone, { href: '/r/' + r.id, 'data-link': true },
+  agentMark(r.harness, '.sm'),
+  el('div.who', null,
+   el('div.title', null, r.job),
+   el('div.meta', null,
+    el('span.tone-dot'),
+    el('span.tone-label', null, t.label),
+    el('span.sep', null, '·'),
+    el('span', null, 'Scheduled'),
+    el('span.sep', null, '·'),
+    el('span', null, ago(r.started)))),
+  svg(ICON.chevron, 'chev'));
 }
 
 function workflowRow(p,s,sessions) {
@@ -1938,7 +1964,9 @@ function workflowRow(p,s,sessions) {
  if (s.review_of) more.append(el('a.workflow-link',{href:'/s/'+s.review_of,'data-link':true},'Implementation chat'));
  for (const review of reviews) more.append(el('a.workflow-link',{href:'/s/'+review.id,'data-link':true},harnessLabel(review.harness)+' review · '+(review.id===s.review_id?sessionTone(review).label:'Earlier')));
  if (s.mode === 'chat' && !s.review_of && !['working','waiting'].includes(s.state) && !s.terminal) more.append(el('button.workflow-action',{type:'button',onclick:()=>reviewPicker(p,s)},reviewer?'Review again…':'Review with…'));
- return el('div.workflow-row',null,sessionRow(s),more);
+ // The chat's colour runs down beside its stage too.
+ const tint = CHAT_COLORS.includes(s.color) ? '.sc-' + s.color : '';
+ return el('div.workflow-row'+tint,null,sessionRow(s),more);
 }
 
 function workflowSheet(s) {

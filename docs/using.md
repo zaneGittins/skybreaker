@@ -50,7 +50,7 @@ claude mcp add --transport http --scope user skybreaker https://skybreaker.<your
 
 ## Schedules
 
-A project's **Runs** tab lists its schedules and their runs. An admin clicks **Add a schedule** to run an agent on a cron schedule, either working the next Todo item on the board or running a prompt. Schedules made in the app can be edited or deleted there; jobs in the config file stay as they are. A change applies when Skybreaker restarts, once no agent is working.
+A project's **Runs** tab lists its schedules and their runs. An admin clicks **Add a schedule** to run an agent on a cron schedule, either working the next Todo item on the board or running a prompt. Schedules made in the app can be edited or deleted there; jobs in the config file stay as they are. A change applies when Skybreaker restarts, once no agent is working. The latest runs are also listed under **Scheduled** in the Chats tab, where each opens as a read-only chat.
 
 ## Assistants
 

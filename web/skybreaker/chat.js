@@ -521,7 +521,10 @@ async function renderChat(seq, d) {
     scroller.scrollTo({ top: scroller.scrollHeight, behavior: smooth ? 'smooth' : 'instant' });
     jump.hidden = true;
   };
-  scroller.addEventListener('scroll', () => { if (nearBottom()) jump.hidden = true }, { passive: true });
+  scroller.addEventListener('scroll', () => {
+    if (nearBottom()) { jump.hidden = true; trimSoon() }
+    if (scroller.scrollTop < 600) olderSoon();
+  }, { passive: true });
 
   // --- drawing items ---
   const drawItem = it => {
@@ -542,16 +545,77 @@ async function renderChat(seq, d) {
     return el('div');
   };
   // Tool rows that follow each other share a group, drawn as one block.
-  const place = (it, node) => {
-    const prev = log.lastElementChild;
+  const place = (box, it, node) => {
+    const prev = box.lastElementChild;
     if (it.type === 'tool') {
       if (prev?.classList.contains('tools')) prev.append(node);
-      else log.append(el('div.tools', null, node));
+      else box.append(el('div.tools', null, node));
     } else if (it.type === 'card') {
       // Cards that follow each other stack, as one report.
       if (prev?.classList.contains('work-cards')) prev.append(node);
-      else log.append(el('div.work-cards', null, node));
-    } else log.append(node);
+      else box.append(el('div.work-cards', null, node));
+    } else box.append(node);
+  };
+  const drawInto = (box, it) => {
+    const n = drawItem(it);
+    nodes.set(it.id, n);
+    place(box, it, n);
+  };
+
+  // Only some of a long chat is drawn: chat.items from drawnFrom up to
+  // drawnTo. It opens on the last of them, and draws older ones as you
+  // scroll up, so it opens at once and holds only what you've looked at.
+  const win = chatWindow(80);
+  let drawnFrom = 0, drawnTo = 0;
+  const sync = () => {
+    const total = chat.items.length;
+    if (win.restart({ drawn: drawnFrom, total: drawnTo, pending: total - drawnTo, atBottom: stick })) {
+      log.replaceChildren();
+      nodes.clear();
+      drawnFrom = drawnTo = win.start(total);
+    }
+    for (; drawnTo < total; drawnTo++) drawInto(log, chat.items[drawnTo]);
+  };
+  // older draws what comes before the drawn items, keeping your place.
+  const older = () => {
+    const r = win.older(drawnFrom);
+    if (!r || v.closed) return;
+    const anchor = nodes.get(chat.items[drawnFrom].id);
+    const top = anchor?.getBoundingClientRect().top;
+    const box = el('div');
+    for (let i = r[0]; i < r[1]; i++) drawInto(box, chat.items[i]);
+    // A group the edge cut in two joins up again.
+    const last = box.lastElementChild, first = log.firstElementChild;
+    if (last && first && (first.classList.contains('tools') || first.classList.contains('work-cards')) && last.className === first.className) {
+      last.append(...first.childNodes);
+      first.remove();
+    }
+    log.prepend(...box.childNodes);
+    drawnFrom = r[0];
+    // Browsers that anchor scrolling have kept it already; others haven't.
+    if (anchor && top != null) scroller.scrollTop += anchor.getBoundingClientRect().top - top;
+  };
+  // Back at the bottom after reading far up, what's drawn up there goes.
+  let trimFrame = 0;
+  const trimSoon = () => {
+    if (trimFrame) return;
+    trimFrame = requestAnimationFrame(() => {
+      trimFrame = 0;
+      if (v.closed || !nearBottom() || !win.restart({ drawn: drawnFrom, total: drawnTo, pending: 0, atBottom: true })) return;
+      stick = true;
+      sync();
+      toBottom();
+    });
+  };
+  let olderFrame = 0;
+  const olderSoon = () => {
+    if (olderFrame || drawnFrom === 0) return;
+    olderFrame = requestAnimationFrame(() => {
+      olderFrame = 0;
+      older();
+      // A chat too short to scroll yet can't be scrolled up to ask for more.
+      if (drawnFrom > 0 && scroller.scrollHeight <= scroller.clientHeight + 600) olderSoon();
+    });
   };
   const dirty = new Set();
   let frame = 0, stick = true;
@@ -581,11 +645,7 @@ async function renderChat(seq, d) {
   const apply = e => {
     const r = foldChat(chat, e);
     if (!r) return;
-    if (r.added) {
-      const n = drawItem(r.added);
-      nodes.set(r.added.id, n);
-      place(r.added, n);
-    }
+    // Added items are drawn by sync, after the batch.
     if (r.changed && nodes.has(r.changed.id)) redraw(r.changed);
     if (r.also && nodes.has(r.also.id)) redraw(r.also);
     if (r.added && startNode) { startNode.remove(); startNode = null }
@@ -609,7 +669,9 @@ async function renderChat(seq, d) {
       const b = batch;
       batch = [];
       for (const x of b) apply(x);
+      sync();
       if (!frame) after();
+      if (stick && drawnFrom > 0 && scroller.scrollHeight <= scroller.clientHeight + 600) olderSoon();
     });
   };
 

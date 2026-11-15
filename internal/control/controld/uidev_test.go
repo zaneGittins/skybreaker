@@ -501,6 +501,7 @@ func devAssistant(dataDir string) {
 	b, _ := json.Marshal([]map[string]any{{"name": "morning-brief", "project": "pip", "schedule": "30 7 * * 1-5", "prompt": "Write my morning brief: weather, calendar and anything that needs me.\n\nWeather: check the forecast for home and say if I should bike or take the train.\nCalendar: list today's meetings with times, and flag any that clash or moved overnight.\nEmail: read Pip's inbox in the browser and pull out anything that needs a reply from me today.\nLibrary: note any holds due back this week.\nKeep it under ten lines, most urgent first."}})
 	os.WriteFile(filepath.Join(dataDir, "settings", "routines.json"), b, 0o600)
 	devThread(dataDir, st)
+	devLongChat(dataDir, st)
 }
 
 // devRunLog is the morning brief's run as Claude logs it headless: a look
@@ -546,4 +547,42 @@ func devThread(dataDir string, st *store.Store) {
 	say("s-dev-thread", chat.Event{Kind: chat.KindCard, ID: "run:r-dev-brief", Card: &chat.Card{Kind: chat.CardRun, Ref: "r-dev-brief", Title: "morning-brief", Status: chat.CardDone, Summary: "Quiet day: two meetings after lunch, and rain from 4, so take the bike early."}})
 	say("s-dev-thread", chat.Event{Kind: chat.KindUser, ID: "u2", Text: "Great, take the TAP one. Window seat if you can."})
 	say("s-dev-thread", chat.Event{Kind: chat.KindText, ID: "m2", Text: "Noted. I'll hold it and ask before paying: booking needs your card, so I'll hand you the browser for that step."})
+}
+
+// devLongChat gives skybreaker a chat hundreds of turns long, to see one
+// open, and two scheduled runs, to see them among its chats.
+func devLongChat(dataDir string, st *store.Store) {
+	l, err := chat.OpenLog(filepath.Join(dataDir, "chats"))
+	if err != nil {
+		panic(err)
+	}
+	at := time.Now().Add(-48 * time.Hour).UTC()
+	st.CreateSession(store.Session{ID: "s-dev-long", Project: "skybreaker", Harness: "claude", Mode: store.ModeChat, Status: store.StatusRunning, State: store.ChatIdle,
+		Title: "Tidy the broker's tests", Color: "aurora", Workflow: "implementing", Created: at, Updated: at, Seen: at})
+	say := func(e chat.Event) {
+		at = at.Add(20 * time.Second)
+		e.Time = at
+		l.Append("s-dev-long", e)
+	}
+	for i := 1; i <= 300; i++ {
+		say(chat.Event{Kind: chat.KindUser, ID: fmt.Sprintf("u%d", i), Text: fmt.Sprintf("Step %d: tidy the next test file and run the suite.", i)})
+		say(chat.Event{Kind: chat.KindThinking, ID: fmt.Sprintf("th%d", i), Text: "Look at the file, then run the tests."})
+		for j := 1; j <= 2; j++ {
+			id := fmt.Sprintf("t%d-%d", i, j)
+			say(chat.Event{Kind: chat.KindTool, ID: id, Tool: &chat.Tool{Name: "Bash", Kind: "command", Title: "go test ./internal/proxy/...", Status: "running"}})
+			say(chat.Event{Kind: chat.KindTool, ID: id, Tool: &chat.Tool{Name: "Bash", Kind: "command", Title: "go test ./internal/proxy/...", Status: "done", Output: "ok  \tgithub.com/zaneGittins/skybreaker/internal/proxy/server\t2.1s"}})
+		}
+		say(chat.Event{Kind: chat.KindText, ID: fmt.Sprintf("m%d", i), Text: fmt.Sprintf("Step %d done: **tidied** one file, and the suite passes.\n\n- `server_test.go`: shared the CA setup\n- `go test ./internal/proxy/...`: ok", i)})
+	}
+	runLog := filepath.Join(dataDir, "r-dev-nightly.jsonl")
+	os.WriteFile(runLog, []byte(devRunLog), 0o600)
+	for i, r := range []store.Run{
+		{ID: "r-dev-nightly", Job: "nightly-board", Status: store.RunOK, CostUSD: 0.42},
+		{ID: "r-dev-nightly-2", Job: "nightly-board", Status: store.RunFailed, Error: "tests failed"},
+	} {
+		started := time.Now().Add(-time.Duration(i*24+6) * time.Hour).UTC()
+		r.Project, r.Harness, r.LogPath, r.Prompt = "skybreaker", "claude", runLog, "Work the next Todo item on the board."
+		r.Started, r.Finished = started, started.Add(9*time.Minute)
+		st.CreateRun(r)
+	}
 }
