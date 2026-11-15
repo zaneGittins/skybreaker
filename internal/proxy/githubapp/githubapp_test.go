@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -118,6 +119,8 @@ type fakeGitHub struct {
 	mu       sync.Mutex
 	status   int
 	install  atomic.Int64 // the current installation ID; 0 means 4242
+	// read answers other reads with an installation token, when set.
+	read func(w http.ResponseWriter, r *http.Request)
 }
 
 func (f *fakeGitHub) installation() int64 {
@@ -140,6 +143,10 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// An installation token, for reading a repo.
 		if r.Method == "GET" && r.URL.Path == "/repos/zaneGittins/orbit/pulls" && r.URL.Query().Get("head") == "zaneGittins:fix/x" {
 			fmt.Fprintf(w, `[{"number": 7, "auth": %q}]`, auth)
+			return
+		}
+		if f.read != nil {
+			f.read(w, r)
 			return
 		}
 		t.Errorf("unexpected %s %s with a token", r.Method, r.URL)
@@ -392,5 +399,83 @@ func TestGetReadsTheRepoWithItsToken(t *testing.T) {
 	}
 	if err := a.Get(context.Background(), "../orbit", "/pulls", &pulls); err == nil {
 		t.Error("read with a bad repo")
+	}
+}
+
+// A repeated read sends the ETag it was given, and a 304 (which GitHub
+// doesn't count against the rate limit) answers with the body from before.
+func TestGetRevalidatesWithETag(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	var sent []string
+	f := &fakeGitHub{t: t, expires: now.Add(time.Hour)}
+	body := `{"state":"pending"}`
+	f.read = func(w http.ResponseWriter, r *http.Request) {
+		sent = append(sent, r.Header.Get("If-None-Match"))
+		etag := fmt.Sprintf("%q", body)
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", etag)
+		fmt.Fprint(w, body)
+	}
+	a := newApp(t, f, &now)
+	read := func() string {
+		t.Helper()
+		var v struct{ State string }
+		if err := a.Get(context.Background(), "zaneGittins/orbit", "/commits/aaa/status", &v); err != nil {
+			t.Fatal(err)
+		}
+		return v.State
+	}
+	if read() != "pending" || read() != "pending" {
+		t.Fatal("state")
+	}
+	body = `{"state":"success"}`
+	if got := read(); got != "success" {
+		t.Errorf("after a change, state %q", got)
+	}
+	if want := fmt.Sprintf("%q", `{"state":"pending"}`); len(sent) != 3 || sent[0] != "" || sent[1] != want || sent[2] != want {
+		t.Errorf("If-None-Match sent %q", sent)
+	}
+}
+
+// A rate-limit refusal says when reads may start again.
+func TestGetReportsRateLimit(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	reset := now.Add(17 * time.Minute)
+	for _, tc := range []struct {
+		name   string
+		status int
+		header map[string]string
+		msg    string
+		want   time.Time
+		limit  bool
+	}{
+		{"primary", 403, map[string]string{"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": fmt.Sprint(reset.Unix())}, "API rate limit exceeded for installation ID 1. request ID AC98", reset, true},
+		{"secondary", 403, map[string]string{"Retry-After": "120"}, "You have exceeded a secondary rate limit", now.Add(2 * time.Minute), true},
+		{"too many", 429, nil, "slow down", time.Time{}, true},
+		{"forbidden", 403, map[string]string{"X-RateLimit-Remaining": "4000"}, "Resource not accessible by integration", time.Time{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeGitHub{t: t, expires: now.Add(time.Hour)}
+			f.read = func(w http.ResponseWriter, r *http.Request) {
+				for k, v := range tc.header {
+					w.Header().Set(k, v)
+				}
+				w.WriteHeader(tc.status)
+				fmt.Fprintf(w, `{"message":%q}`, tc.msg)
+			}
+			a := newApp(t, f, &now)
+			err := a.Get(context.Background(), "zaneGittins/orbit", "/pulls", &[]any{})
+			var se *StatusError
+			if !errors.As(err, &se) {
+				t.Fatalf("err %v", err)
+			}
+			until, limited := se.RateLimited()
+			if limited != tc.limit || !until.Equal(tc.want) {
+				t.Errorf("RateLimited() = %v, %v; want %v, %v", until, limited, tc.want, tc.limit)
+			}
+		})
 	}
 }

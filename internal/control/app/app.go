@@ -124,6 +124,8 @@ type App struct {
 
 	pullErrMu sync.Mutex
 	pullErr   map[string]string // per project: the last GitHub read error logged
+	// pullsUntil stops pull request rounds until GitHub's rate limit resets.
+	pullsUntil time.Time
 
 	sweptMu sync.Mutex
 	swept   map[string]bool // projects whose inner containers were stopped this quiet spell

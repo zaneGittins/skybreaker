@@ -2,10 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -33,7 +33,8 @@ type ghPull struct {
 	URL      string     `json:"html_url"`
 	Created  time.Time  `json:"created_at"`
 	Head     struct {
-		SHA string `json:"sha"`
+		SHA   string `json:"sha"`
+		Label string `json:"label"` // owner:branch
 	} `json:"head"`
 }
 
@@ -51,6 +52,53 @@ type ghComment struct {
 	Submitted   time.Time `json:"submitted_at"`
 }
 
+// pullsPage is how many pull requests a round reads per repo: the most
+// recently updated, which a chat's own is while anything happens on it.
+const pullsPage = 100
+
+// pullsList lists a repo's pull requests for a round. GitHub's rate limit is
+// shared with the agents' own reads, so a round reads this once per repo,
+// not once per chat.
+const pullsList = "/pulls?state=all&sort=updated&direction=desc&per_page=100"
+
+// pullsBackoff is how long rounds stop after a rate-limit refusal that
+// doesn't say when to try again.
+const pullsBackoff = 15 * time.Minute
+
+// pullListing is one round's page of a repo's pull requests; complete when
+// it holds them all.
+type pullListing struct {
+	pulls    []ghPull
+	complete bool
+}
+
+// find is the newest pull request whose head is branch in owner's repo.
+func (l *pullListing) find(owner, branch string) (ghPull, bool) {
+	var best ghPull
+	for _, pr := range l.pulls {
+		o, b, _ := strings.Cut(pr.Head.Label, ":")
+		if strings.EqualFold(o, owner) && b == branch && pr.Number > best.Number && commitRe.MatchString(pr.Head.SHA) {
+			best = pr
+		}
+	}
+	return best, best.Number > 0
+}
+
+// rateLimited is GitHub refusing a read for its rate limit, with when it
+// says to try again (zero when it didn't).
+type rateLimited interface {
+	RateLimited() (time.Time, bool)
+}
+
+// pullFollowed says whether a chat's pull request is worth a read: while
+// the chat runs, or until its pull request is merged or closed.
+func pullFollowed(s store.Session) bool {
+	if s.Mode != store.ModeChat || s.ReviewOf != "" {
+		return false
+	}
+	return s.Status == store.StatusRunning || s.Pull.Number != 0 && s.Pull.State != "merged" && s.Pull.State != "closed"
+}
+
 // FollowPulls passes on what's new on each chat's open pull request: checks
 // that finished failing, and comments from people with write access. A
 // chat gets them when idle, up to maxPullRounds times before you reply.
@@ -58,6 +106,13 @@ func (a *App) FollowPulls(ctx context.Context) {
 	if a.github == nil {
 		return
 	}
+	a.pullErrMu.Lock()
+	paused := time.Now().Before(a.pullsUntil)
+	a.pullErrMu.Unlock()
+	if paused {
+		return
+	}
+	listings := map[string]*pullListing{}
 	for _, project := range slices.Sorted(maps.Keys(a.cfg.Projects)) {
 		p, err := a.repoProject(project)
 		if err != nil || p.Repo == "" {
@@ -65,38 +120,73 @@ func (a *App) FollowPulls(ctx context.Context) {
 		}
 		var due []store.Session
 		for _, s := range a.store.ListSessions(project) {
-			if s.Mode == store.ModeChat && s.ReviewOf == "" {
+			if pullFollowed(s) {
 				due = append(due, s)
 			}
 		}
 		if len(due) == 0 {
 			continue
 		}
+		l := listings[p.Repo]
+		if l == nil {
+			var pulls []ghPull
+			if err := a.github.GitHubGet(ctx, p.Repo, pullsList, &pulls); err != nil {
+				if a.pullFailed(ctx, project, err) {
+					return
+				}
+				continue
+			}
+			l = &pullListing{pulls: pulls, complete: len(pulls) < pullsPage}
+			listings[p.Repo] = l
+		}
+		failed := false
 		for _, s := range due {
-			if err := a.followPull(ctx, p, s); err != nil {
-				a.logPullErr(project, err)
-				if ctx.Err() != nil {
+			if err := a.followPull(ctx, p, s, l); err != nil {
+				failed = true
+				if a.pullFailed(ctx, project, err) {
 					return
 				}
 			}
 		}
+		if !failed {
+			a.pullErrMu.Lock()
+			delete(a.pullErr, project)
+			a.pullErrMu.Unlock()
+		}
 	}
 }
 
-// logPullErr logs a failed GitHub read once, not on every round.
-func (a *App) logPullErr(project string, err error) {
+// pullFailed logs a failed GitHub read once, not on every round, and says
+// whether the round should stop: on a rate-limit refusal, which also stops
+// rounds until GitHub says they may go on.
+func (a *App) pullFailed(ctx context.Context, project string, err error) bool {
 	a.pullErrMu.Lock()
 	defer a.pullErrMu.Unlock()
 	if a.pullErr == nil {
 		a.pullErr = map[string]string{}
 	}
+	var rl rateLimited
+	if errors.As(err, &rl) {
+		if until, ok := rl.RateLimited(); ok {
+			if now := time.Now(); !until.After(now) || until.After(now.Add(time.Hour)) {
+				until = now.Add(pullsBackoff)
+			}
+			a.pullsUntil = until
+			if a.pullErr[project] != "rate limit" {
+				a.pullErr[project] = "rate limit"
+				log.Printf("skybreaker: follow pull requests in %s: GitHub's rate limit is reached; reading again at %s", project, until.UTC().Format(time.TimeOnly))
+			}
+			return true
+		}
+	}
 	if a.pullErr[project] != err.Error() {
 		a.pullErr[project] = err.Error()
 		log.Printf("skybreaker: follow pull requests in %s: %v", project, err)
 	}
+	return ctx.Err() != nil
 }
 
-func (a *App) followPull(ctx context.Context, p *config.Project, s store.Session) error {
+func (a *App) followPull(ctx context.Context, p *config.Project, s store.Session, l *pullListing) error {
 	branch := s.Branch
 	if !s.WorktreeGone && (s.Worktree != "" || s.Status == store.StatusRunning) {
 		if st, err := a.sandbox.Status(ctx, s.Project); err == nil && st.Running {
@@ -112,19 +202,16 @@ func (a *App) followPull(ctx context.Context, p *config.Project, s store.Session
 		a.store.UpdateSession(s.ID, func(x *store.Session) { x.Branch = branch })
 	}
 	owner, _, _ := strings.Cut(p.Repo, "/")
-	var pulls []ghPull
-	q := url.Values{"head": {owner + ":" + branch}, "state": {"all"}}
-	if err := a.github.GitHubGet(ctx, p.Repo, "/pulls?"+q.Encode(), &pulls); err != nil {
-		return err
-	}
-	if len(pulls) == 0 || pulls[0].Number <= 0 || !commitRe.MatchString(pulls[0].Head.SHA) {
-		if s.Pull.Number != 0 {
+	pr, ok := l.find(owner, branch)
+	if !ok {
+		// One further down a full page may still be this chat's, unless
+		// the chat has moved to another branch.
+		if s.Pull.Number != 0 && (l.complete || branch != s.Branch) {
 			a.store.UpdateSession(s.ID, func(x *store.Session) { x.Pull = store.Pull{} })
 			a.Publish(Event{Type: "session", Project: s.Project, Session: s.ID, Data: "pull request"})
 		}
 		return nil
 	}
-	pr := pulls[0]
 	seen := s.Pull
 	if seen.Number != pr.Number {
 		seen = store.Pull{Number: pr.Number, URL: pr.URL, Since: pr.Created}
